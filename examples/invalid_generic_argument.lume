@@ -1,0 +1,8 @@
+fn same<T>(left: T, right: T) -> T {
+  return left
+}
+
+fn main(args: [str]) -> int {
+  print(same(1, "two"))
+  return 0
+}

@@ -1,0 +1,29 @@
+fn successful() -> Result<int, str> {
+  return Result.Ok(value: 21)
+}
+
+fn failed() -> Result<int, str> {
+  return Result.Err(error: "stopped")
+}
+
+fn doubled() -> Result<int, str> {
+  let value = successful()?
+  return Result.Ok(value: value * 2)
+}
+
+fn forwarded() -> Result<int, str> {
+  let value = failed()?
+  return Result.Ok(value: value)
+}
+
+fn main(args: [str]) -> int {
+  print(match doubled() {
+    Ok(value) => value
+    Err(error) => 0
+  })
+  print(match forwarded() {
+    Ok(value) => "unexpected"
+    Err(error) => error
+  })
+  return 0
+}

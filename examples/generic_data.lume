@@ -1,0 +1,19 @@
+type Box<T> {
+  value: T
+}
+
+enum Maybe<T> {
+  Some(value: T)
+  None
+}
+
+fn main(args: [str]) -> int {
+  let number = Box(value: 42)
+  let state = Maybe.Some(value: "ready")
+  print(number.value)
+  print(match state {
+    Some(value) => value
+    None => "missing"
+  })
+  return 0
+}

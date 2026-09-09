@@ -66,6 +66,22 @@ $recordUpdate = & $Lume run (Join-Path $PSScriptRoot 'examples\record_update.lum
 if ($LASTEXITCODE -ne 0) { throw "record update exited $LASTEXITCODE" }
 Assert-Equal 'immutable nested record updates' "false`nlight`ntrue`n2`ndark" ($recordUpdate -join "`n")
 
+$generics = & $Lume run (Join-Path $PSScriptRoot 'examples\generics.lume')
+if ($LASTEXITCODE -ne 0) { throw "generics exited $LASTEXITCODE" }
+Assert-Equal 'generic functions' "42`nlume`ntrue" ($generics -join "`n")
+
+$genericData = & $Lume run (Join-Path $PSScriptRoot 'examples\generic_data.lume')
+if ($LASTEXITCODE -ne 0) { throw "generic data exited $LASTEXITCODE" }
+Assert-Equal 'generic records and enums' "42`nready" ($genericData -join "`n")
+
+$listFunctions = & $Lume run (Join-Path $PSScriptRoot 'examples\list_functions.lume')
+if ($LASTEXITCODE -ne 0) { throw "list functions exited $LASTEXITCODE" }
+Assert-Equal 'generic list functions' "6`n2`n2`n10`n4" ($listFunctions -join "`n")
+
+$propagation = & $Lume run (Join-Path $PSScriptRoot 'examples\result_propagation.lume')
+if ($LASTEXITCODE -ne 0) { throw "result propagation exited $LASTEXITCODE" }
+Assert-Equal 'result propagation operator' "42`nstopped" ($propagation -join "`n")
+
 $artifactPath = Join-Path $PSScriptRoot 'dist\test-functions.lbc'
 & $Lume build (Join-Path $PSScriptRoot 'examples\functions.lume') $artifactPath | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "bytecode build exited $LASTEXITCODE" }
@@ -236,6 +252,22 @@ Assert-Equal 'process argument validation' 'E0619 process.run requires (str, [st
 $unwrap = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_unwrap.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "unwrap validation should exit 1" }
 Assert-Equal 'unwrap context validation' 'E0624 line 2: `!` requires an enclosing result-returning function' ($unwrap -join "`n")
+
+$genericArgument = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_generic_argument.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "generic argument validation should exit 1" }
+Assert-Equal 'generic substitution validation' 'E0609 line 6: argument type mismatch calling `same`; expected str, got int' ($genericArgument -join "`n")
+
+$listCallback = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_list_callback.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "list callback validation should exit 1" }
+Assert-Equal 'list callback validation' 'E0673 callback parameter type does not match list element type' ($listCallback -join "`n")
+
+$propagate = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_propagate.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "propagation validation should exit 1" }
+Assert-Equal 'propagation context validation' 'E0624 line 2: `?` requires an enclosing result-returning function' ($propagate -join "`n")
+
+$propagateError = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_propagate_error_type.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "propagation error type validation should exit 1" }
+Assert-Equal 'propagation error type validation' 'E0625 line 6: propagated error type mismatch; expected str, got bool' ($propagateError -join "`n")
 
 $missingModule = & $Lume check (Join-Path $PSScriptRoot 'examples\module_missing.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "missing module validation should exit 1" }

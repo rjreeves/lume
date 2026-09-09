@@ -9,6 +9,8 @@ Lume is a small, statically checked scripting language designed for:
 The name is provisional. The design is the important part. This repository now
 includes a Certo-written bootstrap compiler and bytecode VM.
 
+Read the practical guide: [Using Lume — The Fast One](docs/using-lume-the-fast-one.md).
+
 ```lume
 use http
 
@@ -308,6 +310,52 @@ matches, and inconsistent arm result types are compile errors. Payload fields
 are destructured positionally using names chosen by the arm. Their types come
 from the variant declaration, they exist only within that arm, and a bare arm
 such as `completed => ...` explicitly ignores its payload.
+
+### Generics, options, and results
+
+Functions, records, enums, and lists accept generic type parameters. Calls and
+constructors infer concrete types from their arguments:
+
+```lume
+type Box<T> { value: T }
+
+fn identity<T>(value: T) -> T {
+  return value
+}
+
+let number = Box(value: identity(42))
+```
+
+`Option<T>` and `Result<T, E>` are always available. Their variants work with
+the same exhaustive `match` syntax as declared enums. Use `?` inside a
+result-returning function to return an error immediately; `!` remains supported
+as a compatibility spelling.
+
+```lume
+fn load() -> Result<str, str> {
+  let text = fs.try_read_text("config.json")?
+  return Result.Ok(value: text)
+}
+```
+
+### Generic list transformations
+
+Pass a statically checked function reference using `&name`:
+
+```lume
+fn double(value: int) -> int { return value * 2 }
+fn even(value: int) -> bool { return value % 2 == 0 }
+fn add(total: int, value: int) -> int { return total + value }
+
+let doubled = list.map([1, 2, 3], &double)
+let evens = list.filter([1, 2, 3], &even)
+let first_even = list.find([1, 2, 3], &even)
+let total = list.fold([1, 2, 3], 0, &add)
+```
+
+Callback parameter and return types are validated at compile time. Callbacks
+are deliberately non-capturing, keeping their runtime representation and
+compiler cost small.
 
 ## Bytecode cache and performance
 

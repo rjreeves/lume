@@ -1,0 +1,8 @@
+fn stringify(value: str) -> str {
+  return value
+}
+
+fn main(args: [str]) -> int {
+  let values = list.map([1, 2], &stringify)
+  return 0
+}

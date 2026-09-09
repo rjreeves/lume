@@ -1,0 +1,12 @@
+fn source() -> Result<int, bool> {
+  return Result.Err(error: true)
+}
+
+fn target() -> Result<int, str> {
+  let value = source()?
+  return Result.Ok(value: value)
+}
+
+fn main(args: [str]) -> int {
+  return 0
+}

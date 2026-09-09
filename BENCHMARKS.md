@@ -56,3 +56,18 @@ It generates one valid 10,000-line Lume program, validates it, warms the
 compiler, and reports latency and source-lines per second across repeated runs.
 The generated source is placed under `dist\`.
 
+## Generic data pipeline benchmark (2026-09-09)
+
+The 10,000-line benchmark was run for 10 iterations after each compiler stage:
+
+| Stage | Mean compile | Lines/second | Bytecode load |
+| --- | ---: | ---: | ---: |
+| Generic function substitution | 310.9 ms | 32,165 | 6.2 ms |
+| Generic records/enums and built-in option/result types | 301.5 ms | 33,167 | 6.2 ms |
+| `map`, `filter`, `find`, and `fold` | 317.1 ms | 31,536 | 4.7 ms |
+| `?` result propagation | 325.0 ms | 30,769 | 4.7 ms |
+| Final validation pass (30 runs) | 309.9 ms | 32,268 | 5.2 ms |
+
+Every stage remained above the 10,000-lines/second design target. Timing noise is
+expected from short desktop runs; use a larger iteration count for release
+comparisons.

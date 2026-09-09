@@ -238,7 +238,7 @@ fn lex(source: Text): List<Token> = {
       if Text.eq(pair, "==") or Text.eq(pair, "!=") or Text.eq(pair, "<=") or Text.eq(pair, ">=") or Text.eq(pair, "->") or Text.eq(pair, "=>") then {
         output = List.pushMut(output, makeToken("symbol", pair, line))
         index = index + 2
-      } else if Text.contains("{}()[],:=+-*/%<>!", ch) then {
+      } else if Text.contains("{}()[],:=+-*/%<>!?&", ch) then {
         output = List.pushMut(output, makeToken("symbol", ch, line))
         index = index + 1
       } else {
@@ -416,6 +416,9 @@ fn parseMatch(tokens: List<Token>, start: Int): ExprResult = {
 fn parseAtom(tokens: List<Token>, index: Int): ExprResult = {
   val current = at(tokens, index)
   if Text.eq(current.text, "match") then { parseMatch(tokens, index) }
+  else if Text.eq(current.text, "&") and Text.eq(at(tokens, index + 1).kind, "name") then {
+    ExprResult { next: index + 2, code: [makeInstruction("fn_ref", at(tokens, index + 1).text, 0, current.line)], problem: "" }
+  }
   else if Text.eq(current.kind, "number") then {
     val value = parseInt(current.text) ?? 0
     ExprResult { next: index + 1, code: [makeInstruction("const_int", "", value, current.line)], problem: "" }
@@ -462,10 +465,11 @@ fn parseAtom(tokens: List<Token>, index: Int): ExprResult = {
 
 fn parsePrimary(tokens: List<Token>, index: Int): ExprResult = {
   var result = parseAtom(tokens, index)
-  if Text.eq(result.problem, "") and Text.eq(at(tokens, result.next).text, "!") then {
+  if Text.eq(result.problem, "") and (Text.eq(at(tokens, result.next).text, "!") or Text.eq(at(tokens, result.next).text, "?")) then {
+    val postfix = at(tokens, result.next)
     result = ExprResult {
       next: result.next + 1,
-      code: List.push(result.code, makeInstruction("unwrap", "", 0, at(tokens, result.next).line)),
+      code: List.push(result.code, makeInstruction(if Text.eq(postfix.text, "?") then "propagate" else "unwrap", "", 0, postfix.line)),
       problem: ""
     }
   }
@@ -604,7 +608,7 @@ fn builtinNames(): List<Text> = [
   "str.len", "str.trim", "str.upper", "str.lower",
   "str.contains", "str.starts_with", "str.ends_with",
   "json.valid", "json.get",
-  "list.len", "list.get", "list.push",
+  "list.len", "list.get", "list.push", "list.map", "list.filter", "list.find", "list.fold",
   "result.ok", "result.err", "result.is_ok", "result.value", "result.error"
 ]
 
@@ -616,7 +620,7 @@ fn builtinCounts(): List<Int> = [
   1, 1, 1, 1,
   2, 2, 2,
   1, 2,
-  1, 2, 2,
+  1, 2, 2, 2, 2, 2, 3,
   1, 1, 1, 1, 1
 ]
 
@@ -638,6 +642,8 @@ fn validateExpression(code: List<Instruction>, names: List<Text>, functionNames:
     } else if Text.eq(problem, "") and Text.eq(item.op, "match_finish") then {
       activeNames = List.getOrPanic(matchScopes, List.len(matchScopes) - 1)
       matchScopes = List.slice(matchScopes, 0, List.len(matchScopes) - 1)
+    } else if Text.eq(problem, "") and Text.eq(item.op, "fn_ref") and not containsName(functionNames, item.text) then {
+      problem = "E0216 line " ++ intToText(item.line) ++ ": unknown function `" ++ item.text ++ "`"
     } else if Text.eq(problem, "") and Text.eq(item.op, "load") and not containsName(activeNames, item.text) then {
       problem = "E0210 line " ++ intToText(item.line) ++ ": undefined binding `" ++ item.text ++ "`"
     } else if Text.eq(problem, "") and Text.eq(item.op, "call") then {
@@ -807,21 +813,62 @@ fn parameterNames(tokens: List<Token>, header: Int): List<Text> = {
   index = index + 1
   while not Text.eq(at(tokens, index).text, ")") {
     output = List.push(output, at(tokens, index).text)
-    while not Text.eq(at(tokens, index).text, ",") and not Text.eq(at(tokens, index).text, ")") {
-      index = index + 1
-    }
+    index = typeNext(tokens, index + 2)
     if Text.eq(at(tokens, index).text, ",") then { index = index + 1 }
   }
   output
 }
 
-fn typeAt(tokens: List<Token>, start: Int): Text = {
-  if Text.eq(at(tokens, start).text, "[") then { "list<" ++ at(tokens, start + 1).text ++ ">" }
-  else { at(tokens, start).text }
+fn typeNext(tokens: List<Token>, start: Int): Int = {
+  if Text.eq(at(tokens, start).text, "[") then { typeNext(tokens, start + 1) + 1 }
+  else if Text.eq(at(tokens, start + 1).text, "<") then {
+    var index = start + 2
+    var depth = 1
+    while depth > 0 {
+      if Text.eq(at(tokens, index).text, "<") then { depth = depth + 1 }
+      else if Text.eq(at(tokens, index).text, ">") then { depth = depth - 1 }
+      index = index + 1
+    }
+    index
+  } else { start + 1 }
 }
 
-fn typeNext(tokens: List<Token>, start: Int): Int =
-  if Text.eq(at(tokens, start).text, "[") then start + 3 else start + 1
+fn typeAt(tokens: List<Token>, start: Int): Text = {
+  val finish = typeNext(tokens, start)
+  var index = start
+  var output = ""
+  while index < finish {
+    val part = at(tokens, index).text
+    if Text.eq(part, "[") then { output = output ++ "list<" }
+    else if Text.eq(part, "]") then { output = output ++ ">" }
+    else { output = output ++ part }
+    index = index + 1
+  }
+  output
+}
+
+fn genericParameters(tokens: List<Token>, nameIndex: Int): Text = {
+  if not Text.eq(at(tokens, nameIndex + 1).text, "<") then ""
+  else {
+    var names: List<Text> = []
+    var index = nameIndex + 2
+    while not Text.eq(at(tokens, index).text, ">") {
+      names = List.push(names, at(tokens, index).text)
+      index = index + 1
+      if Text.eq(at(tokens, index).text, ",") then { index = index + 1 }
+    }
+    Text.join(names, ",")
+  }
+}
+
+fn containsGenericName(names: List<Text>, name: Text): Bool = {
+  var found = false
+  for existing in names {
+    val opening = Text.indexOf(existing, "<") ?? Text.len(existing)
+    if Text.eq(Text.slice(existing, 0, opening), name) then { found = true }
+  }
+  found
+}
 
 fn parameterTypes(tokens: List<Token>, header: Int): List<Text> = {
   var output: List<Text> = []
@@ -831,7 +878,7 @@ fn parameterTypes(tokens: List<Token>, header: Int): List<Text> = {
   while not Text.eq(at(tokens, index).text, ")") {
     if not Text.eq(at(tokens, index + 1).text, ":") then { output = List.push(output, "unknown") }
     else { output = List.push(output, typeAt(tokens, index + 2)) }
-    while not Text.eq(at(tokens, index).text, ",") and not Text.eq(at(tokens, index).text, ")") { index = index + 1 }
+    index = typeNext(tokens, index + 2)
     if Text.eq(at(tokens, index).text, ",") then { index = index + 1 }
   }
   output
@@ -859,6 +906,16 @@ fn beforePipe(value: Text): Text = {
 fn afterPipe(value: Text): Text = {
   val separator = Text.indexOf(value, "|") ?? -1
   if separator < 0 then "unknown" else Text.slice(value, separator + 1, Text.len(value))
+}
+
+fn markerReturnType(value: Text): Text = {
+  val parts = Text.split(value, "|")
+  if List.len(parts) > 1 then List.getOrPanic(parts, 1) else "unknown"
+}
+
+fn markerGenericParameters(value: Text): Text = {
+  val parts = Text.split(value, "|")
+  if List.len(parts) > 2 then List.getOrPanic(parts, 2) else ""
 }
 
 fn beforeDot(value: Text): Text = {
@@ -889,11 +946,15 @@ fn scanRecords(tokens: List<Token>): RecordScan = {
       if Text.eq(at(tokens, index).text, "pub") then { index = index + 1 }
       if Text.eq(at(tokens, index).text, "type") then {
         val recordName = at(tokens, index + 1)
+        val parameters = genericParameters(tokens, index + 1)
+        val declarationName = recordName.text ++ (if Text.eq(parameters, "") then "" else "<" ++ parameters ++ ">")
+        var braceIndex = index + 2
+        while not Text.eq(at(tokens, braceIndex).text, "{") and not Text.eq(at(tokens, braceIndex).kind, "eof") { braceIndex = braceIndex + 1 }
         if not Text.eq(recordName.kind, "name") then { problem = "E0230 expected record name" }
-        else if containsName(names, recordName.text) then { problem = "E0231 line " ++ intToText(recordName.line) ++ ": duplicate record `" ++ recordName.text ++ "`" }
-        else if not Text.eq(at(tokens, index + 2).text, "{") then { problem = "E0232 line " ++ intToText(recordName.line) ++ ": expected `{` after record name" }
+        else if containsGenericName(names, recordName.text) then { problem = "E0231 line " ++ intToText(recordName.line) ++ ": duplicate record `" ++ recordName.text ++ "`" }
+        else if not Text.eq(at(tokens, braceIndex).text, "{") then { problem = "E0232 line " ++ intToText(recordName.line) ++ ": expected `{` after record name" }
         else {
-          index = skipNewlines(tokens, index + 3)
+          index = skipNewlines(tokens, braceIndex + 1)
           var fields: List<Text> = []
           var fieldNames: List<Text> = []
           while not Text.eq(at(tokens, index).text, "}") and not Text.eq(at(tokens, index).kind, "eof") and Text.eq(problem, "") {
@@ -912,7 +973,7 @@ fn scanRecords(tokens: List<Token>): RecordScan = {
           }
           if Text.eq(problem, "") and Text.eq(at(tokens, index).kind, "eof") then { problem = "E0236 unterminated record `" ++ recordName.text ++ "`" }
           else if Text.eq(problem, "") then {
-            names = List.push(names, recordName.text)
+            names = List.push(names, declarationName)
             schemas = List.push(schemas, Text.join(fields, ";"))
             index = index + 1
           }
@@ -940,11 +1001,15 @@ fn scanEnums(tokens: List<Token>): EnumScan = {
       if Text.eq(at(tokens, index).text, "pub") then { index = index + 1 }
       if Text.eq(at(tokens, index).text, "enum") then {
         val enumName = at(tokens, index + 1)
+        val parameters = genericParameters(tokens, index + 1)
+        val declarationName = enumName.text ++ (if Text.eq(parameters, "") then "" else "<" ++ parameters ++ ">")
+        var braceIndex = index + 2
+        while not Text.eq(at(tokens, braceIndex).text, "{") and not Text.eq(at(tokens, braceIndex).kind, "eof") { braceIndex = braceIndex + 1 }
         if not Text.eq(enumName.kind, "name") then { problem = "E0240 expected enum name" }
-        else if containsName(names, enumName.text) then { problem = "E0241 line " ++ intToText(enumName.line) ++ ": duplicate enum `" ++ enumName.text ++ "`" }
-        else if not Text.eq(at(tokens, index + 2).text, "{") then { problem = "E0242 line " ++ intToText(enumName.line) ++ ": expected `{` after enum name" }
+        else if containsGenericName(names, enumName.text) or Text.eq(enumName.text, "Option") or Text.eq(enumName.text, "Result") then { problem = "E0241 line " ++ intToText(enumName.line) ++ ": duplicate enum `" ++ enumName.text ++ "`" }
+        else if not Text.eq(at(tokens, braceIndex).text, "{") then { problem = "E0242 line " ++ intToText(enumName.line) ++ ": expected `{` after enum name" }
         else {
-          index = skipNewlines(tokens, index + 3)
+          index = skipNewlines(tokens, braceIndex + 1)
           var variants: List<Text> = []
           var variantNames: List<Text> = []
           while not Text.eq(at(tokens, index).text, "}") and not Text.eq(at(tokens, index).kind, "eof") and Text.eq(problem, "") {
@@ -981,7 +1046,7 @@ fn scanEnums(tokens: List<Token>): EnumScan = {
           }
           if Text.eq(problem, "") and Text.eq(at(tokens, index).kind, "eof") then { problem = "E0248 unterminated enum `" ++ enumName.text ++ "`" }
           else if Text.eq(problem, "") then {
-            names = List.push(names, enumName.text)
+            names = List.push(names, declarationName)
             schemas = List.push(schemas, Text.join(variants, ";"))
             index = index + 1
           }
@@ -1047,7 +1112,10 @@ fn compile(tokens: List<Token>): CompileResult = {
   val functions = scanFunctions(tokens)
   val allNames = List.concat(functions.names, builtinNames())
   val allCounts = List.concat(functions.counts, builtinCounts())
-  var code: List<Instruction> = []
+  var code: List<Instruction> = [
+    makeInstruction("enum_type", "Option<T>|Some=value=T;None=", 0, 0),
+    makeInstruction("enum_type", "Result<T,E>|Ok=value=T;Err=error=E", 0, 0)
+  ]
   var problem = if not Text.eq(records.problem, "") then records.problem else if not Text.eq(enums.problem, "") then enums.problem else functions.problem
   var enumIndex = 0
   while enumIndex < List.len(enums.names) {
@@ -1070,7 +1138,7 @@ fn compile(tokens: List<Token>): CompileResult = {
     val result = compileBlock(tokens, body, parameters, [], allNames, allCounts)
     if not Text.eq(result.problem, "") then { problem = result.problem }
     else {
-      code = List.pushMut(code, makeInstruction("function", name ++ "|" ++ returnType, List.len(parameters), at(tokens, header).line))
+      code = List.pushMut(code, makeInstruction("function", name ++ "|" ++ returnType ++ "|" ++ genericParameters(tokens, header + 1), List.len(parameters), at(tokens, header).line))
       if Text.eq(name, "main") then {
         var mainParameterIndex = 0
         while mainParameterIndex < List.len(parameters) {
@@ -1190,7 +1258,10 @@ fn findRecordSchema(code: List<Instruction>, name: Text): Text? = {
   var found = ""
   while index < List.len(code) and Text.eq(found, "") {
     val item = List.getOrPanic(code, index)
-    if Text.eq(item.op, "record_type") and Text.eq(beforePipe(item.text), name) then { found = afterPipe(item.text) }
+    val declaration = beforePipe(item.text)
+    if Text.eq(item.op, "record_type") and (Text.eq(declaration, name) or Text.eq(genericBase(declaration), genericBase(name))) then {
+      found = specializeSchema(afterPipe(item.text), declaration, name)
+    }
     else { index = index + 1 }
   }
   if Text.eq(found, "") then None else Some(found)
@@ -1201,10 +1272,64 @@ fn findEnumSchema(code: List<Instruction>, name: Text): Text? = {
   var found = ""
   while index < List.len(code) and Text.eq(found, "") {
     val item = List.getOrPanic(code, index)
-    if Text.eq(item.op, "enum_type") and Text.eq(beforePipe(item.text), name) then { found = afterPipe(item.text) }
+    val declaration = beforePipe(item.text)
+    if Text.eq(item.op, "enum_type") and (Text.eq(declaration, name) or Text.eq(genericBase(declaration), genericBase(name))) then {
+      found = specializeSchema(afterPipe(item.text), declaration, name)
+    }
     else { index = index + 1 }
   }
   if Text.eq(found, "") then None else Some(found)
+}
+
+fn genericBase(value: Text): Text = {
+  val opening = Text.indexOf(value, "<") ?? Text.len(value)
+  Text.slice(value, 0, opening)
+}
+
+fn genericArguments(value: Text): List<Text> = {
+  val opening = Text.indexOf(value, "<") ?? -1
+  if opening < 0 then []
+  else {
+    val body = Text.slice(value, opening + 1, Text.len(value) - 1)
+    var output: List<Text> = []
+    var current = ""
+    var depth = 0
+    var index = 0
+    while index < Text.len(body) {
+      val ch = charAt(body, index)
+      if Text.eq(ch, "<") then {
+        depth = depth + 1
+        current = current ++ ch
+      } else if Text.eq(ch, ">") then {
+        depth = depth - 1
+        current = current ++ ch
+      } else if Text.eq(ch, ",") and depth == 0 then {
+        output = List.push(output, current)
+        current = ""
+      }
+      else { current = current ++ ch }
+      index = index + 1
+    }
+    List.push(output, current)
+  }
+}
+
+fn specializeSchema(schema: Text, declaration: Text, actual: Text): Text = {
+  val parameters = genericArguments(declaration)
+  val arguments = genericArguments(actual)
+  if List.len(parameters) == List.len(arguments) then { substituteType(schema, parameters, arguments) }
+  else { schema }
+}
+
+fn declarationFor(code: List<Instruction>, op: Text, base: Text): Text = {
+  var index = 0
+  var found = ""
+  while index < List.len(code) and Text.eq(found, "") {
+    val item = List.getOrPanic(code, index)
+    if Text.eq(item.op, op) and Text.eq(genericBase(beforePipe(item.text)), base) then { found = beforePipe(item.text) }
+    index = index + 1
+  }
+  found
 }
 
 fn variantPayloadSchema(schema: Text, variantName: Text): Text? = {
@@ -1248,18 +1373,84 @@ fn listElementType(listType: Text): Text = {
 
 fn resultValueType(resultType: Text): Text = {
   val comma = Text.indexOf(resultType, ",") ?? -1
-  if not Text.startsWith(resultType, "result<") or comma < 0 then "unknown"
+  if (not Text.startsWith(resultType, "result<") and not Text.startsWith(resultType, "Result<")) or comma < 0 then "unknown"
   else Text.slice(resultType, 7, comma)
+}
+
+fn resultErrorType(resultType: Text): Text = {
+  val comma = Text.indexOf(resultType, ",") ?? -1
+  if comma < 0 then "unknown" else Text.slice(resultType, comma + 1, Text.len(resultType) - 1)
 }
 
 fn typesCompatible(expected: Text, actual: Text): Bool = {
   if Text.eq(expected, actual) then true
+  else if Text.eq(genericBase(expected), genericBase(actual)) and Text.contains(actual, "any") then true
   else if Text.startsWith(expected, "result<") and Text.eq(resultValueType(actual), "any") then true
   else if Text.startsWith(expected, "list<") and Text.eq(listElementType(actual), "any") then true
   else false
 }
 
-fn checkBuiltinTypes(name: Text, stackInput: List<Text>): TypeStackResult = {
+fn substituteType(value: Text, parameters: List<Text>, arguments: List<Text>): Text = {
+  var output = value
+  var index = 0
+  while index < List.len(parameters) {
+    val parameter = List.getOrPanic(parameters, index)
+    val argument = List.getOrPanic(arguments, index)
+    if Text.eq(output, parameter) then { output = argument }
+    else {
+      output = Text.replace(output, "<" ++ parameter ++ ">", "<" ++ argument ++ ">")
+      output = Text.replace(output, "<" ++ parameter ++ ",", "<" ++ argument ++ ",")
+      output = Text.replace(output, "," ++ parameter ++ ">", "," ++ argument ++ ">")
+      output = Text.replace(output, "," ++ parameter ++ ",", "," ++ argument ++ ",")
+      output = Text.replace(output, "=" ++ parameter ++ ";", "=" ++ argument ++ ";")
+      output = Text.replace(output, "=" ++ parameter ++ ",", "=" ++ argument ++ ",")
+      if Text.endsWith(output, "=" ++ parameter) then { output = Text.slice(output, 0, Text.len(output) - Text.len(parameter)) ++ argument }
+    }
+    index = index + 1
+  }
+  output
+}
+
+fn replaceTextAt(values: List<Text>, index: Int, value: Text): List<Text> =
+  List.concat(List.push(List.slice(values, 0, index), value), List.slice(values, index + 1, List.len(values)))
+
+fn completeGenericTypes(values: List<Text>): List<Text> = {
+  var output: List<Text> = []
+  for value in values { output = List.push(output, if Text.eq(value, "") then "any" else value) }
+  output
+}
+
+fn inferGeneric(expected: Text, actual: Text, parameters: List<Text>, arguments: List<Text>): List<Text> = {
+  var output = arguments
+  var index = nameIndex(parameters, expected)
+  if index >= 0 then {
+    if Text.eq(List.getOrPanic(output, index), "") then { output = replaceTextAt(output, index, actual) }
+  } else if Text.startsWith(expected, "list<") and Text.startsWith(actual, "list<") then {
+    output = inferGeneric(listElementType(expected), listElementType(actual), parameters, output)
+  } else if Text.eq(genericBase(expected), genericBase(actual)) then {
+    val expectedArguments = genericArguments(expected)
+    val actualArguments = genericArguments(actual)
+    var argumentIndex = 0
+    while argumentIndex < List.len(expectedArguments) and argumentIndex < List.len(actualArguments) {
+      output = inferGeneric(List.getOrPanic(expectedArguments, argumentIndex), List.getOrPanic(actualArguments, argumentIndex), parameters, output)
+      argumentIndex = argumentIndex + 1
+    }
+  } else {
+    index = 0
+    while index < List.len(parameters) {
+      val parameter = List.getOrPanic(parameters, index)
+      val needle = "<" ++ parameter ++ ">"
+      if Text.endsWith(expected, needle) and Text.indexOf(actual, "<") != None then {
+        val actualStart = (Text.indexOf(actual, "<") ?? 0) + 1
+        output = replaceTextAt(output, index, Text.slice(actual, actualStart, Text.len(actual) - 1))
+      }
+      index = index + 1
+    }
+  }
+  output
+}
+
+fn checkBuiltinTypes(code: List<Instruction>, name: Text, stackInput: List<Text>): TypeStackResult = {
   var stack = stackInput
   var resultType = "unknown"
   var problem = ""
@@ -1289,6 +1480,53 @@ fn checkBuiltinTypes(name: Text, stackInput: List<Text>): TypeStackResult = {
     if not Text.startsWith(listType.value, "list<") then { problem = "E0605 list.push requires a list" }
     else if not Text.eq(elementType, "any") and not Text.eq(elementType, itemType.value) then { problem = "E0606 list.push item type does not match list element type" }
     resultType = if Text.eq(elementType, "any") then "list<" ++ itemType.value ++ ">" else listType.value
+  } else if Text.eq(name, "list.map") or Text.eq(name, "list.filter") or Text.eq(name, "list.find") then {
+    val callbackType = pop(stack)
+    val listType = pop(callbackType.stack)
+    stack = listType.stack
+    val callbackName = if Text.startsWith(callbackType.value, "fn:") then Text.slice(callbackType.value, 3, Text.len(callbackType.value)) else ""
+    val target = findFunction(code, callbackName)
+    if not Text.startsWith(listType.value, "list<") then { problem = "E0671 " ++ name ++ " requires a list" }
+    else if target < 0 then { problem = "E0672 " ++ name ++ " requires a function reference" }
+    else {
+      val callbackMarker = List.getOrPanic(code, target)
+      val callbackGenericText = markerGenericParameters(callbackMarker.text)
+      val callbackGenerics = if Text.eq(callbackGenericText, "") then [] else Text.split(callbackGenericText, ",")
+      var callbackTypes: List<Text> = []
+      for callbackGeneric in callbackGenerics { callbackTypes = List.push(callbackTypes, "") }
+      val rawInputType = afterPipe(List.getOrPanic(code, target + 1).text)
+      callbackTypes = inferGeneric(rawInputType, listElementType(listType.value), callbackGenerics, callbackTypes)
+      val inputType = substituteType(rawInputType, callbackGenerics, callbackTypes)
+      val outputType = substituteType(markerReturnType(callbackMarker.text), callbackGenerics, callbackTypes)
+      if not typesCompatible(inputType, listElementType(listType.value)) then { problem = "E0673 callback parameter type does not match list element type" }
+      else if Text.eq(name, "list.filter") and not Text.eq(outputType, "bool") then { problem = "E0674 list.filter callback must return bool" }
+      resultType = if Text.eq(name, "list.map") then "list<" ++ outputType ++ ">" else if Text.eq(name, "list.find") then "Option<" ++ listElementType(listType.value) ++ ">" else listType.value
+    }
+  } else if Text.eq(name, "list.fold") then {
+    val callbackType = pop(stack)
+    val initialType = pop(callbackType.stack)
+    val listType = pop(initialType.stack)
+    stack = listType.stack
+    val callbackName = if Text.startsWith(callbackType.value, "fn:") then Text.slice(callbackType.value, 3, Text.len(callbackType.value)) else ""
+    val target = findFunction(code, callbackName)
+    if not Text.startsWith(listType.value, "list<") then { problem = "E0671 list.fold requires a list" }
+    else if target < 0 then { problem = "E0672 list.fold requires a function reference" }
+    else {
+      val callbackMarker = List.getOrPanic(code, target)
+      val callbackGenericText = markerGenericParameters(callbackMarker.text)
+      val callbackGenerics = if Text.eq(callbackGenericText, "") then [] else Text.split(callbackGenericText, ",")
+      var callbackTypes: List<Text> = []
+      for callbackGeneric in callbackGenerics { callbackTypes = List.push(callbackTypes, "") }
+      val rawItemType = afterPipe(List.getOrPanic(code, target + 1).text)
+      val rawAccumulatorType = afterPipe(List.getOrPanic(code, target + 2).text)
+      callbackTypes = inferGeneric(rawItemType, listElementType(listType.value), callbackGenerics, callbackTypes)
+      callbackTypes = inferGeneric(rawAccumulatorType, initialType.value, callbackGenerics, callbackTypes)
+      val itemType = substituteType(rawItemType, callbackGenerics, callbackTypes)
+      val accumulatorType = substituteType(rawAccumulatorType, callbackGenerics, callbackTypes)
+      val outputType = substituteType(markerReturnType(callbackMarker.text), callbackGenerics, callbackTypes)
+      if not typesCompatible(itemType, listElementType(listType.value)) or not typesCompatible(accumulatorType, initialType.value) or not typesCompatible(outputType, initialType.value) then { problem = "E0675 list.fold callback must be (accumulator, item) -> accumulator" }
+      resultType = initialType.value
+    }
   } else if Text.eq(name, "process.run") then {
     val arguments = pop(stack)
     val executable = pop(arguments.stack)
@@ -1340,23 +1578,34 @@ fn checkBuiltinTypes(name: Text, stackInput: List<Text>): TypeStackResult = {
 
 fn checkCallTypes(code: List<Instruction>, call: Instruction, stackInput: List<Text>): TypeStackResult = {
   val target = findFunction(code, call.text)
-  if target < 0 then { checkBuiltinTypes(call.text, stackInput) }
+  if target < 0 then { checkBuiltinTypes(code, call.text, stackInput) }
   else {
     var stack = stackInput
     var problem = ""
+    val marker = List.getOrPanic(code, target)
+    val genericText = markerGenericParameters(marker.text)
+    val genericNames = if Text.eq(genericText, "") or Text.eq(genericText, "unknown") then [] else Text.split(genericText, ",")
+    var genericTypes: List<Text> = []
+    for genericName in genericNames { genericTypes = List.push(genericTypes, "") }
     var offset = 0
     while offset < call.number and Text.eq(problem, "") {
       val actual = pop(stack)
       stack = actual.stack
       val parameter = List.getOrPanic(code, target + 1 + offset)
       val expected = afterPipe(parameter.text)
-      if not typesCompatible(expected, actual.value) then {
-        problem = "E0609 line " ++ intToText(call.line) ++ ": argument type mismatch calling `" ++ call.text ++ "`; expected " ++ expected ++ ", got " ++ actual.value
+      genericTypes = inferGeneric(expected, actual.value, genericNames, genericTypes)
+      val resolved = substituteType(expected, genericNames, genericTypes)
+      if not typesCompatible(resolved, actual.value) then {
+        problem = "E0609 line " ++ intToText(call.line) ++ ": argument type mismatch calling `" ++ call.text ++ "`; expected " ++ resolved ++ ", got " ++ actual.value
       }
       offset = offset + 1
     }
-    val marker = List.getOrPanic(code, target)
-    TypeStackResult { stack: stack, resultType: afterPipe(marker.text), problem: problem }
+    var genericIndex = 0
+    while genericIndex < List.len(genericTypes) and Text.eq(problem, "") {
+      if Text.eq(List.getOrPanic(genericTypes, genericIndex), "") then { problem = "E0670 line " ++ intToText(call.line) ++ ": cannot infer generic type `" ++ List.getOrPanic(genericNames, genericIndex) ++ "` calling `" ++ call.text ++ "`" }
+      genericIndex = genericIndex + 1
+    }
+    TypeStackResult { stack: stack, resultType: substituteType(markerReturnType(marker.text), genericNames, genericTypes), problem: problem }
   }
 }
 
@@ -1365,6 +1614,10 @@ fn checkRecordTypes(code: List<Instruction>, instruction: Instruction, stackInpu
   var problem = ""
   val recordName = beforePipe(instruction.text)
   val labels = Text.split(afterPipe(instruction.text), ",")
+  val declaration = declarationFor(code, "record_type", genericBase(recordName))
+  val genericNames = genericArguments(declaration)
+  var genericTypes: List<Text> = []
+  for genericName in genericNames { genericTypes = List.push(genericTypes, "") }
   if let Some(schema) = findRecordSchema(code, recordName) {
     val fields = if Text.eq(schema, "") then [] else Text.split(schema, ";")
     var fieldIndex = 0
@@ -1384,12 +1637,15 @@ fn checkRecordTypes(code: List<Instruction>, instruction: Instruction, stackInpu
       stack = actual.stack
       if containsName(seen, label) then { problem = "E0632 line " ++ intToText(instruction.line) ++ ": duplicate field `" ++ label ++ "` for record `" ++ recordName ++ "`" }
       else if let Some(expected) = fieldTypeInSchema(schema, label) {
-        if not typesCompatible(expected, actual.value) then { problem = "E0633 line " ++ intToText(instruction.line) ++ ": field `" ++ label ++ "` of `" ++ recordName ++ "` expects " ++ expected ++ ", got " ++ actual.value }
+        genericTypes = inferGeneric(expected, actual.value, genericNames, genericTypes)
+        val resolved = substituteType(expected, genericNames, genericTypes)
+        if not typesCompatible(resolved, actual.value) then { problem = "E0633 line " ++ intToText(instruction.line) ++ ": field `" ++ label ++ "` of `" ++ recordName ++ "` expects " ++ resolved ++ ", got " ++ actual.value }
       } else { problem = "E0634 line " ++ intToText(instruction.line) ++ ": unknown field `" ++ label ++ "` for record `" ++ recordName ++ "`" }
       seen = List.push(seen, label)
       index = index - 1
     }
-    TypeStackResult { stack: stack, resultType: recordName, problem: problem }
+    val resultName = if List.len(genericNames) == 0 then recordName else genericBase(recordName) ++ "<" ++ Text.join(genericTypes, ",") ++ ">"
+    TypeStackResult { stack: stack, resultType: resultName, problem: problem }
   } else {
     TypeStackResult { stack: stack, resultType: "unknown", problem: "E0630 line " ++ intToText(instruction.line) ++ ": unknown record `" ++ recordName ++ "`" }
   }
@@ -1403,6 +1659,10 @@ fn checkVariantTypes(code: List<Instruction>, instruction: Instruction, stackInp
   val variantName = afterDot(constructor)
   val labelText = afterPipe(instruction.text)
   val labels = if Text.eq(labelText, "") then [] else Text.split(labelText, ",")
+  val declaration = declarationFor(code, "enum_type", genericBase(enumName))
+  val genericNames = genericArguments(declaration)
+  var genericTypes: List<Text> = []
+  for genericName in genericNames { genericTypes = List.push(genericTypes, "") }
   if let Some(enumSchema) = findEnumSchema(code, enumName) {
     if let Some(payloadSchema) = variantPayloadSchema(enumSchema, variantName) {
       val fields = if Text.eq(payloadSchema, "") then [] else Text.split(payloadSchema, ",")
@@ -1421,12 +1681,15 @@ fn checkVariantTypes(code: List<Instruction>, instruction: Instruction, stackInp
         stack = actual.stack
         if containsName(seen, label) then { problem = "E0644 line " ++ intToText(instruction.line) ++ ": duplicate field `" ++ label ++ "` for variant `" ++ constructor ++ "`" }
         else if let Some(expected) = fieldTypeInSchema(Text.replace(payloadSchema, ",", ";"), label) {
-          if not typesCompatible(expected, actual.value) then { problem = "E0645 line " ++ intToText(instruction.line) ++ ": field `" ++ label ++ "` of `" ++ constructor ++ "` expects " ++ expected ++ ", got " ++ actual.value }
+          genericTypes = inferGeneric(expected, actual.value, genericNames, genericTypes)
+          val resolved = substituteType(expected, genericNames, genericTypes)
+          if not typesCompatible(resolved, actual.value) then { problem = "E0645 line " ++ intToText(instruction.line) ++ ": field `" ++ label ++ "` of `" ++ constructor ++ "` expects " ++ resolved ++ ", got " ++ actual.value }
         } else { problem = "E0643 line " ++ intToText(instruction.line) ++ ": unknown field `" ++ label ++ "` for variant `" ++ constructor ++ "`" }
         seen = List.push(seen, label)
         index = index - 1
       }
-      TypeStackResult { stack: stack, resultType: enumName, problem: problem }
+      val resultName = if List.len(genericNames) == 0 then enumName else genericBase(enumName) ++ "<" ++ Text.join(genericTypes, ",") ++ ">"
+      TypeStackResult { stack: stack, resultType: if List.len(genericNames) == 0 then resultName else genericBase(enumName) ++ "<" ++ Text.join(completeGenericTypes(genericTypes), ",") ++ ">", problem: problem }
     } else { TypeStackResult { stack: stack, resultType: "unknown", problem: "E0641 line " ++ intToText(instruction.line) ++ ": enum `" ++ enumName ++ "` has no variant `" ++ variantName ++ "`" } }
   } else { TypeStackResult { stack: stack, resultType: "unknown", problem: "E0640 line " ++ intToText(instruction.line) ++ ": unknown enum `" ++ enumName ++ "`" } }
 }
@@ -1476,12 +1739,13 @@ fn verifyTypes(code: List<Instruction>): Text = {
         stack = []
         matches = []
         bindings = Bindings { names: [], values: [] }
-        returnType = afterPipe(item.text)
+        returnType = markerReturnType(item.text)
       } else if Text.eq(item.op, "param") or Text.eq(item.op, "main_param") then {
         bindings = putBinding(bindings, beforePipe(item.text), afterPipe(item.text))
       } else if Text.eq(item.op, "const_int") then { stack = List.push(stack, "int") }
       else if Text.eq(item.op, "const_str") then { stack = List.push(stack, "str") }
       else if Text.eq(item.op, "const_bool") then { stack = List.push(stack, "bool") }
+      else if Text.eq(item.op, "fn_ref") then { stack = List.push(stack, "fn:" ++ item.text) }
       else if Text.eq(item.op, "load") then {
         if let Some(bindingType) = getBinding(bindings, item.text) { stack = List.push(stack, bindingType) }
         else { problem = "E0610 line " ++ intToText(item.line) ++ ": type unavailable for `" ++ item.text ++ "`" }
@@ -1621,11 +1885,13 @@ fn verifyTypes(code: List<Instruction>): Text = {
           if Text.eq(problem, "") then { stack = List.push(matchState.baseStack, matchState.resultType) }
           bindings = matchState.baseBindings
         }
-      } else if Text.eq(item.op, "unwrap") then {
+      } else if Text.eq(item.op, "unwrap") or Text.eq(item.op, "propagate") then {
         val wrapped = pop(stack)
         stack = wrapped.stack
-        if not Text.startsWith(wrapped.value, "result<") then { problem = "E0623 line " ++ intToText(item.line) ++ ": `!` requires a result value" }
-        else if not Text.startsWith(returnType, "result<") then { problem = "E0624 line " ++ intToText(item.line) ++ ": `!` requires an enclosing result-returning function" }
+        val operator = if Text.eq(item.op, "propagate") then "?" else "!"
+        if not Text.startsWith(wrapped.value, "result<") and not Text.startsWith(wrapped.value, "Result<") then { problem = "E0623 line " ++ intToText(item.line) ++ ": `" ++ operator ++ "` requires a result value" }
+        else if not Text.startsWith(returnType, "result<") and not Text.startsWith(returnType, "Result<") then { problem = "E0624 line " ++ intToText(item.line) ++ ": `" ++ operator ++ "` requires an enclosing result-returning function" }
+        else if not typesCompatible(resultErrorType(returnType), resultErrorType(wrapped.value)) then { problem = "E0625 line " ++ intToText(item.line) ++ ": propagated error type mismatch; expected " ++ resultErrorType(returnType) ++ ", got " ++ resultErrorType(wrapped.value) }
         else { stack = List.push(stack, resultValueType(wrapped.value)) }
       } else if Text.eq(item.op, "print") or Text.eq(item.op, "eprint") then {
         val valueType = pop(stack)
@@ -1701,6 +1967,18 @@ fn listTextValues(value: Text): List<Text> = {
   while index < count {
     val tagged = JsonValue.asText(JsonValue.get(root, intToText(index)))
     if Text.eq(valueKind(tagged), "s:") then { output = List.push(output, valueBody(tagged)) }
+    index = index + 1
+  }
+  output
+}
+
+fn listValues(value: Text): List<Text> = {
+  val root = Json.parse(valueBody(value))
+  val count = JsonValue.asInt(JsonValue.get(root, "count"))
+  var output: List<Text> = []
+  var index = 0
+  while index < count {
+    output = List.push(output, JsonValue.asText(JsonValue.get(root, intToText(index))))
     index = index + 1
   }
   output
@@ -1916,7 +2194,49 @@ fn commandArgsValue(): Text = {
 fn builtinFailure(stack: List<Text>, message: Text): BuiltinResult =
   BuiltinResult { stack: stack, problem: message }
 
-fn callBuiltin(name: Text, input: List<Text>): BuiltinResult [io] = {
+fn callPure(code: List<Instruction>, name: Text, arguments: List<Text>): DecodeValue = {
+  var stack = arguments
+  var variables = Bindings { names: [], values: [] }
+  var ip = findFunction(code, name) + 1
+  var problem = if ip <= 0 then "unknown callback `" ++ name ++ "`" else ""
+  var result = ""
+  var running = Text.eq(problem, "")
+  while ip < List.len(code) and running and Text.eq(problem, "") {
+    val current = List.getOrPanic(code, ip)
+    if Text.eq(current.op, "param") then {
+      val item = pop(stack)
+      stack = item.stack
+      variables = putBinding(variables, beforePipe(current.text), item.value)
+    } else if Text.eq(current.op, "const_int") then { stack = List.push(stack, intValue(current.number)) }
+    else if Text.eq(current.op, "const_str") then { stack = List.push(stack, textValue(current.text)) }
+    else if Text.eq(current.op, "const_bool") then { stack = List.push(stack, boolValue(current.number == 1)) }
+    else if Text.eq(current.op, "fn_ref") then { stack = List.push(stack, "f:" ++ current.text) }
+    else if Text.eq(current.op, "load") then {
+      if let Some(value) = getBinding(variables, current.text) { stack = List.push(stack, value) }
+      else { problem = "callback binding unavailable `" ++ current.text ++ "`" }
+    } else if Text.eq(current.op, "neg") then {
+      val item = pop(stack)
+      stack = List.push(item.stack, intValue(0 - valueInt(item.value)))
+    } else if Text.eq(current.op, "add") or Text.eq(current.op, "sub") or Text.eq(current.op, "mul") or Text.eq(current.op, "div") or Text.eq(current.op, "mod") then {
+      val right = pop(stack)
+      val left = pop(right.stack)
+      if let Ok(value) = binary(current.op, left.value, right.value, current.line) { stack = List.push(left.stack, value) }
+      else if let Err(message) = binary(current.op, left.value, right.value, current.line) { problem = message }
+    } else if Text.eq(current.op, "compare") then {
+      val right = pop(stack)
+      val left = pop(right.stack)
+      stack = List.push(left.stack, compare(current.text, left.value, right.value))
+    } else if Text.eq(current.op, "return") then {
+      val item = pop(stack)
+      result = item.value
+      running = false
+    } else { problem = "callback `" ++ name ++ "` uses unsupported operation `" ++ current.op ++ "`" }
+    ip = ip + 1
+  }
+  DecodeValue { value: result, problem: problem }
+}
+
+fn callBuiltin(code: List<Instruction>, name: Text, input: List<Text>): BuiltinResult [io] = {
   var stack = input
   var problem = ""
   var result = textValue("")
@@ -1966,6 +2286,50 @@ fn callBuiltin(name: Text, input: List<Text>): BuiltinResult [io] = {
     else {
       val processResult = Process.exec(valueBody(executable.value), listTextValues(arguments.value))
       result = processValue(processResult)
+    }
+  } else if Text.eq(name, "list.map") or Text.eq(name, "list.filter") or Text.eq(name, "list.find") then {
+    val callback = pop(stack)
+    val source = pop(callback.stack)
+    stack = source.stack
+    if not Text.eq(valueKind(source.value), "l:") or not Text.eq(valueKind(callback.value), "f:") then { problem = "E0325 " ++ name ++ " requires (list, function reference)" }
+    else {
+      val values = listValues(source.value)
+      var output: List<Text> = []
+      var found = false
+      var index = 0
+      while index < List.len(values) and Text.eq(problem, "") and (not Text.eq(name, "list.find") or not found) {
+        val item = List.getOrPanic(values, index)
+        val called = callPure(code, valueBody(callback.value), [item])
+        if not Text.eq(called.problem, "") then { problem = called.problem }
+        else if Text.eq(name, "list.map") then { output = List.push(output, called.value) }
+        else if Text.eq(valueKind(called.value), "b:") and Text.eq(valueBody(called.value), "true") then {
+          if Text.eq(name, "list.filter") then { output = List.push(output, item) }
+          else {
+            result = buildVariant([item], "Option.Some|value", 1).value
+            found = true
+          }
+        }
+        index = index + 1
+      }
+      if Text.eq(problem, "") and Text.eq(name, "list.map") or Text.eq(name, "list.filter") then { result = encodeList(output) }
+      else if Text.eq(problem, "") and Text.eq(name, "list.find") and not found then { result = buildVariant([], "Option.None|", 0).value }
+    }
+  } else if Text.eq(name, "list.fold") then {
+    val callback = pop(stack)
+    val initial = pop(callback.stack)
+    val source = pop(initial.stack)
+    stack = source.stack
+    if not Text.eq(valueKind(source.value), "l:") or not Text.eq(valueKind(callback.value), "f:") then { problem = "E0325 list.fold requires (list, initial, function reference)" }
+    else {
+      var accumulator = initial.value
+      val values = listValues(source.value)
+      var index = 0
+      while index < List.len(values) and Text.eq(problem, "") {
+        val called = callPure(code, valueBody(callback.value), [accumulator, List.getOrPanic(values, index)])
+        if not Text.eq(called.problem, "") then { problem = called.problem } else { accumulator = called.value }
+        index = index + 1
+      }
+      result = accumulator
     }
   } else if Text.eq(name, "list.get") or Text.eq(name, "list.push") then {
     val right = pop(stack)
@@ -2045,6 +2409,7 @@ fn execute(code: List<Instruction>): RunResult [io] = {
     if Text.eq(current.op, "const_int") then { stack = List.push(stack, intValue(current.number)) }
     else if Text.eq(current.op, "const_str") then { stack = List.push(stack, textValue(current.text)) }
     else if Text.eq(current.op, "const_bool") then { stack = List.push(stack, boolValue(current.number == 1)) }
+    else if Text.eq(current.op, "fn_ref") then { stack = List.push(stack, "f:" ++ current.text) }
     else if Text.eq(current.op, "make_list") then {
       val built = buildList(stack, current.number)
       stack = List.push(built.stack, built.value)
@@ -2109,7 +2474,7 @@ fn execute(code: List<Instruction>): RunResult [io] = {
     } else if Text.eq(current.op, "call") then {
       val target = findFunction(code, current.text)
       if target < 0 then {
-        val builtin = callBuiltin(current.text, stack)
+        val builtin = callBuiltin(code, current.text, stack)
         stack = builtin.stack
         problem = builtin.problem
       }
@@ -2119,11 +2484,19 @@ fn execute(code: List<Instruction>): RunResult [io] = {
         ip = target + 1
         advance = false
       }
-    } else if Text.eq(current.op, "unwrap") then {
+    } else if Text.eq(current.op, "unwrap") or Text.eq(current.op, "propagate") then {
       val wrapped = pop(stack)
       stack = wrapped.stack
-      if not Text.eq(valueKind(wrapped.value), "r:") then { problem = "E0324 `!` requires result value" }
-      else if lumeResultIsOk(wrapped.value) then { stack = List.push(stack, resultInner(wrapped.value)) }
+      val legacy = Text.eq(valueKind(wrapped.value), "r:")
+      val variant = Text.eq(valueKind(wrapped.value), "v:") and Text.eq(runtimeEnumName(wrapped.value), "Result")
+      val succeeded = if legacy then lumeResultIsOk(wrapped.value) else variant and Text.eq(runtimeVariantName(wrapped.value), "Ok")
+      var inner = if legacy then resultInner(wrapped.value) else ""
+      if variant and succeeded then {
+        val root = Json.parse(valueBody(wrapped.value))
+        inner = JsonValue.asText(JsonValue.get(root, "value"))
+      }
+      if not legacy and not variant then { problem = "E0324 result propagation requires a result value" }
+      else if succeeded then { stack = List.push(stack, inner) }
       else if List.len(returnAddresses) > 0 then {
         val address = popInt(returnAddresses)
         returnAddresses = address.stack
@@ -2417,7 +2790,7 @@ fn apiManifest(): Text = {
   JsonValue.set(root, "language", Json.string("Lume"))
   JsonValue.set(root, "version", Json.string("0.1.0-bootstrap"))
   val features = Json.array()
-  for feature in ["bindings", "static_types", "homogeneous_lists", "records", "nested_records", "field_access", "record_updates", "typed_json_decoding", "enums", "variant_payloads", "match_expressions", "exhaustive_matching", "payload_destructuring", "if_else", "while", "functions", "recursion", "bytecode_cache"] {
+  for feature in ["bindings", "static_types", "homogeneous_lists", "generics", "generic_records", "generic_enums", "option", "result", "list_map", "list_filter", "list_find", "list_fold", "result_propagation", "records", "nested_records", "field_access", "record_updates", "typed_json_decoding", "enums", "variant_payloads", "match_expressions", "exhaustive_matching", "payload_destructuring", "if_else", "while", "functions", "recursion", "bytecode_cache"] {
     JsonValue.push(features, Json.string(feature))
   }
   JsonValue.set(root, "features", features)
@@ -2443,6 +2816,8 @@ fn aiReference(): Text = {
   "Copy a record with checked changes using `user with { active: true }`; the original remains unchanged. " ++
   "Decode JSON with `User.from_json(text)`, which returns `result<User,str>` and reports field paths. " ++
   "Declare enums with `enum State { waiting, done(code: int) }`; construct `State.waiting()` or `State.done(code: 0)`. " ++
+  "Generics use `fn identity<T>(value: T) -> T`, `type Box<T>`, and `enum Maybe<T>`. Option<T> and Result<T,E> are built in. " ++
+  "Use list.map/filter/find/fold with non-capturing function references such as `&double`; use `?` to propagate Result errors. " ++
   "Match every variant with `match state { waiting => \"wait\", done(code) => \"done\" }`; payload bindings are typed and arm-local. " ++
   "Record construction requires every field exactly once and is statically checked. Operators: + - * / % == != < <= > >=. " ++
   "Builtins and arities are returned by `lume api`. main signature: fn main(args: [str]) -> int. " ++

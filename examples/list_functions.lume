@@ -1,0 +1,32 @@
+fn double(value: int) -> int {
+  return value * 2
+}
+
+fn even(value: int) -> bool {
+  return value % 2 == 0
+}
+
+fn add(total: int, value: int) -> int {
+  return total + value
+}
+
+fn keep<T>(value: T) -> T {
+  return value
+}
+
+fn main(args: [str]) -> int {
+  let values = [1, 2, 3, 4]
+  let doubled = list.map(values, &double)
+  let evens = list.filter(values, &even)
+  let found = list.find(values, &even)
+  let unchanged = list.map(values, &keep)
+  print(list.get(doubled, 2))
+  print(list.len(evens))
+  print(match found {
+    Some(value) => value
+    None => 0
+  })
+  print(list.fold(values, 0, &add))
+  print(list.get(unchanged, 3))
+  return 0
+}

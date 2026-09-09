@@ -1,0 +1,14 @@
+fn identity<T>(value: T) -> T {
+  return value
+}
+
+fn singleton<T>(value: T) -> [T] {
+  return [value]
+}
+
+fn main(args: [str]) -> int {
+  print(identity(42))
+  print(identity("lume"))
+  print(list.get(singleton(true), 0))
+  return 0
+}

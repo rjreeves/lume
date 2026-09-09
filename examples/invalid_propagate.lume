@@ -1,0 +1,4 @@
+fn main(args: [str]) -> int {
+  let value = result.ok(1)?
+  return value
+}
