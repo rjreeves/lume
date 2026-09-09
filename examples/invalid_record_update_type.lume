@@ -1,0 +1,9 @@
+type User {
+  retries: int
+}
+
+fn main(args: [str]) -> int {
+  let user = User(retries: 1)
+  let changed = user with { retries: "many" }
+  return 0
+}

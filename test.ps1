@@ -46,6 +46,26 @@ $records = & $Lume run (Join-Path $PSScriptRoot 'examples\records.lume')
 if ($LASTEXITCODE -ne 0) { throw "records exited $LASTEXITCODE" }
 Assert-Equal 'typed records' "Ada@Sydney`n36`ntools" ($records -join "`n")
 
+$typedJson = & $Lume run (Join-Path $PSScriptRoot 'examples\typed_json.lume')
+if ($LASTEXITCODE -ne 0) { throw "typed JSON exited $LASTEXITCODE" }
+Assert-Equal 'typed JSON records' "Ada`nSydney`nGrace" ($typedJson -join "`n")
+
+$invalidTypedJson = & $Lume run (Join-Path $PSScriptRoot 'examples\invalid_typed_json.lume')
+if ($LASTEXITCODE -ne 0) { throw "invalid typed JSON example exited $LASTEXITCODE" }
+Assert-Equal 'typed JSON path error' 'User.age must be int' ($invalidTypedJson -join "`n")
+
+$enums = & $Lume run (Join-Path $PSScriptRoot 'examples\enums.lume')
+if ($LASTEXITCODE -ne 0) { throw "enums exited $LASTEXITCODE" }
+Assert-Equal 'enum construction' ('{"$enum":"JobState","$variant":"pending"}' + "`n" + '{"$enum":"JobState","$variant":"completed","code":"i:0"}') ($enums -join "`n")
+
+$match = & $Lume run (Join-Path $PSScriptRoot 'examples\match.lume')
+if ($LASTEXITCODE -ne 0) { throw "match exited $LASTEXITCODE" }
+Assert-Equal 'match expressions and payload destructuring' "-1`n0" ($match -join "`n")
+
+$recordUpdate = & $Lume run (Join-Path $PSScriptRoot 'examples\record_update.lume')
+if ($LASTEXITCODE -ne 0) { throw "record update exited $LASTEXITCODE" }
+Assert-Equal 'immutable nested record updates' "false`nlight`ntrue`n2`ndark" ($recordUpdate -join "`n")
+
 $artifactPath = Join-Path $PSScriptRoot 'dist\test-functions.lbc'
 & $Lume build (Join-Path $PSScriptRoot 'examples\functions.lume') $artifactPath | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "bytecode build exited $LASTEXITCODE" }
@@ -148,6 +168,66 @@ Assert-Equal 'record field validation' 'E0635 line 7: record `User` has no field
 $recordMissing = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_record_missing.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "missing record field validation should exit 1" }
 Assert-Equal 'missing record field validation' 'E0631 line 7: missing field `age` for record `User`' ($recordMissing -join "`n")
+
+$jsonDecodeInput = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_json_decode_input.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "JSON decoder input validation should exit 1" }
+Assert-Equal 'typed JSON input validation' 'E0638 line 6: `User.from_json` requires str, got int' ($jsonDecodeInput -join "`n")
+
+$enumPayloadType = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_enum_payload_type.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "enum payload type validation should exit 1" }
+Assert-Equal 'enum payload type validation' 'E0645 line 6: field `code` of `JobState.completed` expects int, got str' ($enumPayloadType -join "`n")
+
+$enumVariant = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_enum_variant.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "unknown enum variant validation should exit 1" }
+Assert-Equal 'unknown enum variant validation' 'E0641 line 6: enum `JobState` has no variant `running`' ($enumVariant -join "`n")
+
+$enumMissing = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_enum_missing.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "missing enum payload validation should exit 1" }
+Assert-Equal 'missing enum payload validation' 'E0642 line 6: missing field `code` for variant `JobState.completed`' ($enumMissing -join "`n")
+
+$matchExhaustive = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_match_exhaustive.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "non-exhaustive match validation should exit 1" }
+Assert-Equal 'match exhaustiveness validation' 'E0653 line 7: non-exhaustive match on `State`; missing `off`' ($matchExhaustive -join "`n")
+
+$matchDuplicate = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_match_duplicate.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "duplicate match validation should exit 1" }
+Assert-Equal 'duplicate match arm validation' 'E0652 line 7: duplicate match arm `on`' ($matchDuplicate -join "`n")
+
+$matchVariant = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_match_variant.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "unknown match variant validation should exit 1" }
+Assert-Equal 'unknown match variant validation' 'E0651 line 7: enum `State` has no variant `broken`' ($matchVariant -join "`n")
+
+$matchArmType = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_match_arm_type.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "match arm type validation should exit 1" }
+Assert-Equal 'match arm type validation' 'E0654 line 7: match arms must return one type; expected str, got int' ($matchArmType -join "`n")
+
+$matchPayloadArity = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_match_payload_arity.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "match payload arity validation should exit 1" }
+Assert-Equal 'match payload arity validation' 'E0655 line 7: variant `completed` exposes 1 payload values, pattern binds 2' ($matchPayloadArity -join "`n")
+
+$matchPayloadDuplicate = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_match_payload_duplicate.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "duplicate match payload binding should exit 1" }
+Assert-Equal 'duplicate match payload binding' 'E0656 line 7: duplicate payload binding `item`' ($matchPayloadDuplicate -join "`n")
+
+$matchPayloadScope = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_match_payload_scope.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "match payload scope validation should exit 1" }
+Assert-Equal 'match payload arm scope' 'E0210 line 11: undefined binding `code`' ($matchPayloadScope -join "`n")
+
+$recordUpdateField = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_record_update_field.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "record update field validation should exit 1" }
+Assert-Equal 'record update field validation' 'E0663 line 7: record `User` has no field `age`' ($recordUpdateField -join "`n")
+
+$recordUpdateType = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_record_update_type.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "record update type validation should exit 1" }
+Assert-Equal 'record update type validation' 'E0662 line 7: field `retries` of `User` expects int, got str' ($recordUpdateType -join "`n")
+
+$recordUpdateDuplicate = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_record_update_duplicate.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "duplicate record update validation should exit 1" }
+Assert-Equal 'duplicate record update validation' 'E0661 line 7: duplicate record update field `name`' ($recordUpdateDuplicate -join "`n")
+
+$recordUpdateSource = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_record_update_source.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "record update source validation should exit 1" }
+Assert-Equal 'record update source validation' 'E0660 line 3: `with` requires a record, got int' ($recordUpdateSource -join "`n")
 
 $processArgs = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_process_args.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "process argument validation should exit 1" }

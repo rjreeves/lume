@@ -1,0 +1,25 @@
+type Address {
+  city: str
+}
+
+type Friend {
+  name: str
+}
+
+type User {
+  name: str
+  age: int
+  active: bool
+  address: Address
+  friends: [Friend]
+}
+
+fn main(args: [str]) -> int {
+  let json = "{\"name\":\"Ada\",\"age\":36,\"active\":true,\"address\":{\"city\":\"Sydney\"},\"friends\":[{\"name\":\"Grace\"}]}"
+  let user = result.value(User.from_json(json))
+  let first = list.get(user.friends, 0)
+  print(user.name)
+  print(user.address.city)
+  print(first.name)
+  return 0
+}

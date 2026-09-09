@@ -1,0 +1,13 @@
+enum State {
+  ready
+  completed(code: int)
+}
+
+fn main(args: [str]) -> int {
+  let value = match State.completed(code: 1) {
+    ready => 0
+    completed(code) => code
+  }
+  print(code)
+  return value
+}

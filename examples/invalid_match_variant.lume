@@ -1,0 +1,16 @@
+enum State {
+  on
+  off
+}
+
+fn describe(state: State) -> str {
+  return match state {
+    on => "on"
+    broken => "broken"
+    off => "off"
+  }
+}
+
+fn main(args: [str]) -> int {
+  return 0
+}

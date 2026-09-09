@@ -1,0 +1,8 @@
+enum JobState {
+  pending
+}
+
+fn main(args: [str]) -> int {
+  let state = JobState.running()
+  return 0
+}

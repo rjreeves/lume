@@ -243,6 +243,72 @@ Every declared field must be supplied exactly once. Unknown fields, missing
 fields, invalid field access, and field values of the wrong type are compile
 errors. Records may contain other records and homogeneous lists.
 
+Records are updated immutably with `with`:
+
+```lume
+let updated = user with {
+  active: true
+  retries: user.retries + 1
+}
+```
+
+Multiple fields and nested records can be updated in one expression. The
+source record and each replacement expression are evaluated once, the original
+record remains unchanged, and unknown, duplicate, or incorrectly typed fields
+are rejected during compilation.
+
+JSON can be decoded directly into a record. Decoding is schema-driven at
+runtime and returns a checked result:
+
+```lume
+let decoded = User.from_json(text)
+let user = result.value(decoded)
+print(user.name)
+```
+
+Nested records and lists of records are decoded recursively. Missing fields,
+unknown fields, and incorrect value types produce errors containing the exact
+field path, such as `User.address.city must be str`.
+
+### Enums
+
+Enums define a closed set of named variants. Variants may be empty or carry
+statically checked payload fields:
+
+```lume
+enum JobState {
+  pending
+  completed(code: int)
+  failed(message: str)
+}
+
+let waiting = JobState.pending()
+let done = JobState.completed(code: 0)
+```
+
+Enum values can be passed to and returned from functions using the enum name as
+their type. The compiler rejects unknown variants and missing, unexpected,
+duplicate, or incorrectly typed payload fields.
+
+`match` is an expression and evaluates only its selected arm:
+
+```lume
+fn describe(state: JobState) -> str {
+  return match state {
+    pending => "waiting"
+    completed(code) => "completed"
+    failed(message) => message
+  }
+}
+```
+
+Every variant must appear exactly once, and every arm must produce a compatible
+type. Non-enum subjects, impossible variants, duplicate arms, non-exhaustive
+matches, and inconsistent arm result types are compile errors. Payload fields
+are destructured positionally using names chosen by the arm. Their types come
+from the variant declaration, they exist only within that arm, and a bare arm
+such as `completed => ...` explicitly ignores its payload.
+
 ## Bytecode cache and performance
 
 `run` maintains a content-hash-validated `.lbc` file beside its source. If the

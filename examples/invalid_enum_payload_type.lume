@@ -1,0 +1,8 @@
+enum JobState {
+  completed(code: int)
+}
+
+fn main(args: [str]) -> int {
+  let state = JobState.completed(code: "zero")
+  return 0
+}

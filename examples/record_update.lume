@@ -1,0 +1,27 @@
+type Preferences {
+  theme: str
+}
+
+type User {
+  name: str
+  active: bool
+  retries: int
+  preferences: Preferences
+}
+
+fn main(args: [str]) -> int {
+  let base = User(name: "Ada", active: false, retries: 1, preferences: Preferences(theme: "light"))
+  let updated = base with {
+    active: true
+    retries: base.retries + 1
+    preferences: base.preferences with {
+      theme: "dark"
+    }
+  }
+  print(base.active)
+  print(base.preferences.theme)
+  print(updated.active)
+  print(updated.retries)
+  print(updated.preferences.theme)
+  return 0
+}

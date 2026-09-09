@@ -1,0 +1,5 @@
+fn main(args: [str]) -> int {
+  let number = 1
+  let changed = number with { value: 2 }
+  return 0
+}

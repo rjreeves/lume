@@ -1,0 +1,15 @@
+enum State {
+  ready
+  pair(left: int, right: int)
+}
+
+fn value(state: State) -> int {
+  return match state {
+    ready => 0
+    pair(item, item) => item
+  }
+}
+
+fn main(args: [str]) -> int {
+  return 0
+}

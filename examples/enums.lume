@@ -1,0 +1,17 @@
+enum JobState {
+  pending
+  completed(code: int)
+  failed(message: str)
+}
+
+fn keep(state: JobState) -> JobState {
+  return state
+}
+
+fn main(args: [str]) -> int {
+  let waiting = JobState.pending()
+  let done = keep(JobState.completed(code: 0))
+  print(waiting)
+  print(done)
+  return 0
+}

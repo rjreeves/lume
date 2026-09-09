@@ -1,0 +1,19 @@
+enum JobState {
+  pending
+  completed(code: int)
+  failed(message: str)
+}
+
+fn describe(state: JobState) -> int {
+  return match state {
+    pending => -1
+    completed(code) => code
+    failed(message) => str.len(message)
+  }
+}
+
+fn main(args: [str]) -> int {
+  print(describe(JobState.pending()))
+  print(describe(JobState.completed(code: 0)))
+  return 0
+}

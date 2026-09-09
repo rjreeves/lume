@@ -1,0 +1,10 @@
+type User {
+  name: str
+  age: int
+}
+
+fn main(args: [str]) -> int {
+  let decoded = User.from_json("{\"name\":\"Ada\",\"age\":\"old\"}")
+  print(result.error(decoded))
+  return 0
+}
