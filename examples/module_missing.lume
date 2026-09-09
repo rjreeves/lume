@@ -1,0 +1,5 @@
+use modules.does_not_exist
+
+fn main(args: [str]) -> int {
+  return 0
+}

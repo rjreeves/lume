@@ -1,0 +1,16 @@
+fn main(args: [str]) -> int {
+  print(add(20, 22))
+  print(factorial(5))
+  return 0
+}
+
+fn add(left: int, right: int) -> int {
+  return left + right
+}
+
+fn factorial(n: int) -> int {
+  if n <= 1 {
+    return 1
+  }
+  return n * factorial(n - 1)
+}

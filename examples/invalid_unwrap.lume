@@ -1,0 +1,5 @@
+fn main(args: [str]) -> int {
+  let value = result.ok(42)!
+  print(value)
+  return 0
+}

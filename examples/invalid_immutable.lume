@@ -1,0 +1,5 @@
+fn main(args: [str]) -> int {
+  let answer = 42
+  answer = 43
+  return 0
+}

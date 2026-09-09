@@ -1,0 +1,5 @@
+fn main(args: [str]) -> int {
+  let mixed = [1, "two"]
+  print(list.len(mixed))
+  return 0
+}

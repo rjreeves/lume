@@ -1,0 +1,6 @@
+use modules.stats
+
+fn main(args: [str]) -> int {
+  print(stats.sum_of_squares(3, 4))
+  return 0
+}

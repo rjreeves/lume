@@ -1,0 +1,27 @@
+use http
+use json
+
+type Todo {
+  id: int
+  title: str
+  completed: bool
+}
+
+fn main(args: [str]) -> int {
+  match http.get("https://example.test/todos/1") {
+    ok response => match json.decode[Todo](response.body) {
+      ok todo => {
+        print("{todo.id}: {todo.title}")
+        return 0
+      }
+      err message => {
+        eprint(message)
+        return 1
+      }
+    }
+    err message => {
+      eprint(message)
+      return 1
+    }
+  }
+}

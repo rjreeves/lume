@@ -1,0 +1,5 @@
+use second
+
+pub fn cycle.first() -> int {
+  return 1
+}

@@ -1,0 +1,4 @@
+fn main(args: [str]) -> int {
+  print(str.len("one", "two"))
+  return 0
+}

@@ -1,0 +1,8 @@
+fn main(args: [str]) -> int {
+  let command = process.run("powershell.exe", ["-NoProfile", "-Command", "Write-Output 'hello from process'"])
+  print(process.ok(command))
+  print(process.code(command))
+  print(str.trim(process.stdout(command)))
+  print(str.trim(process.stderr(command)))
+  return 0
+}

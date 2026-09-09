@@ -1,0 +1,4 @@
+fn main(args: [str]) -> int {
+  let command = process.run("cmd.exe", [1, 2])
+  return process.code(command)
+}

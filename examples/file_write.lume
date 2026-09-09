@@ -1,0 +1,9 @@
+fn main(args: [str]) -> int {
+  let path = args.get(0)
+  let written = fs.write_text(path, "round trip")
+  if written {
+    print(fs.read_text(path))
+    return 0
+  }
+  return 1
+}

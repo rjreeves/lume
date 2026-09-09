@@ -1,0 +1,24 @@
+type Address {
+  city: str
+}
+
+type User {
+  name: str
+  age: int
+  active: bool
+  address: Address
+  tags: [str]
+}
+
+fn label(user: User) -> str {
+  return user.name + "@" + user.address.city
+}
+
+fn main(args: [str]) -> int {
+  let address = Address(city: "Sydney")
+  let user = User(name: "Ada", age: 36, active: true, address: address, tags: ["compiler", "tools"])
+  print(label(user))
+  print(user.age)
+  print(list.get(user.tags, 1))
+  return 0
+}

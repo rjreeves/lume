@@ -1,0 +1,5 @@
+use math
+
+pub fn stats.sum_of_squares(left: int, right: int) -> int {
+  return math.square(left) + math.square(right)
+}

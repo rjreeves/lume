@@ -1,0 +1,8 @@
+fn main(args: [str]) -> int {
+  print(add("one", 2))
+  return 0
+}
+
+fn add(left: int, right: int) -> int {
+  return left + right
+}

@@ -1,0 +1,8 @@
+fn main(args: [str]) -> int {
+  let values = [10, 20, 30]
+  print(list.len(values))
+  print(list.get(values, 1))
+  let more = list.push(values, 40)
+  print(list.get(more, 3))
+  return 0
+}

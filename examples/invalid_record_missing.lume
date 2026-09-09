@@ -1,0 +1,9 @@
+type User {
+  name: str
+  age: int
+}
+
+fn main(args: [str]) -> int {
+  let user = User(name: "Ada")
+  return 0
+}

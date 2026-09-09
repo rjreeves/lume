@@ -1,0 +1,22 @@
+use fs
+
+fn main(args: [str]) -> int {
+  let path = list.get(args, 0) ?? ""
+  if path == "" {
+    eprint("usage: word_count <file>")
+    return 64
+  }
+
+  match fs.read_text(path) {
+    ok text => {
+      let words = str.split_whitespace(text)
+      let count = list.len(words)
+      print("{count}")
+      return 0
+    }
+    err message => {
+      eprint(message)
+      return 1
+    }
+  }
+}

@@ -1,0 +1,5 @@
+use cycles.first
+
+fn main(args: [str]) -> int {
+  return 0
+}

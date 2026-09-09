@@ -1,0 +1,7 @@
+fn main(args: [str]) -> int {
+  let base = 6
+  let height = 7
+  let area = base * height
+  print(area)
+  return 0
+}

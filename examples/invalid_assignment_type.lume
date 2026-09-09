@@ -1,0 +1,5 @@
+fn main(args: [str]) -> int {
+  var count = 1
+  count = "one"
+  return 0
+}

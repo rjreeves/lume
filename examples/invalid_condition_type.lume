@@ -1,0 +1,6 @@
+fn main(args: [str]) -> int {
+  if 1 {
+    print("never")
+  }
+  return 0
+}

@@ -1,0 +1,44 @@
+[
+  {
+    "id": "arithmetic",
+    "prompt": "Print the product of 6 and 7, then return success.",
+    "args": [],
+    "stdout": "42"
+  },
+  {
+    "id": "greeting",
+    "prompt": "Join the strings 'hello, ' and 'Lume', print the result, then return success.",
+    "args": [],
+    "stdout": "hello, Lume"
+  },
+  {
+    "id": "control_flow",
+    "prompt": "Use a while loop to sum integers from 0 through 4. Print 'control flow works' when the total is 10, then print the total.",
+    "args": [],
+    "stdout": "control flow works\n10"
+  },
+  {
+    "id": "functions",
+    "prompt": "Define add and recursive factorial functions. Print add(20, 22) and factorial(5).",
+    "args": [],
+    "stdout": "42\n120"
+  },
+  {
+    "id": "core_api",
+    "prompt": "Read the JSON file path in argument zero. Print argument count, file length, JSON validity, uppercase name, numeric version, whether PATH exists, and the exit code from hostname.exe.",
+    "args": ["examples/data.json"],
+    "stdout": "1\n28\ntrue\nLUME\n1\ntrue\n0"
+  },
+  {
+    "id": "lists",
+    "prompt": "Create [10, 20, 30], print its length and item one, append 40 immutably, then print item three of the new list.",
+    "args": [],
+    "stdout": "3\n20\n40"
+  },
+  {
+    "id": "modules",
+    "prompt": "Import modules.stats and print stats.sum_of_squares(3, 4). Put reusable qualified public functions in module files.",
+    "args": [],
+    "stdout": "25"
+  }
+]

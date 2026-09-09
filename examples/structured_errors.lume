@@ -1,0 +1,19 @@
+fn read_file(path: str) -> str ! str {
+  return fs.try_read_text(path)
+}
+
+fn upper_file(path: str) -> str ! str {
+  let content = read_file(path)!
+  return result.ok(str.upper(content))
+}
+
+fn main(args: [str]) -> int {
+  let outcome = upper_file(args.get(0))
+  if result.is_ok(outcome) {
+    print(str.trim(result.value(outcome)))
+    return 0
+  } else {
+    eprint(result.error(outcome))
+    return 1
+  }
+}

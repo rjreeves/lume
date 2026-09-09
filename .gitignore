@@ -1,0 +1,6 @@
+dist/
+out/
+*.exe
+*.dll
+*.lib
+*.lbc

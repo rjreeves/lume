@@ -1,0 +1,5 @@
+fn main(args: [str]) -> int {
+  let name = list.get(args, 0) ?? "world"
+  print("hello, {name}")
+  return 0
+}

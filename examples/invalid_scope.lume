@@ -1,0 +1,8 @@
+fn main(args: [str]) -> int {
+  if true {
+    let inside = 42
+    print(inside)
+  }
+  print(inside)
+  return 0
+}

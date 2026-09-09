@@ -1,0 +1,20 @@
+fn main(args: [str]) -> int {
+  let path = args.get(0)
+  print(args.count())
+
+  if fs.exists(path) {
+    let content = fs.read_text(path)
+    print(str.len(content))
+    print(json.valid(content))
+    print(str.upper(json.get(content, "name")))
+    print(json.get(content, "version"))
+  } else {
+    eprint("file not found")
+    return 1
+  }
+
+  print(env.has("PATH"))
+  let process_result = process.run("hostname.exe", [])
+  print(process.code(process_result))
+  return 0
+}
