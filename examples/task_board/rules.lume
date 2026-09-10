@@ -1,0 +1,66 @@
+enum ValidationError {
+  empty_title(task_id: str)
+  duplicate_id(task_id: str)
+}
+
+fn empty_ids() -> [str] {
+  return []
+}
+
+fn contains_id(ids: [str], target: str) -> bool {
+  var index = 0
+  var found = false
+  while index < list.len(ids) {
+    let existing = list.get(ids, index)
+    if existing == target {
+      found = true
+    }
+    index = index + 1
+  }
+  return found
+}
+
+pub fn rules.validate(tasks: [Task]) -> Result<[Task], ValidationError> {
+  var seen = empty_ids()
+  var index = 0
+  while index < list.len(tasks) {
+    let task = list.get(tasks, index)
+    if task.title == "" {
+      return Result.Err(error: ValidationError.empty_title(task_id: task.id))
+    }
+    if contains_id(seen, task.id) {
+      return Result.Err(error: ValidationError.duplicate_id(task_id: task.id))
+    }
+    seen = list.push(seen, task.id)
+    index = index + 1
+  }
+  return Result.Ok(value: tasks)
+}
+
+pub fn rules.describe_error(error: ValidationError) -> str {
+  return match error {
+    empty_title(task_id) => "task " + task_id + " has an empty title"
+    duplicate_id(task_id) => "duplicate task id " + task_id
+  }
+}
+
+pub fn rules.is_valid(outcome: Result<[Task], ValidationError>) -> bool {
+  return match outcome {
+    Ok(value) => true
+    Err(error) => false
+  }
+}
+
+pub fn rules.unwrap(outcome: Result<[Task], ValidationError>) -> [Task] {
+  return match outcome {
+    Ok(value) => value
+    Err(error) => empty_tasks()
+  }
+}
+
+pub fn rules.error_of(outcome: Result<[Task], ValidationError>) -> str {
+  return match outcome {
+    Ok(value) => ""
+    Err(error) => rules.describe_error(error)
+  }
+}

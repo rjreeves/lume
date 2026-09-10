@@ -1,0 +1,82 @@
+use task_board.model
+use task_board.rules
+use task_board.board
+use task_board.render
+
+fn usage() -> str {
+  return "usage: task_board <seed.json> <board|blocked|stats|next|complete> [task_id] [completed_by]"
+}
+
+fn main(args: [str]) -> int {
+  if args.count() < 2 {
+    eprint(usage())
+    return 64
+  }
+
+  let path = args.get(0)
+  let command = args.get(1)
+
+  let read_result = fs.try_read_text(path)
+  if result.is_ok(read_result) == false {
+    eprint(result.error(read_result))
+    return 1
+  }
+  let text = result.value(read_result)
+
+  let parsed = model.parse(text)
+  if result.is_ok(parsed) == false {
+    eprint(result.error(parsed))
+    return 1
+  }
+  let tasks = result.value(parsed)
+
+  let validated = rules.validate(tasks)
+  if rules.is_valid(validated) == false {
+    eprint(rules.error_of(validated))
+    return 1
+  }
+  let valid_tasks = rules.unwrap(validated)
+
+  if command == "board" {
+    print(render.board(valid_tasks))
+    return 0
+  }
+
+  if command == "blocked" {
+    print(render.board(board.filter_blocked(valid_tasks)))
+    return 0
+  }
+
+  if command == "stats" {
+    print(board.count_pending(valid_tasks))
+    print(board.count_in_progress(valid_tasks))
+    print(board.count_blocked(valid_tasks))
+    print(board.count_done(valid_tasks))
+    print(board.total_priority_weight(valid_tasks))
+    return 0
+  }
+
+  if command == "next" {
+    let picked = board.next_task(valid_tasks)
+    print(match picked {
+      None => "no open tasks"
+      Some(task) => render.task(task)
+    })
+    return 0
+  }
+
+  if command == "complete" {
+    if args.count() < 4 {
+      eprint("usage: task_board <seed.json> complete <task_id> <completed_by>")
+      return 64
+    }
+    let target_id = args.get(2)
+    let completed_by = args.get(3)
+    print(render.board(board.complete_task(valid_tasks, target_id, completed_by)))
+    return 0
+  }
+
+  eprint("unknown command: " + command)
+  eprint(usage())
+  return 64
+}

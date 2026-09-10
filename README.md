@@ -355,7 +355,31 @@ let total = list.fold([1, 2, 3], 0, &add)
 
 Callback parameter and return types are validated at compile time. Callbacks
 are deliberately non-capturing, keeping their runtime representation and
-compiler cost small.
+compiler cost small. Callback bodies also run in a restricted evaluator: they
+may use parameters, literals, arithmetic, comparisons, and other function
+references, but not field access, `match`, or calls into other functions.
+Transformations over records or enums should be written as ordinary
+`while`-loop functions instead of `&name` callbacks.
+
+## Example: a multi-module task board
+
+[`examples/task_board.lume`](examples/task_board.lume) and
+[`examples/task_board/`](examples/task_board) are a larger, deliberately
+"real" program built from everything above: a JSON-backed task tracker split
+across four modules (`model`, `rules`, `board`, `render`). It decodes a flat
+JSON seed file into typed records, promotes it into a domain model with
+payload-carrying enums (`Status`, `Priority`), validates it with a structured
+error enum, and answers a handful of CLI commands by combining `while`-loop
+traversal, `list.fold`, `Option<T>`, `Result<T, E>`, and immutable record
+updates.
+
+```powershell
+.\dist\lume.exe run .\examples\task_board.lume .\examples\task_board\seed.json board
+.\dist\lume.exe run .\examples\task_board.lume .\examples\task_board\seed.json blocked
+.\dist\lume.exe run .\examples\task_board.lume .\examples\task_board\seed.json stats
+.\dist\lume.exe run .\examples\task_board.lume .\examples\task_board\seed.json next
+.\dist\lume.exe run .\examples\task_board.lume .\examples\task_board\seed.json complete t-1 Ada
+```
 
 ## Bytecode cache and performance
 

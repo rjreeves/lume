@@ -1,0 +1,32 @@
+fn describe_priority(priority: Priority) -> str {
+  return match priority {
+    low => "LOW"
+    medium => "MEDIUM"
+    high => "HIGH"
+    critical => "CRITICAL"
+  }
+}
+
+fn describe_status(status: Status) -> str {
+  return match status {
+    pending => "PENDING"
+    in_progress(assignee) => "IN PROGRESS (" + assignee + ")"
+    blocked(reason) => "BLOCKED: " + reason
+    done(completed_by) => "DONE by " + completed_by
+  }
+}
+
+pub fn render.task(task: Task) -> str {
+  return task.id + " [" + describe_priority(task.priority) + "] " + task.title + " - " + describe_status(task.status)
+}
+
+pub fn render.board(tasks: [Task]) -> str {
+  var report = ""
+  var index = 0
+  while index < list.len(tasks) {
+    let task = list.get(tasks, index)
+    report = report + render.task(task) + "\n"
+    index = index + 1
+  }
+  return report
+}
