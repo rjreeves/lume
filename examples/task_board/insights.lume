@@ -1,0 +1,47 @@
+fn is_short_title(length: int) -> bool {
+  return length < 30
+}
+
+fn first<T>(items: [T]) -> Option<T> {
+  if list.len(items) == 0 {
+    return Option.None()
+  }
+  return Option.Some(value: list.get(items, 0))
+}
+
+fn empty_lengths() -> [int] {
+  return []
+}
+
+pub fn insights.search(tasks: [Task], needle: str) -> [Task] {
+  var output = empty_tasks()
+  var index = 0
+  while index < list.len(tasks) {
+    let task = list.get(tasks, index)
+    if str.contains(task.title, needle) {
+      output = list.push(output, task)
+    }
+    index = index + 1
+  }
+  return output
+}
+
+pub fn insights.first_match(tasks: [Task], needle: str) -> Option<Task> {
+  return first(insights.search(tasks, needle))
+}
+
+pub fn insights.short_title_count(tasks: [Task]) -> int {
+  var lengths = empty_lengths()
+  var index = 0
+  while index < list.len(tasks) {
+    let task = list.get(tasks, index)
+    lengths = list.push(lengths, str.len(task.title))
+    index = index + 1
+  }
+  let shortOnes = list.filter(lengths, &is_short_title)
+  return list.len(shortOnes)
+}
+
+pub fn insights.export(tasks: [Task], path: str) -> bool ! str {
+  return fs.try_write_text(path, render.board(tasks))
+}
