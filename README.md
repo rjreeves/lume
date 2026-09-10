@@ -216,6 +216,25 @@ Run the bootstrap smoke tests with:
 .\test.ps1
 ```
 
+Lume programs can also contain named native tests:
+
+```lume
+test "adds two values" {
+  expect.equal(add(20, 22), 42)
+}
+```
+
+Run every test in a file with `lume test tests.lume`. Each test is reported as
+PASS or FAIL, followed by a summary; any failure produces exit code 1. Use
+`--filter text` to select tests by name. Assertions include `expect.equal`,
+`expect.true`, `expect.some`, `expect.ok`, and `expect.err`.
+
+Passing a directory discovers every direct child named `*_test.lume`:
+
+```text
+lume test tests
+```
+
 The broader syntax in the specification is the roadmap, not yet all implemented
 by the bootstrap.
 
@@ -326,6 +345,33 @@ fn identity<T>(value: T) -> T {
 let number = Box(value: identity(42))
 ```
 
+Generic functions may constrain inferred types with one of four lightweight,
+built-in requirements: `Eq`, `Ord`, `Number`, or `Text`.
+
+```lume
+fn keep_number<T: Number>(value: T) -> T {
+  return value
+}
+```
+
+Constraints are checked at the call site and remain type-erased at runtime, so
+they do not introduce monomorphization cost.
+
+Projects can declare marker protocols and opt records, enums, or scalar types
+into them explicitly:
+
+```lume
+protocol Named {}
+impl Named for User {}
+
+fn keep_named<T: Named>(value: T) -> T {
+  return value
+}
+```
+
+Protocol and implementation bodies are intentionally empty in this first
+stage. They provide user-defined generic constraints without dynamic dispatch.
+
 `Option<T>` and `Result<T, E>` are always available. Their variants work with
 the same exhaustive `match` syntax as declared enums. Use `?` inside a
 result-returning function to return an error immediately; `!` remains supported
@@ -340,7 +386,7 @@ fn load() -> Result<str, str> {
 
 ### Generic list transformations
 
-Pass a statically checked function reference using `&name`:
+Pass a statically checked named function with `&name`, or use an inline closure:
 
 ```lume
 fn double(value: int) -> int { return value * 2 }
@@ -351,16 +397,21 @@ let doubled = list.map([1, 2, 3], &double)
 let evens = list.filter([1, 2, 3], &even)
 let first_even = list.find([1, 2, 3], &even)
 let total = list.fold([1, 2, 3], 0, &add)
+let offset = 10
+let shifted = list.map([1, 2, 3], fn(value: int) -> int => double(value) + offset)
 ```
 
-Callback parameter and return types are validated at compile time. Callbacks
-are deliberately non-capturing, keeping their runtime representation and
-compiler cost small. Callback bodies also run in a restricted evaluator: they
-may use parameters, literals, arithmetic, comparisons, and other function
-references, but not field access, `match`, or calls into other functions —
-not even builtins like `str.len`. Transformations over records or enums, or
-anything that needs a helper call, should be written as ordinary
-`while`-loop functions instead of `&name` callbacks.
+Callback parameter and return types are validated at compile time. A plain
+`&name` function reference is deliberately non-capturing and runs in a
+restricted evaluator: it may use parameters, literals, arithmetic,
+comparisons, and other function references, but not field access, `match`,
+or calls into other functions — not even builtins like `str.len`. An inline
+closure (`fn(value: int) -> int => ...`) may capture immutable `let`
+bindings instead; capturing mutable `var` bindings is rejected, so a closure
+is a stable snapshot rather than shared mutable state. Transformations over
+records or enums, or anything that needs a helper call, should be written as
+ordinary `while`-loop functions or an inline closure rather than a `&name`
+reference.
 
 ## Example: a multi-module task board
 

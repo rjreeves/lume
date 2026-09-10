@@ -1,0 +1,7 @@
+test "text works" {
+  expect.equal(str.upper("lume"), "LUME")
+}
+
+fn main(args: [str]) -> int {
+  return 0
+}

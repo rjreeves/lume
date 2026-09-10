@@ -1,0 +1,6 @@
+fn main(args: [str]) -> int {
+  var offset = 10
+  let values = [1]
+  let broken = list.map(values, fn(value: int) -> int => value + offset)
+  return 0
+}

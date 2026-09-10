@@ -1,0 +1,16 @@
+fn bump(value: int) -> int {
+  return value + 1
+}
+
+fn main(args: [str]) -> int {
+  let offset = 10
+  let values = [1, 2, 3]
+  let shifted = list.map(values, fn(value: int) -> int => bump(value) + offset)
+  let selected = list.filter(values, fn(value: int) -> bool => value >= 2)
+  let total = list.fold(values, 5, fn(total: int, value: int) -> int => total + value)
+  print(list.get(shifted, 0))
+  print(list.get(shifted, 2))
+  print(list.len(selected))
+  print(total)
+  return 0
+}

@@ -70,6 +70,14 @@ $generics = & $Lume run (Join-Path $PSScriptRoot 'examples\generics.lume')
 if ($LASTEXITCODE -ne 0) { throw "generics exited $LASTEXITCODE" }
 Assert-Equal 'generic functions' "42`nlume`ntrue" ($generics -join "`n")
 
+$constrainedGenerics = & $Lume run (Join-Path $PSScriptRoot 'examples\constrained_generics.lume')
+if ($LASTEXITCODE -ne 0) { throw "constrained generics exited $LASTEXITCODE" }
+Assert-Equal 'constrained generic functions' "true`nlume`n42`nfast" ($constrainedGenerics -join "`n")
+
+$protocols = & $Lume run (Join-Path $PSScriptRoot 'examples\protocols.lume')
+if ($LASTEXITCODE -ne 0) { throw "protocols exited $LASTEXITCODE" }
+Assert-Equal 'protocol-constrained generics' 'Ada' ($protocols -join "`n")
+
 $genericData = & $Lume run (Join-Path $PSScriptRoot 'examples\generic_data.lume')
 if ($LASTEXITCODE -ne 0) { throw "generic data exited $LASTEXITCODE" }
 Assert-Equal 'generic records and enums' "42`nready" ($genericData -join "`n")
@@ -77,6 +85,10 @@ Assert-Equal 'generic records and enums' "42`nready" ($genericData -join "`n")
 $listFunctions = & $Lume run (Join-Path $PSScriptRoot 'examples\list_functions.lume')
 if ($LASTEXITCODE -ne 0) { throw "list functions exited $LASTEXITCODE" }
 Assert-Equal 'generic list functions' "6`n2`n2`n10`n4" ($listFunctions -join "`n")
+
+$closures = & $Lume run (Join-Path $PSScriptRoot 'examples\closures.lume')
+if ($LASTEXITCODE -ne 0) { throw "closures exited $LASTEXITCODE" }
+Assert-Equal 'closures and function values' "12`n14`n2`n11" ($closures -join "`n")
 
 $propagation = & $Lume run (Join-Path $PSScriptRoot 'examples\result_propagation.lume')
 if ($LASTEXITCODE -ne 0) { throw "result propagation exited $LASTEXITCODE" }
@@ -257,9 +269,33 @@ $genericArgument = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_gene
 if ($LASTEXITCODE -ne 1) { throw "generic argument validation should exit 1" }
 Assert-Equal 'generic substitution validation' 'E0609 line 6: argument type mismatch calling `same`; expected str, got int' ($genericArgument -join "`n")
 
+$genericConstraint = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_generic_constraint.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "generic constraint validation should exit 1" }
+Assert-Equal 'generic constraint validation' 'E0680 line 6: type `str` does not satisfy `Number` for `T` calling `requires_number`' ($genericConstraint -join "`n")
+
+$genericConstraintName = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_generic_constraint_name.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "unknown generic constraint should exit 1" }
+Assert-Equal 'generic constraint name validation' 'E0679 line 1: unknown generic constraint `Printable`' ($genericConstraintName -join "`n")
+
+$protocolConstraint = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_protocol_constraint.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "missing protocol implementation should exit 1" }
+Assert-Equal 'protocol implementation constraint' 'E0680 line 12: type `User` does not satisfy `Named` for `T` calling `keep_named`' ($protocolConstraint -join "`n")
+
+$protocolImpl = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_protocol_impl.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "unknown protocol implementation should exit 1" }
+Assert-Equal 'unknown protocol implementation' 'E0258 unknown protocol `Missing` in implementation' ($protocolImpl -join "`n")
+
 $listCallback = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_list_callback.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "list callback validation should exit 1" }
 Assert-Equal 'list callback validation' 'E0673 callback parameter type does not match list element type' ($listCallback -join "`n")
+
+$closureReturn = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_closure_return.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "closure return validation should exit 1" }
+Assert-Equal 'closure return validation' 'E0676 line 3: closure return type mismatch; expected int, got str' ($closureReturn -join "`n")
+
+$closureCapture = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_closure_capture_mutable.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "mutable closure capture validation should exit 1" }
+Assert-Equal 'immutable closure capture validation' 'E0678 line 4: closure cannot capture mutable binding `offset`' ($closureCapture -join "`n")
 
 $propagate = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_propagate.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "propagation validation should exit 1" }
@@ -281,5 +317,22 @@ $bytecode = & $Lume bytecode (Join-Path $PSScriptRoot 'examples\arithmetic.lume'
 if ($LASTEXITCODE -ne 0) { throw "bytecode exited $LASTEXITCODE" }
 if (-not (($bytecode -join "`n") -match 'mul')) { throw 'bytecode did not contain mul' }
 Write-Host 'PASS bytecode'
+
+$nativeTests = & $Lume test (Join-Path $PSScriptRoot 'examples\native_tests.lume')
+if ($LASTEXITCODE -ne 0) { throw "native test runner exited $LASTEXITCODE" }
+Assert-Equal 'native test runner' "PASS adds two values`nPASS recognizes present values`n2 passed; 0 failed" ($nativeTests -join "`n")
+
+$filteredTests = & $Lume test (Join-Path $PSScriptRoot 'examples\native_tests.lume') --filter present
+if ($LASTEXITCODE -ne 0) { throw "filtered native test runner exited $LASTEXITCODE" }
+Assert-Equal 'native test filtering' "PASS recognizes present values`n1 passed; 0 failed" ($filteredTests -join "`n")
+
+$nativeSuite = & $Lume test (Join-Path $PSScriptRoot 'examples\native_suite')
+if ($LASTEXITCODE -ne 0) { throw "native test directory discovery exited $LASTEXITCODE" }
+Assert-Contains 'native test directory math discovery' 'PASS math works' ($nativeSuite -join "`n")
+Assert-Contains 'native test directory text discovery' 'PASS text works' ($nativeSuite -join "`n")
+
+$nativeFailure = & $Lume test (Join-Path $PSScriptRoot 'examples\native_tests_failing.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "failing native test should exit 1" }
+Assert-Equal 'native test failure' "FAIL shows expected and actual values (line 1): expected 42, got 41`n0 passed; 1 failed" ($nativeFailure -join "`n")
 
 Write-Host 'All Lume smoke tests passed.'

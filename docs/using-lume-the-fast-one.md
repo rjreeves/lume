@@ -54,7 +54,7 @@ Lume occupies the space between them:
 - intentionally small enough to describe to an AI model;
 - designed around a 10,000-source-lines-per-second compilation target.
 
-The current 10,000-line benchmark runs at roughly 32,000 lines per second on
+The current 10,000-line benchmark runs at roughly 31,000 lines per second on
 the development machine. Treat that as a local measurement, not a universal
 hardware-independent promise.
 
@@ -223,9 +223,17 @@ let first_even = list.find(values, &even)
 let total = list.fold(values, 0, &add)
 ```
 
-Callback input and output types are checked at compile time. Function references
-are non-capturing. Today, transformation callbacks are intended for small pure
-expressions using parameters, literals, arithmetic, and comparisons.
+Callback input and output types are checked at compile time. Inline closures use
+`fn(parameter: type) -> return_type => expression` and may capture immutable
+bindings:
+
+```lume
+let offset = 10
+let shifted = list.map(values, fn(value: int) -> int => value + offset)
+```
+
+Mutable captures are rejected. A closure can call ordinary functions and use
+the same expression operations as other Lume code.
 
 ## 7. Records and immutable updates
 
@@ -356,6 +364,19 @@ fn keep<T>(value: T) -> T {
 let unchanged = list.map([1, 2, 3], &keep)
 ```
 
+Constrain a generic function when its callers must supply a particular family
+of values:
+
+```lume
+fn keep_number<T: Number>(value: T) -> T {
+  return value
+}
+```
+
+The built-in constraints are `Eq` for equality-capable scalar values, `Ord` for
+ordered integers and strings, `Number` for integers, and `Text` for strings.
+They are checked after type inference and erased before execution.
+
 ## 10. Option and Result
 
 `Option<T>` represents a value that may be absent. `Result<T, E>` represents
@@ -484,6 +505,41 @@ Use modules to separate reusable domain operations from command-line entry point
 
 ## 14. Building, bytecode, and performance
 
+### Native tests
+
+A native test has a descriptive string name and a block of expectations:
+
+```lume
+test "calculates the total" {
+  expect.equal(list.fold([1, 2, 3], 0, &add), 6)
+}
+```
+
+Run all tests in a source file with `lume test tests.lume`. The runner reports
+individual results, prints the passed/failed totals, and exits unsuccessfully
+if any expectation or runtime operation fails. Assertions include
+`expect.equal`, `expect.true`, `expect.some`, `expect.ok`, and `expect.err`.
+Failure output contains the test declaration line and expected/actual values
+where applicable. Select tests by name with `--filter text`.
+Passing a directory discovers each direct `*_test.lume` child.
+
+### Marker protocols
+
+User-defined constraints start as explicit marker protocols:
+
+```lume
+protocol Named {}
+impl Named for User {}
+
+fn keep_named<T: Named>(value: T) -> T {
+  return value
+}
+```
+
+The compiler verifies that the protocol and target type exist and that each
+implementation is unique. Generic calls require a matching implementation.
+This stage deliberately has no protocol methods or runtime dispatch.
+
 `lume run` maintains a hash-validated `.lbc` bytecode cache beside the source.
 Unchanged source can skip lexing, parsing, static validation, and emission.
 
@@ -514,6 +570,10 @@ used while preparing this book measured:
 | List transformations | 31,536 |
 | Result propagation | 30,769 |
 | Final validation run, 30 iterations | 32,268 |
+| Closures and function values, 30 iterations | 31,371 |
+| Generic constraints and native test runner, 30 iterations | 31,221 |
+| Named test blocks and expectations, 30 iterations | 31,682 |
+| Test discovery and marker protocols, 30 iterations | 30,142 |
 
 Short runs vary with operating-system scheduling and machine load. Compare
 median results on the same machine and workload. Lume's design gate rejects a
@@ -625,7 +685,7 @@ Prefer these habits in production Lume:
 4. Use `Result` for expected failure and `?` for short propagation paths.
 5. Handle `Option` and enum values with exhaustive `match`.
 6. Pass process arguments as lists, never as constructed shell command text.
-7. Keep list callbacks small, pure, and named.
+7. Keep list callbacks small; use named functions or immutable-capture closures.
 8. Put reusable logic in modules and effects near `main`.
 9. Run `lume check` continuously and test both success and failure paths.
 10. Measure compiler performance after expanding the language core.
@@ -638,10 +698,10 @@ plausible but incorrect programs.
 Lume is deliberately young and focused. It is not trying to replace every
 general-purpose language. Current boundaries include:
 
-- no closures or captured list callbacks;
+- closures capture immutable values only; mutable captures are intentionally rejected;
 - a compact standard library rather than a large package ecosystem;
 - an evolving generic system without traits or type classes;
-- a small pure-operation surface for list callbacks;
+- closures are expression-bodied rather than statement-bodied;
 - bootstrap tooling that is still maturing;
 - performance figures measured on the development machine, not a broad suite
   of production hardware.

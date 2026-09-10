@@ -1,0 +1,21 @@
+fn add(left: int, right: int) -> int {
+  return left + right
+}
+
+fn positive(value: int) -> bool {
+  return value > 0
+}
+
+test "adds two values" {
+  expect.equal(add(20, 22), 42)
+  expect.true(str.upper("lume") == "LUME")
+}
+
+test "recognizes present values" {
+  expect.some(list.find([1, 2, 3], &positive))
+  expect.ok(Result.Ok(value: 42))
+}
+
+fn main(args: [str]) -> int {
+  return 0
+}

@@ -22,7 +22,7 @@ process.run/2  process.ok/1  process.code/1  process.stdout/1  process.stderr/1
 str.len/1  str.trim/1  str.upper/1  str.lower/1
 str.contains/2  str.starts_with/2  str.ends_with/2
 json.valid/1  json.get/2
-list.len/1  list.get/2  list.push/2
+list.len/1  list.get/2  list.push/2  list.map/2  list.filter/2  list.find/2  list.fold/3
 result.ok/1  result.err/1  result.is_ok/1  result.value/1  result.error/1
 ```
 
@@ -31,3 +31,11 @@ Fallible functions declare `fn load(path: str) -> str ! str`. Use postfix `!` on
 Modules use `use app.math` at the start of a file; it resolves to `app/math.lume` relative to that file. Export module functions with qualified names such as `pub fn math.square(value: int) -> int`, then call `math.square(4)`.
 
 Use dotted names exactly as shown. Lists must contain one element type; `list.push` returns a new list. Use two-space indentation, braces, one statement per line, and no semicolons. Do not use methods, imports, exceptions, interpolation, `for`, `break`, `continue`, null, or user-defined types in the bootstrap language.
+
+Pass named functions as values with `&name`. Inline closures use `fn(value: int) -> int => value + offset`. Closure parameter and return types are required. Closures may capture `let` bindings but may not capture `var` bindings.
+
+Generic functions may use `T: Eq`, `T: Ord`, `T: Number`, or `T: Text`. Native tests use `test "name" { expect.equal(actual, expected) }`; available assertions are equal, true, some, ok, and err. Run them with `lume test file.lume`, optionally followed by `--filter text`.
+
+User-defined marker constraints use `protocol Named {}` and `impl Named for User {}`. Protocol and implementation bodies must currently be empty. Passing a directory to `lume test` discovers direct `*_test.lume` children.
+
+Marker protocols use `protocol Named {}` and explicit `impl Named for User {}` declarations. They may constrain generic functions but do not yet declare methods.

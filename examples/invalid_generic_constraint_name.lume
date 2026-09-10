@@ -1,0 +1,7 @@
+fn keep<T: Printable>(value: T) -> T {
+  return value
+}
+
+fn main(args: [str]) -> int {
+  return 0
+}

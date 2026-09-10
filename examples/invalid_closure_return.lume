@@ -1,0 +1,5 @@
+fn main(args: [str]) -> int {
+  let values = [1]
+  let broken = list.map(values, fn(value: int) -> int => "wrong")
+  return 0
+}
