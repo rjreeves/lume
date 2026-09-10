@@ -357,20 +357,28 @@ fn keep_number<T: Number>(value: T) -> T {
 Constraints are checked at the call site and remain type-erased at runtime, so
 they do not introduce monomorphization cost.
 
-Projects can declare marker protocols and opt records, enums, or scalar types
-into them explicitly:
+Projects can declare protocols with required methods and implement them
+explicitly for records, enums, or scalar types:
 
 ```lume
-protocol Named {}
-impl Named for User {}
+protocol Named {
+  fn name(value: Self) -> str
+}
+
+impl Named for User {
+  fn name(value: User) -> str {
+    return value.name
+  }
+}
 
 fn keep_named<T: Named>(value: T) -> T {
   return value
 }
 ```
 
-Protocol and implementation bodies are intentionally empty in this first
-stage. They provide user-defined generic constraints without dynamic dispatch.
+Implementation methods compile to concrete functions and use qualified static
+calls such as `User.name(user)`. The compiler rejects missing, extra, duplicate,
+or incorrectly typed methods. There is no reflection or dynamic dispatch.
 
 `Option<T>` and `Result<T, E>` are always available. Their variants work with
 the same exhaustive `match` syntax as declared enums. Use `?` inside a

@@ -1,0 +1,17 @@
+protocol Named {
+  fn name(value: Self) -> str
+}
+
+type User {
+  name: str
+}
+
+impl Named for User {
+  fn name(value: User) -> int {
+    return 1
+  }
+}
+
+fn main(args: [str]) -> int {
+  return 0
+}

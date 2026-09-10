@@ -523,22 +523,30 @@ Failure output contains the test declaration line and expected/actual values
 where applicable. Select tests by name with `--filter text`.
 Passing a directory discovers each direct `*_test.lume` child.
 
-### Marker protocols
+### Protocol methods
 
-User-defined constraints start as explicit marker protocols:
+User-defined constraints can require statically dispatched methods:
 
 ```lume
-protocol Named {}
-impl Named for User {}
+protocol Named {
+  fn name(value: Self) -> str
+}
+
+impl Named for User {
+  fn name(value: User) -> str {
+    return value.name
+  }
+}
 
 fn keep_named<T: Named>(value: T) -> T {
   return value
 }
 ```
 
-The compiler verifies that the protocol and target type exist and that each
-implementation is unique. Generic calls require a matching implementation.
-This stage deliberately has no protocol methods or runtime dispatch.
+The compiler verifies the protocol and target type, implementation uniqueness,
+and every method name, parameter, and return type. Methods lower to concrete
+functions and are called with qualified syntax such as `User.name(user)`.
+There is no runtime method lookup.
 
 `lume run` maintains a hash-validated `.lbc` bytecode cache beside the source.
 Unchanged source can skip lexing, parsing, static validation, and emission.
@@ -574,6 +582,7 @@ used while preparing this book measured:
 | Generic constraints and native test runner, 30 iterations | 31,221 |
 | Named test blocks and expectations, 30 iterations | 31,682 |
 | Test discovery and marker protocols, 30 iterations | 30,142 |
+| Protocol methods with static dispatch, 30 iterations | 30,915 |
 
 Short runs vary with operating-system scheduling and machine load. Compare
 median results on the same machine and workload. Lume's design gate rejects a

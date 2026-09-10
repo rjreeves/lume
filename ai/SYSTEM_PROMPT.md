@@ -36,6 +36,4 @@ Pass named functions as values with `&name`. Inline closures use `fn(value: int)
 
 Generic functions may use `T: Eq`, `T: Ord`, `T: Number`, or `T: Text`. Native tests use `test "name" { expect.equal(actual, expected) }`; available assertions are equal, true, some, ok, and err. Run them with `lume test file.lume`, optionally followed by `--filter text`.
 
-User-defined marker constraints use `protocol Named {}` and `impl Named for User {}`. Protocol and implementation bodies must currently be empty. Passing a directory to `lume test` discovers direct `*_test.lume` children.
-
-Marker protocols use `protocol Named {}` and explicit `impl Named for User {}` declarations. They may constrain generic functions but do not yet declare methods.
+User-defined constraints use protocols such as `protocol Named { fn name(value: Self) -> str }`. Implement every required method explicitly inside `impl Named for User { ... }`. Call implementation methods statically with qualified syntax such as `User.name(user)`. Passing a directory to `lume test` discovers direct `*_test.lume` children.

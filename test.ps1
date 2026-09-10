@@ -285,6 +285,18 @@ $protocolImpl = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_protoco
 if ($LASTEXITCODE -ne 1) { throw "unknown protocol implementation should exit 1" }
 Assert-Equal 'unknown protocol implementation' 'E0258 unknown protocol `Missing` in implementation' ($protocolImpl -join "`n")
 
+$protocolMissingMethod = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_protocol_missing_method.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "missing protocol method should exit 1" }
+Assert-Equal 'missing protocol method' 'E0262 implementation of `Named` for `User` is missing method `name`' ($protocolMissingMethod -join "`n")
+
+$protocolMethodType = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_protocol_method_type.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "protocol method signature mismatch should exit 1" }
+Assert-Equal 'protocol method signature' 'E0263 method `User.name` does not match protocol signature' ($protocolMethodType -join "`n")
+
+$protocolExtraMethod = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_protocol_extra_method.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "extra protocol method should exit 1" }
+Assert-Equal 'extra protocol method' 'E0264 method `code` is not declared by protocol `Named`' ($protocolExtraMethod -join "`n")
+
 $listCallback = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_list_callback.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "list callback validation should exit 1" }
 Assert-Equal 'list callback validation' 'E0673 callback parameter type does not match list element type' ($listCallback -join "`n")

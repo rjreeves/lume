@@ -448,6 +448,12 @@ unsupported operation`. Something that needs to pattern-match on an enum
 inside a transformation should be written as an ordinary `while`-loop
 function called directly, not passed as `&name` or a closure.
 
+Protocols extend the constraint vocabulary and declare required method
+signatures. `impl Named for User { ... }` must provide every declared method
+with the exact signature and may not add undeclared methods. Implementations
+compile to concrete `Type.method` functions; calls are statically resolved and
+there are no trait objects or dynamic dispatch.
+
 ## 13. Testing
 
 A `test "description" { ... }` block may appear anywhere a function
@@ -486,11 +492,11 @@ select one canonical model after measurement.
 ```text
 file       := use_decl* declaration* EOF
 declaration:= ('pub')? (function | record | enum | protocol | impl | test)
+protocol   := 'protocol' ident '{' function_signature* '}'
+impl       := 'impl' ident 'for' type '{' function* '}'
 function   := 'fn' ident generic_params? '(' params? ')' '->' type block
 generic_params := '<' generic_param (',' generic_param)* '>'
 generic_param  := ident (':' ('Eq' | 'Ord' | 'Number' | 'Text' | ident))?
-protocol   := 'protocol' ident '{' '}'
-impl       := 'impl' ident 'for' ident '{' '}'
 test       := 'test' string '{' expect_call* '}'
 block      := '{' newline statement* '}'
 statement  := let_stmt | var_stmt | assignment | if_stmt | while_stmt

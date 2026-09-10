@@ -122,6 +122,7 @@ type FunctionScan = {
   headers: List<Int>
   bodies: List<Int>
   protocolNames: List<Text>
+  protocolSchemas: List<Text>
   implementations: List<Text>
   problem: Text
 }
@@ -161,6 +162,9 @@ fn makeToken(kind: Text, text: Text, line: Int): Token =
 
 fn makeInstruction(op: Text, text: Text, number: Int, line: Int): Instruction =
   Instruction { op: op, text: text, number: number, line: line }
+
+fn instructionAt(code: List<Instruction>, index: Int): Instruction =
+  List.getOrPanic(code, index)
 
 fn intValue(value: Int): Text = "i:" ++ intToText(value)
 
@@ -508,7 +512,7 @@ fn parseAtom(tokens: List<Token>, index: Int): ExprResult = {
     val arguments = parseCallArguments(tokens, index + 2)
     val isRecord = List.len(arguments.labels) > 0
     val isJsonDecode = Text.endsWith(current.text, ".from_json")
-    val isVariant = not isJsonDecode and Text.contains(current.text, ".") and startsUppercase(current.text)
+    val isVariant = not isJsonDecode and Text.contains(current.text, ".") and startsUppercase(current.text) and (arguments.count == 0 or List.len(arguments.labels) > 0)
     val recordName = if isJsonDecode then Text.slice(current.text, 0, Text.len(current.text) - 10) else ""
     ExprResult {
       next: arguments.next,
@@ -1244,6 +1248,7 @@ fn scanFunctions(tokens: List<Token>): FunctionScan = {
   var headers: List<Int> = []
   var bodies: List<Int> = []
   var protocolNames: List<Text> = []
+  var protocolSchemas: List<Text> = []
   var implementations: List<Text> = []
   var problem = ""
   var index = 0
@@ -1258,14 +1263,30 @@ fn scanFunctions(tokens: List<Token>): FunctionScan = {
         val protocolName = at(tokens, index + 1)
         var brace = index + 2
         while not Text.eq(at(tokens, brace).text, "{") and not Text.eq(at(tokens, brace).kind, "eof") { brace = brace + 1 }
-        val finish = skipNewlines(tokens, brace + 1)
         if not Text.eq(protocolName.kind, "name") then { problem = "E0250 expected protocol name" }
         else if containsName(protocolNames, protocolName.text) then { problem = "E0251 line " ++ intToText(protocolName.line) ++ ": duplicate protocol `" ++ protocolName.text ++ "`" }
         else if not Text.eq(at(tokens, brace).text, "{") then { problem = "E0252 line " ++ intToText(protocolName.line) ++ ": expected `{` after protocol name" }
-        else if not Text.eq(at(tokens, finish).text, "}") then { problem = "E0253 line " ++ intToText(protocolName.line) ++ ": marker protocol body must be empty" }
         else {
+          var cursor = skipNewlines(tokens, brace + 1)
+          var methods: List<Text> = []
+          var methodNames: List<Text> = []
+          while not Text.eq(at(tokens, cursor).text, "}") and Text.eq(problem, "") {
+            val methodHeader = cursor
+            val methodName = at(tokens, cursor + 1)
+            if not Text.eq(at(tokens, cursor).text, "fn") or not Text.eq(methodName.kind, "name") then { problem = "E0253 line " ++ intToText(at(tokens, cursor).line) ++ ": expected protocol method signature" }
+            else if containsName(methodNames, methodName.text) then { problem = "E0260 line " ++ intToText(methodName.line) ++ ": duplicate protocol method `" ++ methodName.text ++ "`" }
+            else {
+              val types = parameterTypes(tokens, methodHeader)
+              val returns = functionReturnType(tokens, methodHeader)
+              methods = List.push(methods, methodName.text ++ "=" ++ Text.join(types, ",") ++ "@" ++ returns)
+              methodNames = List.push(methodNames, methodName.text)
+              while not Text.eq(at(tokens, cursor).kind, "newline") and not Text.eq(at(tokens, cursor).text, "}") and not Text.eq(at(tokens, cursor).kind, "eof") { cursor = cursor + 1 }
+              cursor = skipNewlines(tokens, cursor)
+            }
+          }
           protocolNames = List.push(protocolNames, protocolName.text)
-          index = finish + 1
+          protocolSchemas = List.push(protocolSchemas, Text.join(methods, ";"))
+          index = cursor + 1
         }
       } else if Text.eq(at(tokens, index).text, "impl") then {
         val protocolName = at(tokens, index + 1)
@@ -1273,15 +1294,37 @@ fn scanFunctions(tokens: List<Token>): FunctionScan = {
         val typeName = at(tokens, index + 3)
         var brace = index + 4
         while not Text.eq(at(tokens, brace).text, "{") and not Text.eq(at(tokens, brace).kind, "eof") { brace = brace + 1 }
-        val finish = skipNewlines(tokens, brace + 1)
-        val implementation = protocolName.text ++ "|" ++ typeName.text
+        val implementationBase = protocolName.text ++ "|" ++ typeName.text
+        var duplicateImplementation = false
+        for existing in implementations { if Text.startsWith(existing, implementationBase ++ "|") or Text.eq(existing, implementationBase) then { duplicateImplementation = true } }
         if not Text.eq(protocolName.kind, "name") or not Text.eq(forToken.text, "for") or not Text.eq(typeName.kind, "name") then { problem = "E0254 line " ++ intToText(at(tokens, index).line) ++ ": expected `impl Protocol for Type`" }
-        else if containsName(implementations, implementation) then { problem = "E0255 line " ++ intToText(protocolName.line) ++ ": duplicate implementation of `" ++ protocolName.text ++ "` for `" ++ typeName.text ++ "`" }
+        else if duplicateImplementation then { problem = "E0255 line " ++ intToText(protocolName.line) ++ ": duplicate implementation of `" ++ protocolName.text ++ "` for `" ++ typeName.text ++ "`" }
         else if not Text.eq(at(tokens, brace).text, "{") then { problem = "E0256 line " ++ intToText(protocolName.line) ++ ": expected `{` after implementation" }
-        else if not Text.eq(at(tokens, finish).text, "}") then { problem = "E0257 line " ++ intToText(protocolName.line) ++ ": marker implementation body must be empty" }
         else {
-          implementations = List.push(implementations, implementation)
-          index = finish + 1
+          var cursor = skipNewlines(tokens, brace + 1)
+                   var methodNames: List<Text> = []
+                   while not Text.eq(at(tokens, cursor).text, "}") and Text.eq(problem, "") {
+            val methodHeader = cursor
+            val methodName = at(tokens, cursor + 1)
+            val staticName = typeName.text ++ "." ++ methodName.text
+            if not Text.eq(at(tokens, cursor).text, "fn") or not Text.eq(methodName.kind, "name") then { problem = "E0257 line " ++ intToText(at(tokens, cursor).line) ++ ": expected implementation method" }
+            else if containsName(methodNames, methodName.text) or containsName(names, staticName) then { problem = "E0261 line " ++ intToText(methodName.line) ++ ": duplicate implementation method `" ++ methodName.text ++ "`" }
+            else {
+              var methodBrace = cursor + 2
+              while not Text.eq(at(tokens, methodBrace).text, "{") and not Text.eq(at(tokens, methodBrace).kind, "eof") { methodBrace = methodBrace + 1 }
+              if Text.eq(at(tokens, methodBrace).kind, "eof") then { problem = "E0223 function `" ++ staticName ++ "` has no body" }
+              else {
+                names = List.push(names, staticName)
+                counts = List.push(counts, List.len(parameterNames(tokens, methodHeader)))
+                headers = List.push(headers, methodHeader)
+                bodies = List.push(bodies, methodBrace + 1)
+                methodNames = List.push(methodNames, methodName.text)
+                cursor = skipNewlines(tokens, blockEnd(tokens, methodBrace + 1))
+              }
+            }
+          }
+          implementations = List.push(implementations, implementationBase ++ "|" ++ Text.join(methodNames, ","))
+          index = cursor + 1
         }
       } else if Text.eq(at(tokens, index).text, "type") or Text.eq(at(tokens, index).text, "enum") then {
         while not Text.eq(at(tokens, index).text, "{") and not Text.eq(at(tokens, index).kind, "eof") { index = index + 1 }
@@ -1328,7 +1371,7 @@ fn scanFunctions(tokens: List<Token>): FunctionScan = {
     }
   }
   if Text.eq(problem, "") and not containsName(names, "main") then { problem = "E0201 missing `fn main`" }
-  FunctionScan { names: names, counts: counts, headers: headers, bodies: bodies, protocolNames: protocolNames, implementations: implementations, problem: problem }
+  FunctionScan { names: names, counts: counts, headers: headers, bodies: bodies, protocolNames: protocolNames, protocolSchemas: protocolSchemas, implementations: implementations, problem: problem }
 }
 
 fn compile(tokens: List<Token>): CompileResult = {
@@ -1342,12 +1385,15 @@ fn compile(tokens: List<Token>): CompileResult = {
     makeInstruction("enum_type", "Result<T,E>|Ok=value=T;Err=error=E", 0, 0)
   ]
   var problem = if not Text.eq(records.problem, "") then records.problem else if not Text.eq(enums.problem, "") then enums.problem else functions.problem
-  for protocolName in functions.protocolNames {
-    code = List.pushMut(code, makeInstruction("protocol_type", protocolName, 0, 0))
+  var protocolIndex = 0
+  while protocolIndex < List.len(functions.protocolNames) {
+    code = List.pushMut(code, makeInstruction("protocol_type", List.getOrPanic(functions.protocolNames, protocolIndex) ++ "|" ++ List.getOrPanic(functions.protocolSchemas, protocolIndex), 0, 0))
+    protocolIndex = protocolIndex + 1
   }
   for implementation in functions.implementations {
-    val protocolName = beforePipe(implementation)
-    val typeName = afterPipe(implementation)
+    val implementationParts = Text.split(implementation, "|")
+    val protocolName = List.getOrPanic(implementationParts, 0)
+    val typeName = List.getOrPanic(implementationParts, 1)
     if Text.eq(problem, "") and not containsName(functions.protocolNames, protocolName) then { problem = "E0258 unknown protocol `" ++ protocolName ++ "` in implementation" }
     else if Text.eq(problem, "") and not Text.eq(typeName, "int") and not Text.eq(typeName, "str") and not Text.eq(typeName, "bool") and not containsGenericName(records.names, typeName) and not containsGenericName(enums.names, typeName) then { problem = "E0259 unknown type `" ++ typeName ++ "` in protocol implementation" }
     code = List.pushMut(code, makeInstruction("protocol_impl", implementation, 0, 0))
@@ -1400,6 +1446,51 @@ fn compile(tokens: List<Token>): CompileResult = {
       }
     }
     functionIndex = functionIndex + 1
+  }
+  for implementation in functions.implementations {
+    if Text.eq(problem, "") then {
+      val implementationParts = Text.split(implementation, "|")
+      val protocolName = List.getOrPanic(implementationParts, 0)
+      val typeName = List.getOrPanic(implementationParts, 1)
+      val methodText = if List.len(implementationParts) > 2 then List.getOrPanic(implementationParts, 2) else ""
+      val methodNames = if Text.eq(methodText, "") then [] else Text.split(methodText, ",")
+      val protocolPosition = nameIndex(functions.protocolNames, protocolName)
+      if protocolPosition >= 0 then {
+        val schema = List.getOrPanic(functions.protocolSchemas, protocolPosition)
+        val required = if Text.eq(schema, "") then [] else Text.split(schema, ";")
+        for method in required {
+          if Text.eq(problem, "") then {
+            val methodName = schemaFieldName(method)
+            val target = findFunction(code, typeName ++ "." ++ methodName)
+            if target < 0 or not containsName(methodNames, methodName) then { problem = "E0262 implementation of `" ++ protocolName ++ "` for `" ++ typeName ++ "` is missing method `" ++ methodName ++ "`" }
+            else {
+              val signature = schemaFieldType(method)
+              val separator = Text.indexOf(signature, "@") ?? -1
+              val parameterText = if separator < 0 then "" else Text.slice(signature, 0, separator)
+              val expectedReturn = if separator < 0 then "unknown" else Text.replace(Text.slice(signature, separator + 1, Text.len(signature)), "Self", typeName)
+              val expectedParameters = if Text.eq(parameterText, "") then [] else Text.split(parameterText, ",")
+              val markerNumber = instructionAt(code, target).number
+              val markerText = instructionAt(code, target).text
+              if markerNumber != List.len(expectedParameters) or not Text.eq(markerReturnType(markerText), expectedReturn) then { problem = "E0263 method `" ++ typeName ++ "." ++ methodName ++ "` does not match protocol signature" }
+              else {
+                var parameterIndex = 0
+                while parameterIndex < List.len(expectedParameters) and Text.eq(problem, "") {
+                  val expected = Text.replace(List.getOrPanic(expectedParameters, parameterIndex), "Self", typeName)
+                  val actual = afterPipe(instructionAt(code, target + markerNumber - parameterIndex).text)
+                  if not Text.eq(expected, actual) then { problem = "E0263 method `" ++ typeName ++ "." ++ methodName ++ "` does not match protocol signature" }
+                  parameterIndex = parameterIndex + 1
+                }
+              }
+            }
+          }
+        }
+        for methodName in methodNames {
+          var declared = false
+          for method in required { if Text.eq(schemaFieldName(method), methodName) then { declared = true } }
+          if Text.eq(problem, "") and not declared then { problem = "E0264 method `" ++ methodName ++ "` is not declared by protocol `" ++ protocolName ++ "`" }
+        }
+      }
+    }
   }
   val typeProblem = if Text.eq(problem, "") then verifyTypes(code) else problem
   CompileResult { code: code, problem: typeProblem }
@@ -1654,7 +1745,7 @@ fn genericConstraintFor(constraints: Text, name: Text): Text = {
 fn hasProtocol(code: List<Instruction>, name: Text): Bool = {
   var found = false
   for item in code {
-    if Text.eq(item.op, "protocol_type") and Text.eq(item.text, name) then { found = true }
+    if Text.eq(item.op, "protocol_type") and Text.eq(beforePipe(item.text), name) then { found = true }
   }
   found
 }
@@ -1662,7 +1753,10 @@ fn hasProtocol(code: List<Instruction>, name: Text): Bool = {
 fn hasProtocolImplementation(code: List<Instruction>, protocolName: Text, valueType: Text): Bool = {
   var found = false
   for item in code {
-    if Text.eq(item.op, "protocol_impl") and Text.eq(item.text, protocolName ++ "|" ++ genericBase(valueType)) then { found = true }
+    if Text.eq(item.op, "protocol_impl") then {
+      val parts = Text.split(item.text, "|")
+      if List.len(parts) > 1 and Text.eq(List.getOrPanic(parts, 0), protocolName) and Text.eq(List.getOrPanic(parts, 1), genericBase(valueType)) then { found = true }
+    }
   }
   found
 }
@@ -3305,7 +3399,7 @@ fn apiManifest(): Text = {
   JsonValue.set(root, "language", Json.string("Lume"))
   JsonValue.set(root, "version", Json.string("0.1.0-bootstrap"))
   val features = Json.array()
-  for feature in ["bindings", "static_types", "homogeneous_lists", "generics", "generic_constraints", "marker_protocols", "explicit_protocol_implementations", "generic_records", "generic_enums", "option", "result", "list_map", "list_filter", "list_find", "list_fold", "function_values", "closures", "immutable_capture", "native_test_runner", "test_directory_discovery", "result_propagation", "records", "nested_records", "field_access", "record_updates", "typed_json_decoding", "enums", "variant_payloads", "match_expressions", "exhaustive_matching", "payload_destructuring", "if_else", "while", "functions", "recursion", "bytecode_cache"] {
+  for feature in ["bindings", "static_types", "homogeneous_lists", "generics", "generic_constraints", "protocols", "protocol_methods", "static_protocol_dispatch", "explicit_protocol_implementations", "generic_records", "generic_enums", "option", "result", "list_map", "list_filter", "list_find", "list_fold", "function_values", "closures", "immutable_capture", "native_test_runner", "test_directory_discovery", "result_propagation", "records", "nested_records", "field_access", "record_updates", "typed_json_decoding", "enums", "variant_payloads", "match_expressions", "exhaustive_matching", "payload_destructuring", "if_else", "while", "functions", "recursion", "bytecode_cache"] {
     JsonValue.push(features, Json.string(feature))
   }
   JsonValue.set(root, "features", features)
