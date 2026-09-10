@@ -1,0 +1,113 @@
+use task_board.model
+use task_board.rules
+use task_board.board
+use task_board.render
+use task_board.insights
+
+fn usage() -> str {
+  return "usage: task_board <seed.json> <board|blocked|stats|next|complete|search|export> [args...]"
+}
+
+fn main(args: [str]) -> int {
+  if args.count() < 2 {
+    eprint(usage())
+    return 64
+  }
+
+  let path = args.get(0)
+  let command = args.get(1)
+
+  let read_result = fs.try_read_text(path)
+  if result.is_ok(read_result) == false {
+    eprint(result.error(read_result))
+    return 1
+  }
+  let text = result.value(read_result)
+
+  let parsed = model.parse(text)
+  if result.is_ok(parsed) == false {
+    eprint(result.error(parsed))
+    return 1
+  }
+  let tasks = result.value(parsed)
+
+  let validated = rules.validate(tasks)
+  if rules.is_valid(validated) == false {
+    eprint(rules.error_of(validated))
+    return 1
+  }
+  let valid_tasks = rules.unwrap(validated)
+
+  if command == "board" {
+    print(render.board(valid_tasks))
+    return 0
+  }
+
+  if command == "blocked" {
+    print(render.board(board.filter_blocked(valid_tasks)))
+    return 0
+  }
+
+  if command == "stats" {
+    print(board.count_pending(valid_tasks))
+    print(board.count_in_progress(valid_tasks))
+    print(board.count_blocked(valid_tasks))
+    print(board.count_done(valid_tasks))
+    print(board.total_priority_weight(valid_tasks))
+    print(insights.short_title_count(valid_tasks))
+    return 0
+  }
+
+  if command == "next" {
+    let picked = board.next_task(valid_tasks)
+    print(match picked {
+      None => "no open tasks"
+      Some(task) => render.task(task)
+    })
+    return 0
+  }
+
+  if command == "complete" {
+    if args.count() < 4 {
+      eprint("usage: task_board <seed.json> complete <task_id> <completed_by>")
+      return 64
+    }
+    let target_id = args.get(2)
+    let completed_by = args.get(3)
+    print(render.board(board.complete_task(valid_tasks, target_id, completed_by)))
+    return 0
+  }
+
+  if command == "search" {
+    if args.count() < 3 {
+      eprint("usage: task_board <seed.json> search <term>")
+      return 64
+    }
+    let needle = args.get(2)
+    print(match insights.first_match(valid_tasks, needle) {
+      None => "no match"
+      Some(task) => "first match: " + render.task(task)
+    })
+    print(render.board(insights.search(valid_tasks, needle)))
+    return 0
+  }
+
+  if command == "export" {
+    if args.count() < 3 {
+      eprint("usage: task_board <seed.json> export <path>")
+      return 64
+    }
+    let out_path = args.get(2)
+    let saved = insights.export(valid_tasks, out_path)
+    if result.is_ok(saved) == false {
+      eprint(result.error(saved))
+      return 1
+    }
+    print("exported to " + out_path)
+    return 0
+  }
+
+  eprint("unknown command: " + command)
+  eprint(usage())
+  return 64
+}

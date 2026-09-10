@@ -401,9 +401,40 @@ let offset = 10
 let shifted = list.map([1, 2, 3], fn(value: int) -> int => double(value) + offset)
 ```
 
-Callback parameter and return types are validated at compile time. Callbacks
-may capture immutable `let` bindings. Capturing mutable `var` bindings is
-rejected, so a closure is a stable snapshot rather than shared mutable state.
+Callback parameter and return types are validated at compile time. A plain
+`&name` function reference is deliberately non-capturing and runs in a
+restricted evaluator: it may use parameters, literals, arithmetic,
+comparisons, and other function references, but not field access, `match`,
+or calls into other functions — not even builtins like `str.len`. An inline
+closure (`fn(value: int) -> int => ...`) may capture immutable `let`
+bindings instead; capturing mutable `var` bindings is rejected, so a closure
+is a stable snapshot rather than shared mutable state. Transformations over
+records or enums, or anything that needs a helper call, should be written as
+ordinary `while`-loop functions or an inline closure rather than a `&name`
+reference.
+
+## Example: a multi-module task board
+
+[`examples/task_board.lume`](examples/task_board.lume) and
+[`examples/task_board/`](examples/task_board) are a larger, deliberately
+"real" program built from everything above: a JSON-backed task tracker split
+across five modules (`model`, `rules`, `board`, `render`, `insights`). It
+decodes a flat JSON seed file into typed records, promotes it into a domain
+model with payload-carrying enums (`Status`, `Priority`), validates it with a
+structured error enum, and answers a handful of CLI commands by combining
+`while`-loop traversal, `list.fold`/`list.filter`, `Option<T>` (including a
+user-defined generic `first<T>`), `Result<T, E>`, immutable record updates,
+and file I/O (`fs.try_write_text` for `export`).
+
+```powershell
+.\dist\lume.exe run .\examples\task_board.lume .\examples\task_board\seed.json board
+.\dist\lume.exe run .\examples\task_board.lume .\examples\task_board\seed.json blocked
+.\dist\lume.exe run .\examples\task_board.lume .\examples\task_board\seed.json stats
+.\dist\lume.exe run .\examples\task_board.lume .\examples\task_board\seed.json next
+.\dist\lume.exe run .\examples\task_board.lume .\examples\task_board\seed.json complete t-1 Ada
+.\dist\lume.exe run .\examples\task_board.lume .\examples\task_board\seed.json search auth
+.\dist\lume.exe run .\examples\task_board.lume .\examples\task_board\seed.json export board.txt
+```
 
 ## Bytecode cache and performance
 

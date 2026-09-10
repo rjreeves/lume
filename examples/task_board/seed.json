@@ -1,0 +1,9 @@
+{
+  "tasks": [
+    {"id": "t-1", "title": "Design the database schema", "priority_level": 3, "status_code": "pending", "assignee": "", "reason": "", "completed_by": ""},
+    {"id": "t-2", "title": "Build the authentication flow", "priority_level": 4, "status_code": "in_progress", "assignee": "Grace", "reason": "", "completed_by": ""},
+    {"id": "t-3", "title": "Investigate flaky integration test", "priority_level": 2, "status_code": "blocked", "assignee": "", "reason": "waiting on infra ticket INFRA-42", "completed_by": ""},
+    {"id": "t-4", "title": "Publish the release changelog", "priority_level": 1, "status_code": "done", "assignee": "", "reason": "", "completed_by": "Ada"},
+    {"id": "t-5", "title": "Draft the onboarding guide", "priority_level": 2, "status_code": "pending", "assignee": "", "reason": "", "completed_by": ""}
+  ]
+}

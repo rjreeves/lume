@@ -1,0 +1,84 @@
+type RawTask {
+  id: str
+  title: str
+  priority_level: int
+  status_code: str
+  assignee: str
+  reason: str
+  completed_by: str
+}
+
+type RawTaskFile {
+  tasks: [RawTask]
+}
+
+enum Priority {
+  low
+  medium
+  high
+  critical
+}
+
+enum Status {
+  pending
+  in_progress(assignee: str)
+  blocked(reason: str)
+  done(completed_by: str)
+}
+
+type Task {
+  id: str
+  title: str
+  priority: Priority
+  status: Status
+}
+
+fn classify_priority(level: int) -> Priority {
+  if level >= 4 {
+    return Priority.critical()
+  }
+  if level == 3 {
+    return Priority.high()
+  }
+  if level == 2 {
+    return Priority.medium()
+  }
+  return Priority.low()
+}
+
+fn classify_status(raw: RawTask) -> Status {
+  if raw.status_code == "in_progress" {
+    return Status.in_progress(assignee: raw.assignee)
+  }
+  if raw.status_code == "blocked" {
+    return Status.blocked(reason: raw.reason)
+  }
+  if raw.status_code == "done" {
+    return Status.done(completed_by: raw.completed_by)
+  }
+  return Status.pending()
+}
+
+fn promote(raw: RawTask) -> Task {
+  return Task(id: raw.id, title: raw.title, priority: classify_priority(raw.priority_level), status: classify_status(raw))
+}
+
+fn empty_tasks() -> [Task] {
+  return []
+}
+
+fn promote_all(raws: [RawTask]) -> [Task] {
+  var output = empty_tasks()
+  var index = 0
+  while index < list.len(raws) {
+    let raw = list.get(raws, index)
+    output = list.push(output, promote(raw))
+    index = index + 1
+  }
+  return output
+}
+
+pub fn model.parse(text: str) -> [Task] ! str {
+  let file = RawTaskFile.from_json(text)?
+  return result.ok(promote_all(file.tasks))
+}

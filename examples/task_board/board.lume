@@ -1,0 +1,177 @@
+fn is_pending(status: Status) -> bool {
+  return match status {
+    pending => true
+    in_progress(assignee) => false
+    blocked(reason) => false
+    done(completed_by) => false
+  }
+}
+
+fn is_in_progress(status: Status) -> bool {
+  return match status {
+    pending => false
+    in_progress(assignee) => true
+    blocked(reason) => false
+    done(completed_by) => false
+  }
+}
+
+fn is_blocked(status: Status) -> bool {
+  return match status {
+    pending => false
+    in_progress(assignee) => false
+    blocked(reason) => true
+    done(completed_by) => false
+  }
+}
+
+fn is_done(status: Status) -> bool {
+  return match status {
+    pending => false
+    in_progress(assignee) => false
+    blocked(reason) => false
+    done(completed_by) => true
+  }
+}
+
+fn is_open(status: Status) -> bool {
+  return match status {
+    pending => true
+    in_progress(assignee) => true
+    blocked(reason) => true
+    done(completed_by) => false
+  }
+}
+
+fn priority_weight(priority: Priority) -> int {
+  return match priority {
+    low => 1
+    medium => 2
+    high => 3
+    critical => 4
+  }
+}
+
+fn empty_weights() -> [int] {
+  return []
+}
+
+fn add(total: int, value: int) -> int {
+  return total + value
+}
+
+fn no_pick() -> Option<Task> {
+  return Option.None()
+}
+
+pub fn board.count_pending(tasks: [Task]) -> int {
+  var index = 0
+  var count = 0
+  while index < list.len(tasks) {
+    let task = list.get(tasks, index)
+    if is_pending(task.status) {
+      count = count + 1
+    }
+    index = index + 1
+  }
+  return count
+}
+
+pub fn board.count_in_progress(tasks: [Task]) -> int {
+  var index = 0
+  var count = 0
+  while index < list.len(tasks) {
+    let task = list.get(tasks, index)
+    if is_in_progress(task.status) {
+      count = count + 1
+    }
+    index = index + 1
+  }
+  return count
+}
+
+pub fn board.count_blocked(tasks: [Task]) -> int {
+  var index = 0
+  var count = 0
+  while index < list.len(tasks) {
+    let task = list.get(tasks, index)
+    if is_blocked(task.status) {
+      count = count + 1
+    }
+    index = index + 1
+  }
+  return count
+}
+
+pub fn board.count_done(tasks: [Task]) -> int {
+  var index = 0
+  var count = 0
+  while index < list.len(tasks) {
+    let task = list.get(tasks, index)
+    if is_done(task.status) {
+      count = count + 1
+    }
+    index = index + 1
+  }
+  return count
+}
+
+pub fn board.total_priority_weight(tasks: [Task]) -> int {
+  var weights = empty_weights()
+  var index = 0
+  while index < list.len(tasks) {
+    let task = list.get(tasks, index)
+    weights = list.push(weights, priority_weight(task.priority))
+    index = index + 1
+  }
+  return list.fold(weights, 0, &add)
+}
+
+pub fn board.filter_blocked(tasks: [Task]) -> [Task] {
+  var output = empty_tasks()
+  var index = 0
+  while index < list.len(tasks) {
+    let task = list.get(tasks, index)
+    if is_blocked(task.status) {
+      output = list.push(output, task)
+    }
+    index = index + 1
+  }
+  return output
+}
+
+pub fn board.next_task(tasks: [Task]) -> Option<Task> {
+  var best = no_pick()
+  var best_weight = 0
+  var index = 0
+  while index < list.len(tasks) {
+    let candidate = list.get(tasks, index)
+    if is_open(candidate.status) {
+      let weight = priority_weight(candidate.priority)
+      if weight > best_weight {
+        best = Option.Some(value: candidate)
+        best_weight = weight
+      }
+    }
+    index = index + 1
+  }
+  return best
+}
+
+pub fn board.complete_task(tasks: [Task], target_id: str, completed_by: str) -> [Task] {
+  var updated = empty_tasks()
+  var index = 0
+  while index < list.len(tasks) {
+    let task = list.get(tasks, index)
+    if task.id == target_id {
+      let finished = task with {
+        status: Status.done(completed_by: completed_by)
+      }
+      updated = list.push(updated, finished)
+    } else {
+      updated = list.push(updated, task)
+    }
+    index = index + 1
+  }
+  return updated
+}
