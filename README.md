@@ -402,16 +402,19 @@ let shifted = list.map([1, 2, 3], fn(value: int) -> int => double(value) + offse
 ```
 
 Callback parameter and return types are validated at compile time. A plain
-`&name` function reference is deliberately non-capturing and runs in a
-restricted evaluator: it may use parameters, literals, arithmetic,
-comparisons, and other function references, but not field access, `match`,
-or calls into other functions — not even builtins like `str.len`. An inline
-closure (`fn(value: int) -> int => ...`) may capture immutable `let`
-bindings instead; capturing mutable `var` bindings is rejected, so a closure
-is a stable snapshot rather than shared mutable state. Transformations over
-records or enums, or anything that needs a helper call, should be written as
-ordinary `while`-loop functions or an inline closure rather than a `&name`
-reference.
+`&name` function reference is deliberately non-capturing; an inline closure
+(`fn(value: int) -> int => ...`) may instead capture an enclosing `let`
+binding by value — capturing a `var` is rejected, so a closure is a stable
+snapshot rather than shared mutable state. Both run in the same restricted
+evaluator: field access, arithmetic, comparisons, `if`/`while`, calls to
+other functions (including builtins, transitively), and `with` updates all
+work; `match` does not, anywhere in the callback's reachable call graph —
+that one case fails at run time with "callback uses unsupported operation".
+A transformation that needs to pattern-match an enum should be written as
+an ordinary `while`-loop function called directly instead. Neither a
+`&name` reference nor a closure is a general first-class value yet — both
+are usable only as the direct, inline argument to `list.map`/`filter`/
+`find`/`fold`; a closure bound to a `let` cannot be called later.
 
 ## Example: a multi-module task board
 
