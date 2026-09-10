@@ -171,7 +171,10 @@ The core containers and codecs may accept types with bracket syntax:
 let users = json.decode[[User]](text)!
 ```
 
-Version 0.1 does not allow user-defined generics. Built-in generic operations target type-erased runtime implementations, avoiding per-type code generation.
+Generic functions, records, and enums are type-erased. A generic function may
+use a built-in constraint such as `T: Eq`, `T: Ord`, `T: Number`, or `T: Text`.
+Constraints are validated after call-site inference and do not generate a copy
+of the function for each concrete type.
 
 ## 13. Concurrency
 
@@ -182,7 +185,9 @@ Concurrency is intentionally deferred from the core. A later version may add str
 ```text
 file       := use_decl* declaration* EOF
 declaration:= ('pub')? (function | record | enum | constant)
-function   := 'fn' ident '(' params? ')' '->' type block
+function   := 'fn' ident generic_params? '(' params? ')' '->' type block
+generic_params := '<' generic_param (',' generic_param)* '>'
+generic_param := ident (':' ('Eq' | 'Ord' | 'Number' | 'Text'))?
 block      := '{' newline statement* '}'
 statement  := let_stmt | var_stmt | assignment | if_stmt | while_stmt
             | for_stmt | match_stmt | return_stmt | break_stmt

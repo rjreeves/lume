@@ -1,0 +1,8 @@
+fn requires_number<T: Number>(value: T) -> T {
+  return value
+}
+
+fn main(args: [str]) -> int {
+  let value = requires_number("not a number")
+  return 0
+}

@@ -216,6 +216,19 @@ Run the bootstrap smoke tests with:
 .\test.ps1
 ```
 
+Lume programs can also contain named native tests:
+
+```lume
+test "adds two values" {
+  expect.equal(add(20, 22), 42)
+}
+```
+
+Run every test in a file with `lume test tests.lume`. Each test is reported as
+PASS or FAIL, followed by a summary; any failure produces exit code 1. Use
+`--filter text` to select tests by name. Assertions include `expect.equal`,
+`expect.true`, `expect.some`, `expect.ok`, and `expect.err`.
+
 The broader syntax in the specification is the roadmap, not yet all implemented
 by the bootstrap.
 
@@ -326,6 +339,18 @@ fn identity<T>(value: T) -> T {
 let number = Box(value: identity(42))
 ```
 
+Generic functions may constrain inferred types with one of four lightweight,
+built-in requirements: `Eq`, `Ord`, `Number`, or `Text`.
+
+```lume
+fn keep_number<T: Number>(value: T) -> T {
+  return value
+}
+```
+
+Constraints are checked at the call site and remain type-erased at runtime, so
+they do not introduce monomorphization cost.
+
 `Option<T>` and `Result<T, E>` are always available. Their variants work with
 the same exhaustive `match` syntax as declared enums. Use `?` inside a
 result-returning function to return an error immediately; `!` remains supported
@@ -340,7 +365,7 @@ fn load() -> Result<str, str> {
 
 ### Generic list transformations
 
-Pass a statically checked function reference using `&name`:
+Pass a statically checked named function with `&name`, or use an inline closure:
 
 ```lume
 fn double(value: int) -> int { return value * 2 }
@@ -351,11 +376,13 @@ let doubled = list.map([1, 2, 3], &double)
 let evens = list.filter([1, 2, 3], &even)
 let first_even = list.find([1, 2, 3], &even)
 let total = list.fold([1, 2, 3], 0, &add)
+let offset = 10
+let shifted = list.map([1, 2, 3], fn(value: int) -> int => double(value) + offset)
 ```
 
 Callback parameter and return types are validated at compile time. Callbacks
-are deliberately non-capturing, keeping their runtime representation and
-compiler cost small.
+may capture immutable `let` bindings. Capturing mutable `var` bindings is
+rejected, so a closure is a stable snapshot rather than shared mutable state.
 
 ## Bytecode cache and performance
 

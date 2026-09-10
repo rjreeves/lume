@@ -1,0 +1,7 @@
+test "shows expected and actual values" {
+  expect.equal(41, 42)
+}
+
+fn main(args: [str]) -> int {
+  return 0
+}

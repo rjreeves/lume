@@ -1,0 +1,23 @@
+fn keep_eq<T: Eq>(value: T) -> T {
+  return value
+}
+
+fn keep_ordered<T: Ord>(value: T) -> T {
+  return value
+}
+
+fn keep_number<T: Number>(value: T) -> T {
+  return value
+}
+
+fn keep_text<T: Text>(value: T) -> T {
+  return value
+}
+
+fn main(args: [str]) -> int {
+  print(keep_eq(true))
+  print(keep_ordered("lume"))
+  print(keep_number(42))
+  print(keep_text("fast"))
+  return 0
+}
