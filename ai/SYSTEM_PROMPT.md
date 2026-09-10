@@ -35,3 +35,7 @@ Use dotted names exactly as shown. Lists must contain one element type; `list.pu
 Pass named functions as values with `&name`. Inline closures use `fn(value: int) -> int => value + offset`. Closure parameter and return types are required. Closures may capture `let` bindings but may not capture `var` bindings.
 
 Generic functions may use `T: Eq`, `T: Ord`, `T: Number`, or `T: Text`. Native tests use `test "name" { expect.equal(actual, expected) }`; available assertions are equal, true, some, ok, and err. Run them with `lume test file.lume`, optionally followed by `--filter text`.
+
+User-defined marker constraints use `protocol Named {}` and `impl Named for User {}`. Protocol and implementation bodies must currently be empty. Passing a directory to `lume test` discovers direct `*_test.lume` children.
+
+Marker protocols use `protocol Named {}` and explicit `impl Named for User {}` declarations. They may constrain generic functions but do not yet declare methods.

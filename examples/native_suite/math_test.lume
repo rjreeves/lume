@@ -1,0 +1,7 @@
+test "math works" {
+  expect.equal(6 * 7, 42)
+}
+
+fn main(args: [str]) -> int {
+  return 0
+}

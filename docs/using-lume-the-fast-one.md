@@ -521,6 +521,24 @@ if any expectation or runtime operation fails. Assertions include
 `expect.equal`, `expect.true`, `expect.some`, `expect.ok`, and `expect.err`.
 Failure output contains the test declaration line and expected/actual values
 where applicable. Select tests by name with `--filter text`.
+Passing a directory discovers each direct `*_test.lume` child.
+
+### Marker protocols
+
+User-defined constraints start as explicit marker protocols:
+
+```lume
+protocol Named {}
+impl Named for User {}
+
+fn keep_named<T: Named>(value: T) -> T {
+  return value
+}
+```
+
+The compiler verifies that the protocol and target type exist and that each
+implementation is unique. Generic calls require a matching implementation.
+This stage deliberately has no protocol methods or runtime dispatch.
 
 `lume run` maintains a hash-validated `.lbc` bytecode cache beside the source.
 Unchanged source can skip lexing, parsing, static validation, and emission.
@@ -555,6 +573,7 @@ used while preparing this book measured:
 | Closures and function values, 30 iterations | 31,371 |
 | Generic constraints and native test runner, 30 iterations | 31,221 |
 | Named test blocks and expectations, 30 iterations | 31,682 |
+| Test discovery and marker protocols, 30 iterations | 30,142 |
 
 Short runs vary with operating-system scheduling and machine load. Compare
 median results on the same machine and workload. Lume's design gate rejects a

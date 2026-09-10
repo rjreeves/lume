@@ -176,6 +176,11 @@ use a built-in constraint such as `T: Eq`, `T: Ord`, `T: Number`, or `T: Text`.
 Constraints are validated after call-site inference and do not generate a copy
 of the function for each concrete type.
 
+Marker protocols extend the constraint vocabulary without runtime dispatch:
+`protocol Named {}` declares a capability and `impl Named for User {}` opts a
+type into it. Non-empty protocol signatures and implementations are reserved
+for the next protocol stage.
+
 ## 13. Concurrency
 
 Concurrency is intentionally deferred from the core. A later version may add structured tasks with explicit `spawn` and `await`. Threads, async coloring, actors, and callbacks should not all coexist; the design must select one canonical model after measurement.
@@ -184,7 +189,9 @@ Concurrency is intentionally deferred from the core. A later version may add str
 
 ```text
 file       := use_decl* declaration* EOF
-declaration:= ('pub')? (function | record | enum | constant)
+declaration:= ('pub')? (function | record | enum | protocol | impl | constant)
+protocol   := 'protocol' ident '{' '}'
+impl       := 'impl' ident 'for' type '{' '}'
 function   := 'fn' ident generic_params? '(' params? ')' '->' type block
 generic_params := '<' generic_param (',' generic_param)* '>'
 generic_param := ident (':' ('Eq' | 'Ord' | 'Number' | 'Text'))?

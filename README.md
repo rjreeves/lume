@@ -229,6 +229,12 @@ PASS or FAIL, followed by a summary; any failure produces exit code 1. Use
 `--filter text` to select tests by name. Assertions include `expect.equal`,
 `expect.true`, `expect.some`, `expect.ok`, and `expect.err`.
 
+Passing a directory discovers every direct child named `*_test.lume`:
+
+```text
+lume test tests
+```
+
 The broader syntax in the specification is the roadmap, not yet all implemented
 by the bootstrap.
 
@@ -350,6 +356,21 @@ fn keep_number<T: Number>(value: T) -> T {
 
 Constraints are checked at the call site and remain type-erased at runtime, so
 they do not introduce monomorphization cost.
+
+Projects can declare marker protocols and opt records, enums, or scalar types
+into them explicitly:
+
+```lume
+protocol Named {}
+impl Named for User {}
+
+fn keep_named<T: Named>(value: T) -> T {
+  return value
+}
+```
+
+Protocol and implementation bodies are intentionally empty in this first
+stage. They provide user-defined generic constraints without dynamic dispatch.
 
 `Option<T>` and `Result<T, E>` are always available. Their variants work with
 the same exhaustive `match` syntax as declared enums. Use `?` inside a

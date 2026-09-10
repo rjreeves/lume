@@ -1,0 +1,9 @@
+type User {
+  name: str
+}
+
+impl Missing for User {}
+
+fn main(args: [str]) -> int {
+  return 0
+}

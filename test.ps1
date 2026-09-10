@@ -74,6 +74,10 @@ $constrainedGenerics = & $Lume run (Join-Path $PSScriptRoot 'examples\constraine
 if ($LASTEXITCODE -ne 0) { throw "constrained generics exited $LASTEXITCODE" }
 Assert-Equal 'constrained generic functions' "true`nlume`n42`nfast" ($constrainedGenerics -join "`n")
 
+$protocols = & $Lume run (Join-Path $PSScriptRoot 'examples\protocols.lume')
+if ($LASTEXITCODE -ne 0) { throw "protocols exited $LASTEXITCODE" }
+Assert-Equal 'protocol-constrained generics' 'Ada' ($protocols -join "`n")
+
 $genericData = & $Lume run (Join-Path $PSScriptRoot 'examples\generic_data.lume')
 if ($LASTEXITCODE -ne 0) { throw "generic data exited $LASTEXITCODE" }
 Assert-Equal 'generic records and enums' "42`nready" ($genericData -join "`n")
@@ -273,6 +277,14 @@ $genericConstraintName = & $Lume check (Join-Path $PSScriptRoot 'examples\invali
 if ($LASTEXITCODE -ne 1) { throw "unknown generic constraint should exit 1" }
 Assert-Equal 'generic constraint name validation' 'E0679 line 1: unknown generic constraint `Printable`' ($genericConstraintName -join "`n")
 
+$protocolConstraint = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_protocol_constraint.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "missing protocol implementation should exit 1" }
+Assert-Equal 'protocol implementation constraint' 'E0680 line 12: type `User` does not satisfy `Named` for `T` calling `keep_named`' ($protocolConstraint -join "`n")
+
+$protocolImpl = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_protocol_impl.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "unknown protocol implementation should exit 1" }
+Assert-Equal 'unknown protocol implementation' 'E0258 unknown protocol `Missing` in implementation' ($protocolImpl -join "`n")
+
 $listCallback = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_list_callback.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "list callback validation should exit 1" }
 Assert-Equal 'list callback validation' 'E0673 callback parameter type does not match list element type' ($listCallback -join "`n")
@@ -313,6 +325,11 @@ Assert-Equal 'native test runner' "PASS adds two values`nPASS recognizes present
 $filteredTests = & $Lume test (Join-Path $PSScriptRoot 'examples\native_tests.lume') --filter present
 if ($LASTEXITCODE -ne 0) { throw "filtered native test runner exited $LASTEXITCODE" }
 Assert-Equal 'native test filtering' "PASS recognizes present values`n1 passed; 0 failed" ($filteredTests -join "`n")
+
+$nativeSuite = & $Lume test (Join-Path $PSScriptRoot 'examples\native_suite')
+if ($LASTEXITCODE -ne 0) { throw "native test directory discovery exited $LASTEXITCODE" }
+Assert-Contains 'native test directory math discovery' 'PASS math works' ($nativeSuite -join "`n")
+Assert-Contains 'native test directory text discovery' 'PASS text works' ($nativeSuite -join "`n")
 
 $nativeFailure = & $Lume test (Join-Path $PSScriptRoot 'examples\native_tests_failing.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "failing native test should exit 1" }

@@ -1,0 +1,14 @@
+protocol Named {}
+
+type User {
+  name: str
+}
+
+fn keep_named<T: Named>(value: T) -> T {
+  return value
+}
+
+fn main(args: [str]) -> int {
+  let user = keep_named(User(name: "Ada"))
+  return 0
+}
