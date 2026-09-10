@@ -68,6 +68,91 @@ The 10,000-line benchmark was run for 10 iterations after each compiler stage:
 | `?` result propagation | 325.0 ms | 30,769 | 4.7 ms |
 | Final validation pass (30 runs) | 309.9 ms | 32,268 | 5.2 ms |
 
+## Post-closures/protocols/test-runner check (2026-09-11)
+
+Re-run after closures, generic constraints, marker protocols, and the native
+test runner were added (2026-09-10), to check whether that work regressed
+the fixed-size benchmark:
+
+| Run | Mean compile | Lines/second | Bytecode load |
+| --- | ---: | ---: | ---: |
+| 20 iterations | 310.95 ms | 32,160 | 4.65 ms |
+
+No regression against the 2026-09-09 baseline — this benchmark's generated
+program is 10,000 lines of `total = total + 1`, though, so it exercises none
+of the new syntax and cannot actually confirm those features are free; it
+only confirms the new parser branches don't slow down code that never
+touches them. It also still sits at **~31x over** the README's original
+"10,000 lines in under 10 ms" design target, unchanged since the first
+measurement — this benchmark's own "10,000 lines/second" bar (a ~1,000 ms
+budget) is a materially looser goalpost than that original target, and
+passing it (`TargetMet: True`) should not be read as validating the
+headline claim.
+
 Every stage remained above the 10,000-lines/second design target. Timing noise is
 expected from short desktop runs; use a larger iteration count for release
 comparisons.
+
+## Representative feature-mix benchmark (2026-09-11)
+
+Every benchmark above generates the same trivial workload: 10,000 lines of
+`total = total + 1`, one reused `var`. That shape cannot expose costs that
+scale with *how many distinct things a real program declares*, because it
+only ever has one binding in scope. `benchmark-10000-features.ps1` generates
+a different 10,000-line program instead — ~904 repetitions of a block that
+mixes records, an enum matched with `match`, a marker-protocol constraint, a
+user-defined generic function, an inline closure capturing a `let`, and
+`list.map`/`filter`/`fold` with both `&name` references and a closure, each
+repetition using unique binding names (`items1`, `items2`, ...). This is
+much closer to what an actual Lume program's `main` looks like.
+
+```powershell
+.\benchmark-10000-features.ps1 -Iterations 1
+```
+
+| Benchmark | Mean compile | Lines/second | vs. trivial baseline |
+| --- | ---: | ---: | ---: |
+| Trivial (`benchmark-10000.ps1`) | 310.95 ms | 32,160 | baseline |
+| Representative feature mix | 21,563 ms | 464 | **~69x slower** |
+
+This fails the benchmark's own "10,000 lines/second" bar outright
+(`TargetMet: False`) — the trivial benchmark's `TargetMet: True` was never
+telling you anything about programs that look like this.
+
+**Isolating the cause.** Two follow-up control files (10,000 lines each,
+`lume check` timed standalone) narrow down which construct drives the ~69x:
+
+| Control | Contents | `lume check` wall time | vs. trivial baseline |
+| --- | --- | ---: | ---: |
+| Trivial | one reused `var` | 0.31 s | baseline |
+| Unique bindings | ~9,996 distinct `let x{i} = {i}`, no other features | 2.6 s | ~8x |
+| Closures only | ~4,998 `list.map(items, fn(v) -> int => v + 1)` calls | 32.2 s | ~104x |
+
+Declaring many distinct bindings alone costs something (~8x), consistent
+with a duplicate-binding check that scans all prior names in scope for each
+new one — an O(n²) shape as a function's binding count grows. But
+**closures specifically are far more expensive than plain bindings**, even
+at roughly half the binding count of the unique-bindings control: passing
+an inline closure to `list.map` requires checking what it captures against
+the enclosing scope, and that check's cost appears to compound as the
+enclosing scope grows across thousands of closures in the same function.
+
+**A more serious finding than the timing:** running this program through
+`lume benchmark <path> 20` (the repeated in-process compile loop the other
+tables in this file use) does not just run slowly — it crashes with `certo
+panic: out of memory` before completing. A single `lume check` of the same
+file succeeds in ~23s, so the crash is not inherent to compiling one
+instance of this program; it is the `benchmark` command's in-process
+iteration harness retaining memory across iterations on a workload heavy
+enough to expose it. `benchmark-10000-features.ps1` therefore defaults to
+`-Iterations 1` rather than 20.
+
+**Takeaway:** the published "10,000 lines/second" and "~31x over the
+original 10ms target" numbers elsewhere in this file describe a workload no
+real Lume program resembles. On code that actually declares the number of
+distinct bindings and closures a real 10,000-line program would, compile
+time is roughly 69x worse than the trivial benchmark suggests, and the
+compiler's own benchmarking tool cannot survive repeated measurement of it.
+Closures are implicated as the largest single contributor found so far, but
+this is not exhaustive — generics, protocols, and record/enum construction
+at this scale haven't been isolated individually yet.
