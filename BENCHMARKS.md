@@ -153,6 +153,47 @@ real Lume program resembles. On code that actually declares the number of
 distinct bindings and closures a real 10,000-line program would, compile
 time is roughly 69x worse than the trivial benchmark suggests, and the
 compiler's own benchmarking tool cannot survive repeated measurement of it.
-Closures are implicated as the largest single contributor found so far, but
-this is not exhaustive — generics, protocols, and record/enum construction
-at this scale haven't been isolated individually yet.
+Closures are implicated as the largest single contributor found in the mix
+above; generics and protocols are isolated separately below.
+
+## Generics vs. protocols isolation (2026-09-11)
+
+The feature mix also uses a user-defined generic function and a
+protocol-constrained generic function, so the natural next question is
+which of those two costs anything. Four more 10,000-line control files
+(~9,992–9,996 unique bindings each, `lume check` timed standalone) separate
+"generic" from "constrained" from "constrained by a user protocol":
+
+| Control | Call shape | `lume check` wall time | vs. trivial baseline |
+| --- | --- | ---: | ---: |
+| Trivial | one reused `var`, no calls | 0.31 s | baseline |
+| Plain call | `fn plain(value: int) -> int`, non-generic | ~4.2 s | ~1.6x |
+| Unconstrained generic | `fn identity<T>(value: T) -> T` | ~31.3 s | ~12x |
+| Built-in-marker-constrained generic | `fn keep_number<T: Number>(value: T) -> T` | ~6.3 s | ~2.4x |
+| User-protocol-constrained generic | `fn tag<T: Sized>(value: T) -> T`, empty marker `protocol`/`impl` | ~31.6 s | ~12.2x |
+
+Each number is the mean of two runs; all four were reproducible run to run.
+
+**It is not "generics" or "protocols" as a category — it is specifically
+how the constraint gets resolved.** An unconstrained type parameter and a
+type parameter constrained to a user-declared protocol cost almost exactly
+the same (~31s, statistically indistinguishable across reruns) — about 5x
+more than a type parameter constrained to one of the four built-in markers
+(`Eq`, `Ord`, `Number`, `Text`), which lands at ~6.3s. The only
+interpretation consistent with that pattern: the four built-in markers get
+a fast path, almost certainly a direct name check against that fixed list.
+A user-declared `protocol`/`impl` constraint isn't on that list, so it
+falls through to whatever general mechanism handles an *unconstrained* type
+parameter — and that fallback, not "having a protocol," is the expensive
+part. **Constraining a generic function to your own protocol currently buys
+no compile-time benefit over not constraining it at all.**
+
+This was measured against the marker-only protocol model on `main` as of
+this writing (empty `protocol {}` / `impl ... for ... {}` bodies, no
+methods). A separate, not-yet-merged change adds real method signatures to
+protocols with static dispatch to concrete `Type.method` functions — a
+different enough mechanism that this result should be re-measured once that
+lands rather than assumed to still hold.
+
+Record/enum construction at this scale still hasn't been isolated
+individually.
