@@ -1,0 +1,243 @@
+# Lume roadmap
+
+Lume is a focused, statically checked alternative to shell and Python for
+automation, data transformation, command orchestration, configuration, and
+small tools. Its priorities are fast compilation, predictable programs, and
+reliable AI generation.
+
+This roadmap distinguishes implemented behavior from proposed work. The
+machine-readable source of truth for the currently supported language and
+built-ins is [`ai/lume-api.json`](ai/lume-api.json). Syntax and design intent
+live in [`SPEC.md`](SPEC.md), while performance requirements live in
+[`BENCHMARKS.md`](BENCHMARKS.md).
+
+## Product principles
+
+Every addition should preserve these properties:
+
+- static checking without global type inference;
+- one clear, formatter-enforced way to express common operations;
+- deterministic diagnostics suitable for people and tools;
+- direct bytecode generation without a retained whole-program AST;
+- no implicit conversions, truthiness, exceptions, or dynamic dispatch;
+- compile time and memory that scale linearly with source size;
+- a language and standard API small enough to fit in an AI prompt.
+
+## Performance gates
+
+The long-term design target is to compile 10,000 lines in under 10 ms in a warm
+compiler process. The current bootstrap target is at least 10,000 lines per
+second on the development machine.
+
+A feature cannot enter the core if it causes either:
+
+- more than a 5% regression in median clean compile time; or
+- more than a 3% regression in AI tokens-to-correctness;
+
+unless its improvement in task success clearly offsets that cost. Compiler
+benchmarks must report median and p95 results. Language features should also be
+added to the fixed AI evaluation suite.
+
+## Shipped in the bootstrap
+
+### Core language
+
+- bindings, mutable variables, functions, recursion, and static types;
+- `if`/`else`, `while`, and exhaustive `match` expressions;
+- homogeneous lists and statically checked list operations;
+- structured errors and concise result propagation with `?`;
+- function values, expression-bodied closures, and immutable captures;
+- modules and imports;
+- register bytecode execution and a content-addressed bytecode cache.
+
+### Typed data
+
+- records, nested records, field access, and record update/copy syntax;
+- typed JSON decoding into records;
+- enums, variant construction, and statically checked variant payloads;
+- exhaustive matching, duplicate-arm validation, and payload destructuring;
+- built-in `Option<T>` and `Result<T, E>`.
+
+### Generics and protocols
+
+- generic functions, records, and enums with type substitution;
+- type-erased generics without monomorphization;
+- built-in and named generic constraints;
+- generic list functions: `map`, `filter`, `find`, and `fold`;
+- protocol declarations and explicit implementations;
+- protocol methods compiled as concrete functions with static dispatch;
+- no trait objects, virtual calls, or runtime protocol lookup.
+
+### Scripting and tooling
+
+- filesystem, environment, argument, string, JSON, list, result, and process
+  APIs;
+- process exit-code, standard-output, and standard-error inspection;
+- human-readable and structured compiler errors;
+- native test declarations, assertions, filters, and direct-child
+  `*_test.lume` discovery;
+- formatter and format checking;
+- language-server support;
+- a machine-readable API manifest, compact AI generation contract, and fixed
+  AI evaluation tasks.
+
+## Now: complete static protocol dispatch
+
+Protocol methods exist for concrete types. The next milestone is to make them
+fully useful inside generic code while retaining compile-time resolution.
+
+- allow a function constrained by `T: Protocol` to invoke protocol methods on
+  values of `T`;
+- resolve each call after generic type inference without dynamic dispatch;
+- support multiple constraints such as `T: Eq + Named`;
+- produce precise diagnostics for missing implementations, ambiguous method
+  names, and incorrect receiver or payload types;
+- add generic protocol-call tests, AI examples, and a 10,000-line benchmark.
+
+Completion means constrained generic algorithms can call required methods and
+all dispatch is visible to the compiler before bytecode execution.
+
+## Next: production scripting foundation
+
+### 1. Complete collections
+
+- add a typed `Map<K, V>` with a deliberately small API;
+- add canonical iterator-free transformations where they reduce boilerplate;
+- define equality and ordering support through constraints;
+- keep collection operations deterministic and easy for AI to select.
+
+### 2. Packages and dependency resolution
+
+- define a minimal package manifest and lock file;
+- use explicit versions and deterministic resolution;
+- separate dependency resolution from source compilation;
+- support local packages before a public registry;
+- cache resolved dependencies by content hash.
+
+Package management must not introduce source-level package graph resolution
+into every compilation.
+
+### 3. Stronger test tooling
+
+- recursively discover test files with explicit ignore rules;
+- provide temporary-directory and environment fixtures;
+- add structured test output for CI and editor integrations;
+- support test timeouts and process-output assertions;
+- report stable test identifiers for filters and reruns.
+
+### 4. Standard scripting APIs
+
+- path manipulation that is portable across Windows, Linux, and macOS;
+- directory enumeration and controlled recursive traversal;
+- typed time and duration values;
+- richer process configuration: working directory, environment overrides,
+  stdin, and timeout;
+- HTTP requests with typed results and bounded response handling;
+- JSON encoding to complement typed decoding.
+
+Each API should keep the `noun.verb` naming convention and return explicit
+`Option` or `Result` values rather than throwing exceptions.
+
+## Later: ecosystem readiness
+
+### Distribution and interoperability
+
+- reproducible standalone executable builds;
+- package signing and checksum verification;
+- a stable bytecode version and compatibility policy;
+- a narrow C ABI or subprocess-based interoperability story;
+- release archives and installers for major desktop platforms.
+
+### Developer experience
+
+- richer completion, hover, definition, references, rename, and code actions;
+- project-wide symbol indexing without slowing single-file checks;
+- debugger protocol support after bytecode/source maps stabilize;
+- generated API documentation;
+- a compatibility and migration checker for language revisions.
+
+### Performance engineering
+
+- profile lexer, declaration scan, type substitution, verifier, and emitter;
+- reduce allocation and string-copying hot spots;
+- add persistent compiler-process measurements;
+- add one-function incremental rebuild benchmarks;
+- measure 100,000-line modules and multi-module projects;
+- publish results across representative hardware.
+
+The roadmap target remains 10,000 lines in under 10 ms. It should not be
+presented as achieved until the implementation meets the benchmark contract.
+
+## Deferred pending measurement
+
+Structured concurrency may eventually use one explicit `spawn`/`await` model.
+It remains deferred until real scripting workloads show that it is necessary
+and measurements demonstrate an acceptable effect on compiler simplicity, AI
+generation, and runtime behavior.
+
+Other capabilities requiring evidence before design work include:
+
+- mutable closure captures;
+- statement-bodied closures;
+- asynchronous I/O syntax;
+- dynamic loading;
+- user-defined serialization hooks.
+
+## Non-goals for the core language
+
+- macros and metaprogramming;
+- operator overloading;
+- exceptions;
+- implicit truthiness or coercions;
+- inheritance and implicit protocol conformance;
+- runtime trait objects or dynamic protocol dispatch;
+- borrow checking;
+- compile-time execution;
+- build scripts executed during compilation;
+- multiple competing formatting styles;
+- a GUI framework or unrestricted systems-programming surface.
+
+## Release milestones
+
+### 0.1 — Coherent bootstrap
+
+- reconcile the specification, guide, examples, and API manifest;
+- finish generic protocol-method dispatch;
+- stabilize diagnostics and bytecode serialization;
+- keep the complete smoke, test-runner, LSP, benchmark, and AI suites green.
+
+### 0.2 — Practical automation
+
+- ship typed maps, portable paths, directory operations, richer processes,
+  time values, JSON encoding, and a minimal HTTP client;
+- expand test discovery and CI output;
+- validate representative shell/Python replacement programs.
+
+### 0.3 — Reusable projects
+
+- ship deterministic packages, lock files, local dependencies, and standalone
+  executable builds;
+- establish bytecode and language-version compatibility policies;
+- publish cross-platform releases.
+
+### 1.0 — Stable focused language
+
+- freeze the core grammar and compatibility guarantees;
+- meet the published compile-speed target on defined reference hardware;
+- publish reproducible compiler and AI-generation benchmarks;
+- provide dependable language-server, formatter, test, package, and release
+  workflows.
+
+## Maintaining this roadmap
+
+When a feature ships:
+
+1. update `ai/lume-api.json` through the compiler's API-manifest command;
+2. update `SPEC.md`, the guide, examples, and diagnostics documentation;
+3. record its compiler benchmark before and after the change;
+4. add or update AI evaluation tasks;
+5. move the item into **Shipped in the bootstrap** and link its tests or
+   release milestone.
+
+Roadmap order is directional, not a promise of dates. Benchmark evidence and
+real automation workloads decide whether a proposed feature belongs in Lume.
