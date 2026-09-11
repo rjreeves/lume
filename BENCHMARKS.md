@@ -128,14 +128,16 @@ telling you anything about programs that look like this.
 | Unique bindings | ~9,996 distinct `let x{i} = {i}`, no other features | 2.6 s | ~8x |
 | Closures only | ~4,998 `list.map(items, fn(v) -> int => v + 1)` calls | 32.2 s | ~104x |
 
-Declaring many distinct bindings alone costs something (~8x), consistent
-with a duplicate-binding check that scans all prior names in scope for each
-new one — an O(n²) shape as a function's binding count grows. But
-**closures specifically are far more expensive than plain bindings**, even
-at roughly half the binding count of the unique-bindings control: passing
-an inline closure to `list.map` requires checking what it captures against
-the enclosing scope, and that check's cost appears to compound as the
-enclosing scope grows across thousands of closures in the same function.
+Declaring many distinct bindings alone costs something (~8x). *(Revised
+below: a later, direct isolation shows this is not primarily a
+duplicate-binding-name check, and that even the "trivial" reused-`var`
+baseline in this very table is itself superlinear, not flat — see
+"Isolating the duplicate-binding scan directly".)* **Closures specifically
+are far more expensive than plain bindings**, even at roughly half the
+binding count of the unique-bindings control: passing an inline closure to
+`list.map` requires checking what it captures against the enclosing scope,
+and that check's cost appears to compound as the enclosing scope grows
+across thousands of closures in the same function.
 
 **A more serious finding than the timing:** running this program through
 `lume benchmark <path> 20` (the repeated in-process compile loop the other
@@ -397,26 +399,105 @@ measured 4.1 s and 13.9 s. The quadratic model doesn't just look right, it
 quantitatively accounts for every number measured so far across both
 generics benchmarks in this file.
 
-**This isn't a "generics" problem — it's the same duplicate-binding-scope
-cost every `let`-heavy function already pays, and generics inherit it.**
-Every control file in this sweep, generic or not, declares N distinct `let`
-bindings, which is exactly the shape identified as O(n²) back in the
-representative-feature-mix benchmark's unique-bindings control. A plain,
-non-generic function call already shows the same quadratic curve on its
-own. Generics don't introduce a different algorithmic shape on top of
-that — they pay a bigger constant on the *same* shape: the generic/plain
-ratio at each N (1.2x, 1.5x, 1.8x, 2.4x, 2.9x, 3.4x) is still drifting
-upward at N = 8,000, not clearly flat, but its own growth is far slower
-than the underlying quadratic (each doubling only moves the ratio ~1.2x,
-not ~4x) — consistent with a larger per-comparison cost rather than a
-separate superlinear term, though a small additional generic-specific
-factor on top of the shared O(n²) floor can't be ruled out from six points
-alone.
+**This isn't a "generics" problem — it's a shared per-statement compilation
+cost every function pays, and generics inherit it.** Every control file in
+this sweep, generic or not, declares N distinct `let` bindings — at the
+time this section was written, that was believed to be the specific driver
+(a duplicate-binding-name scan). *A later, direct isolation (see "Isolating
+the duplicate-binding scan directly", below) shows that belief was wrong:
+even a function with zero distinct bindings — one `var` reassigned N
+times — shows the same quadratic curve. The real shared cost is something
+that happens on every statement regardless of whether it declares a
+binding at all*, most likely how the compiler accumulates its growing
+per-function instruction list. A plain, non-generic function call already
+shows the same quadratic curve on its own for that reason. Generics don't
+introduce a different algorithmic shape on top of that — they pay a bigger
+constant on the *same* shape: the generic/plain ratio at each N (1.2x,
+1.5x, 1.8x, 2.4x, 2.9x, 3.4x) is still drifting upward at N = 8,000, not
+clearly flat, but its own growth is far slower than the underlying
+quadratic (each doubling only moves the ratio ~1.2x, not ~4x) — consistent
+with a larger per-statement cost rather than a separate superlinear term,
+though a small additional generic-specific factor can't be ruled out from
+six points alone.
 
 **Revised bottom line, superseding "generics are slow" from earlier in this
-file**: any function with many distinct bindings gets quadratically slower
-to compile, full stop — generics, closures, and even plain function calls
-all ride the same underlying cost curve; generics and (much more severely)
-closures just multiply it. The duplicate-binding/declaration-scan cost
-itself, not any single feature built on top of it, is the actual root
-cause worth fixing.
+file**: any function with many *statements* — not specifically many
+distinct bindings — gets quadratically slower to compile, full stop;
+generics, closures, and even plain function calls all ride the same
+underlying cost curve, and unique bindings add a real but secondary
+multiplier on top of it. See the next section for the direct isolation
+that pins this down, which further revises "duplicate-binding/declaration-
+scan cost" down to a secondary factor rather than the root cause.
+
+## Isolating the duplicate-binding scan directly (2026-09-11)
+
+Every prior explanation in this file for the O(n²) shape pointed at the
+same suspect: a duplicate-binding-name check that scans every name already
+in scope each time a new `let`/`var` is declared. That was always an
+inference from indirect evidence (bindings, generics, and closures all
+happened to declare many distinct names). This section tests it directly,
+by removing bindings from the equation entirely.
+
+Two control families, swept across N = 250 / 500 / 1,000 / 2,000 / 4,000 /
+8,000, `lume check` timed standalone:
+
+- **Reused var**: one `var total = 0`, then N statements of
+  `total = total + 1`. Zero new bindings after the first — the "names in
+  scope" list never grows past length 1, so a duplicate-check against it
+  should be O(1) per statement, O(n) overall, if that check were really the
+  driver.
+- **Unique bindings**: N statements of `let x{i} = i`, a fresh distinct
+  binding every time — the case that should isolate exactly what the
+  suspected mechanism does.
+
+| N | Reused var | Unique bindings |
+| ---: | ---: | ---: |
+| 250 | 0.020 s | 0.022 s |
+| 500 | 0.031 s | 0.035 s |
+| 1,000 | 0.046 s | 0.059 s |
+| 2,000 | 0.079 s | 0.140 s |
+| 4,000 | 0.188 s | 0.442 s |
+| 8,000 | 0.614 s | 1.694 s |
+
+N = 4,000 and N = 8,000 were each reproduced on a second run for both
+variants before trusting the trend.
+
+| N doubling | Reused var | Unique bindings |
+| --- | ---: | ---: |
+| 250 → 500 | 1.55x | 1.59x |
+| 500 → 1,000 | 1.48x | 1.69x |
+| 1,000 → 2,000 | 1.72x | 2.37x |
+| 2,000 → 4,000 | 2.37x | 3.15x |
+| 4,000 → 8,000 | 3.27x | 3.84x |
+
+**This disproves the duplicate-binding-scan hypothesis rather than
+confirming it.** If that scan were the primary cause, the reused-var
+column should stay near a flat 2.0x every doubling (true O(n) — the
+"names" list it scans against never exceeds length 1). It doesn't: its
+ratio climbs to 3.27x by N = 8,000, converging toward the same ~4x ceiling
+as unique bindings. **A function with zero distinct bindings is already
+quadratic.** Whatever's actually driving this cost happens once per
+*statement*, regardless of whether that statement introduces a name —
+the leading candidate is how the compiler accumulates its growing
+per-function bytecode instruction list (`appendCode`/`List.push`, invoked
+once per compiled statement): if that operation isn't O(1) amortized, every
+function with N sequential statements is O(n²) before a single binding,
+generic, or closure is involved.
+
+The duplicate-binding scan isn't nothing, though. The unique/reused ratio
+at each N (1.10x, 1.13x, 1.28x, 1.77x, 2.36x, 2.76x) is itself climbing,
+so declaring unique names is measurably, increasingly worse than reusing
+one. But it rides on top of a quadratic floor that exists independent of
+it, as a secondary multiplier — not as the source of the quadratic shape
+itself, which is what every earlier section in this file (before this one)
+assumed.
+
+**This is the actual root cause this whole investigation has been
+converging toward, now isolated directly instead of inferred**: a
+per-statement compilation cost, most likely bytecode-list accumulation,
+that is quadratic in a function's statement count on its own, before
+accounting for bindings, generics, or closures at all. Everything measured
+in this file — generics' ~5x, closures' ~104x, records/enums' ~3x — is a
+multiplier stacked on top of this shared floor, not an independent
+mechanism. Fixing *this* would improve every number in this file at once;
+fixing any single feature's multiplier would not.
