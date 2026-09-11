@@ -283,3 +283,70 @@ look first: closures by a wide margin, then the now-unified (and now more
 expensive) generic-constraint resolution path. Records, enums, `with`, and
 plain calls are all clustered within 3x of baseline and are not where the
 problem lives.
+
+## Closure scaling isolation (2026-09-11)
+
+Every closure number above is a single data point at one size (10,000
+lines), which can't distinguish "expensive but linear" from "expensive and
+getting worse as programs grow" — the distinction that actually matters for
+whether this is safe to build large programs against. Three families of
+control file, swept across N = 250 / 500 / 1,000 / 2,000 / 4,000 (no fixed
+line-count padding — just N repetitions of one shape, `lume check` timed
+standalone), separate plain bindings from non-capturing closures from
+capturing closures:
+
+| N | Plain bindings | Non-capturing closure | Capturing closure |
+| ---: | ---: | ---: | ---: |
+| 250 | 0.021 s | 0.096 s | 0.123 s |
+| 500 | 0.040 s | 0.327 s | 0.434 s |
+| 1,000 | 0.057 s | 1.170 s | 1.630 s |
+| 2,000 | 0.130 s | 5.17 s | 7.05 s |
+| 4,000 | 0.458 s | 21.16 s | 31.95 s |
+
+The 2,000 row was reproduced on a second run for both closure variants
+(5.16 s and 7.09 s) before trusting the trend.
+
+**The doubling ratio is the signal that matters, not the absolute time.** A
+true O(n²) algorithm produces exactly 4x more work every time N doubles,
+regardless of N:
+
+| N doubling | Non-capturing | Capturing |
+| --- | ---: | ---: |
+| 250 → 500 | 3.4x | 3.5x |
+| 500 → 1,000 | 3.6x | 3.8x |
+| 1,000 → 2,000 | 4.4x | 4.3x |
+| 2,000 → 4,000 | 4.1x | 4.5x |
+
+The ratio climbs toward 4x and holds there once N is large enough that
+fixed overhead stops dominating (noise dominates at N ≤ 500, where absolute
+times are tens of milliseconds). **This is a clean quadratic signature.**
+Plain bindings, over the same range, only reach ~3.5x per doubling at
+N = 4,000 and are two orders of magnitude faster in absolute terms
+throughout — closures carry their own, much steeper cost curve, not just
+the same duplicate-binding-scan cost bindings already pay plus a flat tax.
+
+**The quadratic cost is not specific to capturing.** This overturns the
+original hypothesis in this file (an expensive per-closure scan of the
+enclosing scope for capture-safety): a closure that captures nothing at all
+(`fn(value: int) -> int => value + 1`) shows the *same* ~4x-per-doubling
+curve as one that captures a `let`. Whatever is quadratic here happens for
+every closure passed to `list.map`/`filter`/`find`/`fold`, regardless of
+what it references.
+
+Capturing does add something real on top, just not a second quadratic term:
+at every N, the capturing variant is a fairly stable **~1.3–1.5x** more
+expensive than the non-capturing one at the same N (1.28x at N = 250, 1.51x
+at N = 4,000) — consistent with one bounded extra check per closure
+(confirming the captured binding is `let`, not `var`), riding on top of the
+same underlying quadratic cost rather than compounding it further.
+
+**Practical implication:** a Lume program that builds up many `list.map`/
+`filter`/`fold` closures in one function — a natural pattern in real
+automation scripts — does not merely pay a fixed per-closure cost; each
+additional closure in the same scope makes every other closure in that
+scope more expensive to check. This is the single most actionable finding
+in this file: unlike the generics-constraint cost (expensive but flat per
+call) or record/enum construction (cheap and apparently linear), the
+closure cost compounds specifically as a function's closure count grows,
+which is exactly the shape that turns "slow" into "unusable" as a codebase
+scales.
