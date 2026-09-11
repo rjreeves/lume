@@ -825,3 +825,165 @@ is that it found and fixed three real bugs across two files (one in Certo,
 two in `lume.cto`), improved the common case by ~7x and closures/generics
 by a further ~15-30% beyond that, and still has real, quadratic scaling
 left in the two most feature-rich code paths this bootstrap has.
+
+## Closures' remaining mechanism, fixed - and a second, bigger one found alongside it (2026-09-11)
+
+The previous section's "real fix" sketch for `validateExpression`'s
+`activeNames` bug - keep the outer scope as an untouched reference, track
+only a small per-closure "local additions" stack, check both on lookup -
+was implemented. `validateExpression` no longer takes raw `names`/`mutables`
+lists at all; it takes the same `nameBuckets`/`mutableBuckets` hash-bucket
+structures `compileBlock` already builds for its own duplicate/undefined
+checks, and tracks closure-parameter and match-arm-binding names in a
+small `localNames` list, truncated back to a recorded boundary (an
+integer, not a snapshot) on `closure_end`/`match_arm`/`match_finish`. This
+list's size is bounded by nesting depth and per-scope parameter count, not
+by the enclosing function's total statement count, so both the growth
+(`List.pushMut`, not `List.push`) and the truncation (`List.slice` of a
+small list) stay cheap regardless of how large the function is.
+
+Rebuilding and re-measuring a capturing-closure sweep (same
+`list.map(items, fn(v) -> int => v + base)` × N shape as the original
+closure-scaling section) with only this fix applied, against the
+previous section's own post-`verifyTypes`-fix baseline:
+
+| N | After lexer + `verifyTypes` fixes (previous section) | After `validateExpression` fix alone |
+| ---: | ---: | ---: |
+| 2,000 | 4.61 s | 3.02 s |
+| 4,000 | 18.74 s | 12.83 s |
+
+A real ~30% improvement, but the doubling ratio (12.83 / 3.02 = 4.2x)
+was still unmistakably quadratic - direct instrumentation (temporary
+`monotonicMillis` timers around `compileBlock` and `verifyTypes` in
+`compile`, the same technique as the lexer investigation, reverted before
+committing) showed why: `compileBlock` (which contains
+`validateExpression`) dropped to 15 ms at N = 4,000, but `verifyTypes`
+still cost 11,828 ms. **The fix was correct but wasn't the dominant cost -
+`validateExpression`'s bug was real but smaller than assumed, sitting
+underneath a second, larger mechanism in a completely different
+function.**
+
+**The actual dominant mechanism, located by the same instrumentation**:
+`findFunction` (used throughout `verifyTypes` and its helpers to resolve a
+called name to its declaration site) scans the *entire* combined
+instruction list from index 0 until it finds a matching `"function"`
+marker - and returns -1 only after scanning every single instruction, for
+a name that will never match one. `checkCallTypes` called `findFunction`
+unconditionally for every `"call"` instruction, including calls to
+`list.map`/`str.len`/every other builtin, none of which have a
+`"function"` marker at all - so every builtin call paid a full O(program
+size) scan just to learn "not a user function", before falling through to
+`checkBuiltinTypes`. Worse, `checkBuiltinTypes`'s own `list.map`/`filter`/
+`find`/`fold` handling called `findFunction` *again*, unconditionally, even
+when the callback was a closure (`callbackName` is `""` in that case, so
+this call could never have succeeded) - a second full scan thrown away
+immediately after computing it. A function with N `list.map` calls, each
+triggering two wasted full-list scans of an instruction list that itself
+grows with N, is exactly O(n²).
+
+**The fix**: skip `findFunction` entirely when it cannot possibly help.
+`checkCallTypes` now checks `containsName(builtinNames(), call.text)` (a
+fixed ~40-entry list, O(1) relative to program size) before calling
+`findFunction` at all - `validateExpression` has already rejected any call
+whose name is neither a declared function nor a builtin (`E0216`), so a
+builtin-list hit is guaranteed to route to `checkBuiltinTypes` either way,
+just without paying the scan to reach that answer. `checkBuiltinTypes`'s
+`list.map`/`filter`/`find`/`fold` handling now only calls `findFunction` in
+the non-closure branch, where a named-function target is actually needed.
+Calls to genuinely user-declared functions are completely unaffected -
+`findFunction` still runs for them, exactly as before.
+
+**Correctness, verified before trusting it**: full smoke suite green (same
+one pre-existing, unrelated CRLF-byte failure as every other entry in this
+file); `task_board` output byte-identical to the pre-session baseline; and
+two new stress tests specifically targeting the scope-leak risk the
+`validateExpression` rewrite depends on now live in the permanent suite
+(`examples/invalid_closure_scope_leak.lume`, two sibling closures reusing
+the parameter name `value`, confirming neither leaks past its own
+`closure_end`; `examples/invalid_closure_match_scope_leak.lume`, a `match`
+nested inside a closure, confirming the two independent boundary stacks
+unwind correctly in LIFO order) - both correctly report `E0210 undefined
+binding` for a reference after the relevant scope has closed.
+
+**Performance result - the complexity class changed, not just the
+constant**, confirmed with the same doubling-ratio sweep used for the
+lexer fix, out to N = 32,000:
+
+| N | Before any 2026-09-11 closure fix | After both fixes |
+| ---: | ---: | ---: |
+| 250 | 0.123 s | 0.024 s |
+| 500 | 0.434 s | 0.027 s |
+| 1,000 | 1.630 s | 0.040 s |
+| 2,000 | 7.05 s | 0.071 s |
+| 4,000 | 31.95 s | 0.130 s |
+| 8,000 | (not measured; extrapolates to ~140 s) | 0.267 s |
+| 16,000 | — | 0.633 s |
+| 32,000 | — | 1.300 s |
+
+| N doubling | Before (quadratic signature) | After |
+| --- | ---: | ---: |
+| 2,000 → 4,000 | ~4.5x | 1.83x |
+| 4,000 → 8,000 | (extrapolated ~4x) | 2.06x |
+| 8,000 → 16,000 | — | 2.37x |
+| 16,000 → 32,000 | — | 2.05x |
+
+The doubling ratio settles at ~2.0–2.4x across four consecutive doublings
+from N = 4,000 to N = 32,000 - the linear signature, not the ~4x quadratic
+one this same workload showed at every previous stage of this
+investigation. At N = 4,000, closures went from ~104x the trivial
+baseline (the original closure-scaling section) to effectively free. The
+representative feature-mix benchmark (records, enums, generics, closures
+mixed - the same file used throughout this document) confirms the effect
+end-to-end:
+
+| Benchmark | 2026-09-11, after lexer + `verifyTypes` fixes | After today's closure fixes |
+| --- | ---: | ---: |
+| `benchmark-10000-features.ps1 -Iterations 1` (mean compile) | 14,125 ms | **3,391 ms** (~4.2x faster) |
+| Lines/second | ~708 | **2,949** |
+
+Still below the benchmark's own 10,000-lines/second bar (`TargetMet:
+False`), and the trivial benchmark is unaffected (51.6 ms / 193,798
+lines/second this run, within normal run-to-run noise of the 44.55 ms
+figure above - this workload has no closures to fix). But the
+feature-mix number, which is the one workload in this file that actually
+resembles a real Lume program's `main`, just got ~4.2x faster from two
+fixes confined to `validateExpression` and `verifyTypes`/`checkBuiltinTypes`.
+
+**Generics are confirmed unaffected, not accidentally fixed too** - a
+targeted re-check (`identity<T>(value: T) -> T`, N calls, same doubling
+sweep) after both fixes:
+
+| N | Before (2026-09-11 generics-scaling section) | After today's fixes |
+| ---: | ---: | ---: |
+| 2,000 | 0.487 s | 0.345 s |
+| 4,000 | 1.948 s | 1.333 s |
+| 8,000 | 8.65 s | 6.14 s |
+
+Doubling ratios (3.9x, 4.6x) are still clearly quadratic - the small
+constant-factor improvement here is incidental (generic calls also lex and
+parse their own bodies, same as every other workload in this file
+benefited from the earlier lexer fix's residual effect), not evidence that
+today's fixes touched whatever generics' own mechanism is.
+`checkCallTypes`'s new builtin fast path never applies to a call to a
+user-declared generic function, and `findFunction`'s successful-match scan
+for `identity` (declared once, near the top of every control file in this
+sweep) was already cheap before today - so this result is exactly what the
+fix's own scope predicts, not a surprise.
+
+**Bottom line**: this investigation's own two remaining, identified/
+unidentified mechanisms from the previous section are down to one.
+Closures' mechanism was two mechanisms, not one - the identified
+`validateExpression` bug (real, fixed, but a modest ~6% contributor by
+itself) and a second, unidentified-until-now, much larger one
+(`findFunction`'s wasted full-list scans on every builtin call, ~2x-plus
+contributor, fixed) - and fixing both together changed capturing closures'
+complexity class from quadratic to linear, confirmed out to N = 32,000, the
+same bar the lexer fix was held to. **Generics' mechanism remains the one
+open item**: still quadratic (~3.9-4.6x per doubling), still not located,
+confirmed unaffected by everything fixed today. Whatever drives it is
+neither the lexer, nor `compileBlock`'s or `verifyTypes`' binding-tracking,
+nor `validateExpression`'s local-scope tracking, nor `findFunction`'s
+wasted scans on builtin calls - all five are now fixed or ruled out for
+this specific workload, and a call to a single, early-declared generic
+function still gets quadratically slower to compile as call count grows.
+Finding it is the natural next step for this investigation.
