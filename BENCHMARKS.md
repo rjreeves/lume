@@ -195,5 +195,91 @@ protocols with static dispatch to concrete `Type.method` functions — a
 different enough mechanism that this result should be re-measured once that
 lands rather than assumed to still hold.
 
-Record/enum construction at this scale still hasn't been isolated
-individually.
+**That change has since landed** (`Add protocol methods with static
+dispatch`), and re-measuring confirms the result above no longer holds —
+see below.
+
+## Generics vs. protocols, re-measured after protocol methods (2026-09-11)
+
+Same four control files, re-run against `main` after protocol methods with
+static dispatch merged:
+
+| Control | `lume check` wall time (before → after) | vs. trivial baseline (2.6 s) |
+| --- | --- | ---: |
+| Unconstrained generic | 31.3 s → **~13.9 s** | ~5.3x |
+| Built-in-marker-constrained generic | 6.3 s → **~13.8 s** | ~5.3x |
+| User-protocol-constrained generic | 31.6 s → **~13.1 s** | ~5.0x |
+
+Each new number is the mean of at least two runs, reproducible run to run,
+same as before.
+
+**The fast path for built-in markers is gone, and it went the wrong
+direction.** Previously, built-in-constrained generics were the cheap
+option (~2.4x baseline) and unconstrained/user-protocol-constrained ones
+were the expensive outliers (~12x). Now all three have converged to
+roughly the same cost (~13–14s, ~5x baseline) — the built-in markers got
+*more* expensive rather than the other two getting cheaper to match them.
+This is consistent with constraint resolution being refactored into one
+shared, more expensive path as groundwork for the roadmap's next milestone
+("allow a function constrained by `T: Protocol` to invoke protocol methods
+on values of `T`") — plausible from the timing shift, but not confirmed by
+reading the implementation diff. The practical upshot is unchanged in
+spirit either way: **no combination of constrained/unconstrained generics
+is cheap**, and which one you pick no longer even matters, since they all
+now cost about the same.
+
+This is exactly why a "not yet merged" caveat is worth writing down instead
+of silently trusting a result to still hold, and why this file re-measures
+rather than assuming a number survives across a compiler version it wasn't
+taken on.
+
+## Record and enum construction isolation (2026-09-11)
+
+Four more 10,000-line control files (same shape as the generics controls:
+~9,992–9,996 unique bindings each, `lume check` timed standalone), this
+time isolating record construction, enum construction (with and without a
+payload), and record `with`-updates — the remaining constructs from the
+representative feature-mix benchmark that hadn't been isolated yet:
+
+| Control | Construct | `lume check` wall time | vs. trivial baseline (2.6 s) |
+| --- | --- | ---: | ---: |
+| Enum construction, zero payload | `Color.red()` | 3.5 s | ~1.4x |
+| Plain function call (reference point) | `plain(value)` | ~4.1 s | ~1.6x |
+| Enum construction, with payload | `Tagged.value(n: i)` | 5.6 s | ~2.2x |
+| Record `with`-update | `base with { x: i }` | 5.9 s | ~2.3x |
+| Record construction | `Point(x: i, y: i)` | 7.9 s | ~3.0x |
+
+Each number is the mean of at least two runs, reproducible run to run.
+
+**Records and enums are cheap — nowhere near the generics/closures tier.**
+The most expensive of the five, plain record construction, is under 3x
+baseline; every generic-constraint variant above costs at least 5x, and
+closures cost ~104x (measured earlier in this file). There's a small,
+sensible internal gradient: zero-payload enum construction (~1.4x) is
+*cheaper than an ordinary function call*, because `Color.red()` has no
+argument list to validate at all, while even a 1-argument call goes through
+full call-argument type-checking. Payload-carrying enum construction
+(~2.2x) and record construction (~3.0x) cost progressively more as field
+count grows, consistent with per-field schema validation. `with`-update
+(~2.3x) sits right alongside payload-carrying enum construction — not
+meaningfully worse than plain record construction.
+
+**Where this leaves the full isolation matrix**, all measured on the same
+compiler build (after protocol methods with static dispatch merged):
+
+| Variant | `lume check` time | vs. baseline |
+| --- | ---: | ---: |
+| Baseline (no calls) | 2.6 s | — |
+| Enum construction, zero payload | 3.5 s | ~1.4x |
+| Plain function call | ~4.1 s | ~1.6x |
+| Enum construction, with payload | 5.6 s | ~2.2x |
+| Record `with`-update | 5.9 s | ~2.3x |
+| Record construction | 7.9 s | ~3.0x |
+| Unconstrained / built-in-constrained / user-protocol-constrained generic | ~13.1–13.9 s | ~5.0–5.3x |
+| Closures (list.map, ~half the binding count) | 32.2 s | ~104x |
+
+If someone wanted to close the compile-time gap, this ranking says where to
+look first: closures by a wide margin, then the now-unified (and now more
+expensive) generic-constraint resolution path. Records, enums, `with`, and
+plain calls are all clustered within 3x of baseline and are not where the
+problem lives.
