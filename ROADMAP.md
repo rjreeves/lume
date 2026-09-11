@@ -38,7 +38,7 @@ unless its improvement in task success clearly offsets that cost. Compiler
 benchmarks must report median and p95 results. Language features should also be
 added to the fixed AI evaluation suite.
 
-## Status report (2026-09-11, updated same day after the generics-scaling fix)
+## Status report (2026-09-11, updated same day after the protocol-scan fix)
 
 A direct check of where the bootstrap stands against the gates and the 0.1
 milestone above, based on the measurements in
@@ -48,11 +48,13 @@ this summarizes without repeating. This section was first written before
 the fixes below existed; it has been updated in place rather than left
 stale, since an inaccurate status report defeats its own purpose.
 
-**Performance gates: still not met, but no longer purely structural — six
-real bugs have been found and fixed (two in Certo, four in `lume.cto`),
-and every quadratic-or-worse mechanism this investigation identified
-across two sessions is now either fixed or ruled out. Both closures and
-generics changed compile-time complexity class from quadratic to linear.**
+**Performance gates: met for the trivial case and, for the first time in
+this investigation, for the representative feature-mix benchmark too —
+seven real bugs have been found and fixed (two in Certo, five in
+`lume.cto`), and every quadratic-or-worse mechanism this investigation
+identified across three sessions is now either fixed or ruled out.
+Closures, generics, and user-protocol-constrained generics all changed
+compile-time complexity class from quadratic to linear.**
 
 - **What changed**: instrumenting the compiler directly (not inferring from
   black-box timing) located the dominant cost to the lexer itself, traced
@@ -113,8 +115,31 @@ generics changed compile-time complexity class from quadratic to linear.**
   generic call from 6.14 s to **0.118 s at N = 8,000 (~52x)**, changing its
   complexity class from quadratic (~3.9–4.6x per doubling) to linear
   (~1.8–2.6x, confirmed to N = 32,000) — and took the feature-mix benchmark
-  from 3,391 ms to **1,719 ms**, closing the gap from this file's original
+  from 3,391 ms to 1,719 ms, closing the gap from this file's original
   ~69x finding to under 2x against the benchmark's own bar.
+- **One more mechanism remained, and it turned out to be the biggest single
+  fix in this whole investigation**: the previous fix only stopped
+  `knownGenericConstraint`/`satisfiesGenericConstraint` from running
+  *wastefully*; a call that genuinely has a user-protocol constraint (as
+  opposed to a built-in marker) still fell through to
+  `hasProtocol`/`hasProtocolImplementation`, and both do a full
+  `for item in code` scan of the *entire program's instruction list* on
+  every call, looking for a `protocol_type`/`protocol_impl` declaration
+  that is fixed for the whole program and never changes between calls. A
+  function constrained by a real user protocol (`fn keep_named<T: Named>`)
+  called N times was still quadratic (~4.35x per doubling, 8.22 s at
+  N = 8,000). Fixed by seeding two fixed-bucket hash sets
+  (`protocolBuckets`, `protocolImplBuckets`) once, in one O(program-size)
+  pass before `verifyTypes`' main loop, replacing the two scanning
+  functions with plain bucket lookups — the same technique this file has
+  used for every prior scan-to-lookup fix. Took the same workload to
+  0.139 s at N = 8,000 (**~59x**), linear scaling confirmed to N = 32,000
+  (doubling ratios 1.90x/2.50x/1.91x). Because the representative
+  feature-mix benchmark's own generic function uses exactly this pattern —
+  a marker-*protocol* constraint, not a built-in one — this fix alone took
+  it from 1,719 ms to **156 ms, clearing its own 10,000-lines/second bar
+  for the first time in this investigation's history** (64,103
+  lines/second, `TargetMet: True`, reproduced twice before trusting it).
 - The acceptance gate ("no feature enters the core with more than a 5%
   compile-time regression") does not appear to have been checked against a
   measurement for every feature that has shipped. The protocol-methods
@@ -159,20 +184,22 @@ correct — records, enums with payload variants, generics, generic
 constraints, marker protocols, closures, `Option`/`Result`, and the native
 test runner all behave as documented once `SPEC.md` was corrected to match
 reality. Record and enum construction stay cheap (within ~3x of baseline)
-at every size tested. And as of this update, the compile-speed gap is no
-longer purely theoretical or purely structural: six concrete root causes
-have been found (two in Certo — `Text.slice`'s unconditional `strlen`, and
-`and`/`or` silently not short-circuiting despite the spec documenting both
-as short-circuit — four in `lume.cto`), fixed, and verified. Every
-mechanism this investigation set out to find has now been found: the
-trivial case is ~7x faster and linear instead of quadratic; closures went
-from the single most expensive construct measured (~104x the trivial
-baseline) to linear; generics went from quadratic to linear once a
-genuine Certo interpreter bug (not a `lume.cto` algorithm problem) was
-identified and worked around. The representative feature-mix benchmark —
-the one workload in this file that actually resembles a real Lume
-program — closed from ~69x over its own target at the start of this
-investigation to under 2x now.
+at every size tested. And as of this update, the compile-speed gap is
+closed rather than merely narrowed: seven concrete root causes have been
+found (two in Certo — `Text.slice`'s unconditional `strlen`, and `and`/`or`
+silently not short-circuiting despite the spec documenting both as
+short-circuit — five in `lume.cto`), fixed, and verified. Every mechanism
+this investigation set out to find has now been found: the trivial case is
+~7x faster and linear instead of quadratic; closures went from the single
+most expensive construct measured (~104x the trivial baseline) to linear;
+generics — both unconstrained and constrained, by a built-in marker or a
+user's own protocol — went from quadratic to linear, the protocol case
+requiring both a Certo-side workaround and a `lume.cto`-side scan-to-lookup
+fix. **The representative feature-mix benchmark, the one workload in this
+file that actually resembles a real Lume program, went from ~69x over its
+own 10,000-lines/second target at the start of this investigation to
+clearing that target outright (64,103 lines/second) — the first time any
+non-trivial benchmark in this file has met its own bar.**
 
 ## Shipped in the bootstrap
 

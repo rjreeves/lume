@@ -1957,26 +1957,28 @@ fn genericConstraintFor(constraints: Text, name: Text): Text = {
   found
 }
 
-fn hasProtocol(code: List<Instruction>, name: Text): Bool = {
-  var found = false
-  for item in code {
-    if Text.eq(item.op, "protocol_type") and Text.eq(beforePipe(item.text), name) then { found = true }
-  }
-  found
-}
+// hasProtocol/hasProtocolImplementation used to scan the whole program's
+// instruction list on every call, looking for a matching protocol_type/
+// protocol_impl declaration - fine in isolation, but protocol declarations
+// and implementations are fixed for the whole program (declared once, never
+// once per call), so a constrained generic function called N times paid N
+// full O(program-size) scans for an answer that never changes between them.
+// verifyTypes now builds protocolBuckets/protocolImplBuckets once, before
+// its main per-instruction loop, via the same fixed-bucket hash-set
+// technique used throughout this file (seedProtocolBuckets/
+// seedProtocolImplBuckets below); these two functions just do a bucket
+// lookup against that already-built set instead of re-scanning.
+fn hasProtocol(protocolBuckets: List<List<Text>>, name: Text): Bool =
+  bucketsContains(protocolBuckets, name)
 
-fn hasProtocolImplementation(code: List<Instruction>, protocolName: Text, valueType: Text): Bool = {
-  var found = false
-  for item in code {
-    if Text.eq(item.op, "protocol_impl") then {
-      val parts = Text.split(item.text, "|")
-      if List.len(parts) > 1 and Text.eq(List.getOrPanic(parts, 0), protocolName) and Text.eq(List.getOrPanic(parts, 1), genericBase(valueType)) then { found = true }
-    }
-  }
-  found
-}
+// protocolImplBuckets is keyed by "protocolName|typeName" (matching how
+// seedProtocolImplBuckets inserts each protocol_impl entry) rather than by
+// protocol name alone, since one protocol can have several implementations
+// for different types.
+fn hasProtocolImplementation(protocolImplBuckets: List<List<Text>>, protocolName: Text, valueType: Text): Bool =
+  bucketsContains(protocolImplBuckets, protocolName ++ "|" ++ genericBase(valueType))
 
-fn satisfiesGenericConstraint(code: List<Instruction>, valueType: Text, requirement: Text): Bool = {
+fn satisfiesGenericConstraint(protocolImplBuckets: List<List<Text>>, valueType: Text, requirement: Text): Bool = {
   if Text.eq(requirement, "Eq") then {
     Text.eq(valueType, "int") or Text.eq(valueType, "str") or Text.eq(valueType, "bool")
   } else if Text.eq(requirement, "Ord") then {
@@ -1985,7 +1987,7 @@ fn satisfiesGenericConstraint(code: List<Instruction>, valueType: Text, requirem
     Text.eq(valueType, "int")
   } else if Text.eq(requirement, "Text") then {
     Text.eq(valueType, "str")
-  } else { hasProtocolImplementation(code, requirement, valueType) }
+  } else { hasProtocolImplementation(protocolImplBuckets, requirement, valueType) }
 }
 
 // Written as an if/else-if chain rather than a chain of `or`s: Certo's `or`
@@ -1995,12 +1997,40 @@ fn satisfiesGenericConstraint(code: List<Instruction>, valueType: Text, requirem
 // one of the four built-in markers and the answer was already known to be
 // true. if/else-if branch selection is genuine control flow (unlike `and`/
 // `or`), so only the reached branch's condition and body ever run.
-fn knownGenericConstraint(code: List<Instruction>, requirement: Text): Bool = {
+fn knownGenericConstraint(protocolBuckets: List<List<Text>>, requirement: Text): Bool = {
   if Text.eq(requirement, "Eq") then true
   else if Text.eq(requirement, "Ord") then true
   else if Text.eq(requirement, "Number") then true
   else if Text.eq(requirement, "Text") then true
-  else hasProtocol(code, requirement)
+  else hasProtocol(protocolBuckets, requirement)
+}
+
+// Seeds protocolBuckets/protocolImplBuckets once per verifyTypes call, from
+// a single O(program-size) pass - not per call, unlike the scans these
+// buckets replace. Protocol declarations/implementations are program-wide,
+// not per-function, so this seeds once before the main loop rather than
+// resetting on each "function" instruction the way bindingBuckets does.
+fn seedProtocolBuckets(code: List<Instruction>): List<List<Text>> = {
+  var buckets = emptyBuckets()
+  for item in code {
+    if Text.eq(item.op, "protocol_type") then {
+      val discardInsert = insertBucket(buckets, beforePipe(item.text))
+    }
+  }
+  buckets
+}
+
+fn seedProtocolImplBuckets(code: List<Instruction>): List<List<Text>> = {
+  var buckets = emptyBuckets()
+  for item in code {
+    if Text.eq(item.op, "protocol_impl") then {
+      val parts = Text.split(item.text, "|")
+      if List.len(parts) > 1 then {
+        val discardInsert = insertBucket(buckets, List.getOrPanic(parts, 0) ++ "|" ++ List.getOrPanic(parts, 1))
+      }
+    }
+  }
+  buckets
 }
 
 fn substituteType(value: Text, parameters: List<Text>, arguments: List<Text>): Text = {
@@ -2258,7 +2288,7 @@ fn checkBuiltinTypes(code: List<Instruction>, name: Text, stackInput: List<Text>
 // (confirmed by direct instrumentation): each call's miss-scan cost grows
 // with the whole function's instruction count, and N such calls in one
 // function made the whole thing O(n^2).
-fn checkCallTypes(code: List<Instruction>, call: Instruction, stackInput: List<Text>): TypeStackResult = {
+fn checkCallTypes(code: List<Instruction>, call: Instruction, stackInput: List<Text>, protocolBuckets: List<List<Text>>, protocolImplBuckets: List<List<Text>>): TypeStackResult = {
   val target = if containsName(builtinNames(), call.text) then -1 else findFunction(code, call.text)
   if target < 0 then { checkBuiltinTypes(code, call.text, stackInput) }
   else {
@@ -2306,9 +2336,9 @@ fn checkCallTypes(code: List<Instruction>, call: Instruction, stackInput: List<T
         // `and` to skip the expensive call - fixes it regardless of Certo's
         // short-circuit behavior; filed as a Certo bug report separately.
         if not Text.eq(requirement, "") then {
-          if not knownGenericConstraint(code, requirement) then {
+          if not knownGenericConstraint(protocolBuckets, requirement) then {
             problem = "E0679 line " ++ intToText(call.line) ++ ": unknown generic constraint `" ++ requirement ++ "`"
-          } else if not satisfiesGenericConstraint(code, List.getOrPanic(genericTypes, genericIndex), requirement) then {
+          } else if not satisfiesGenericConstraint(protocolImplBuckets, List.getOrPanic(genericTypes, genericIndex), requirement) then {
             problem = "E0680 line " ++ intToText(call.line) ++ ": type `" ++ List.getOrPanic(genericTypes, genericIndex) ++ "` does not satisfy `" ++ requirement ++ "` for `" ++ genericName ++ "` calling `" ++ call.text ++ "`"
           }
         }
@@ -2448,6 +2478,12 @@ fn verifyTypes(code: List<Instruction>): Text = {
   var closureParamBoundaries: List<Int> = []
   var returnType = "unit"
   var problem = ""
+  // Seeded once here, not reset per "function" below: protocol declarations
+  // and implementations are program-wide, so one O(program-size) pass up
+  // front replaces what used to be a fresh O(program-size) scan inside
+  // hasProtocol/hasProtocolImplementation on every constrained generic call.
+  val protocolBuckets = seedProtocolBuckets(code)
+  val protocolImplBuckets = seedProtocolImplBuckets(code)
   for item in code {
     if Text.eq(problem, "") then {
       if Text.eq(item.op, "function") then {
@@ -2465,7 +2501,7 @@ fn verifyTypes(code: List<Instruction>): Text = {
           for entry in Text.split(requirements, ",") {
             val requirement = schemaFieldType(entry)
             if Text.eq(problem, "") then {
-              if not knownGenericConstraint(code, requirement) then {
+              if not knownGenericConstraint(protocolBuckets, requirement) then {
                 problem = "E0679 line " ++ intToText(item.line) ++ ": unknown generic constraint `" ++ requirement ++ "`"
               }
             }
@@ -2547,7 +2583,7 @@ fn verifyTypes(code: List<Instruction>): Text = {
         }
         stack = List.push(stack, "list<" ++ elementType ++ ">")
       } else if Text.eq(item.op, "call") then {
-        val checked = checkCallTypes(code, item, stack)
+        val checked = checkCallTypes(code, item, stack, protocolBuckets, protocolImplBuckets)
         stack = checked.stack
         problem = checked.problem
         if Text.eq(problem, "") then { stack = List.push(stack, checked.resultType) }

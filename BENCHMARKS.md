@@ -1178,3 +1178,128 @@ acceptance-gate and AI-evaluation-suite checks this file has repeatedly
 noted as unverified, now that the compiler they'd be measuring is in a
 fundamentally different performance class than when this investigation
 began.
+
+## User-protocol-constrained generics, one more mechanism found: unindexed protocol scans (2026-09-11)
+
+The previous section's fix made `knownGenericConstraint`/`satisfiesGenericConstraint`
+stop running *wastefully* for unconstrained calls, but a call that
+*genuinely* has a user-protocol constraint (`fn keep_named<T: Named>`, as
+opposed to a built-in marker like `Number`) still falls through to
+`hasProtocol`/`hasProtocolImplementation` - and those two functions were
+never touched by that fix, since they were being called *correctly* by the
+letter of the guard logic, just inefficiently. Both do a `for item in code`
+scan of the *entire program's instruction list* looking for a matching
+`protocol_type`/`protocol_impl` declaration - and protocol declarations are
+fixed for the whole program, never changing between calls, so a function
+constrained by a user protocol and called N times pays N full
+O(program-size) scans for an answer that's identical every time.
+
+A direct sweep of `fn keep_named<T: Named>(value: T) -> T` called N times
+(a real record type implementing `Named` via a method, not the marker-only
+model) confirmed this is exactly the same quadratic shape found and fixed
+throughout this file:
+
+| N | `lume check` wall time |
+| ---: | ---: |
+| 500 | 0.062 s |
+| 1,000 | 0.138 s |
+| 2,000 | 0.433 s |
+| 4,000 | 1.892 s |
+| 8,000 | 8.224 s |
+
+| N doubling | Ratio |
+| --- | ---: |
+| 500 → 1,000 | 2.22x |
+| 1,000 → 2,000 | 3.14x |
+| 2,000 → 4,000 | 4.37x |
+| 4,000 → 8,000 | 4.35x |
+
+Converging to ~4.3x - the same quadratic signature as every other
+mechanism in this file.
+
+**The fix**: since protocol declarations/implementations never change
+during `verifyTypes`' single pass, seed a fixed-bucket hash set for each -
+`protocolBuckets` (protocol names) and `protocolImplBuckets`, keyed by
+`"protocolName|typeName"` since one protocol can have several
+implementations - **once**, in one O(program-size) pass before the main
+loop, using the same `emptyBuckets`/`insertBucket`/`bucketsContains`
+machinery this file has used for every other lookup-replaces-scan fix.
+`hasProtocol`/`hasProtocolImplementation` become plain bucket lookups
+against the pre-built sets instead of taking `code` and re-scanning it;
+`knownGenericConstraint`/`satisfiesGenericConstraint`/`checkCallTypes` were
+updated to thread the two bucket parameters through instead of `code`
+(only used for these three functions and the one other, low-frequency
+function-declaration-constraint call site - not a broad signature change
+across the file). As a side effect, this also removes a latent panic risk
+in the old `hasProtocolImplementation`: `List.len(parts) > 1 and
+Text.eq(List.getOrPanic(parts, 0), ...) and Text.eq(List.getOrPanic(parts,
+1), ...)` relied on the same broken Certo `and` short-circuiting to avoid
+indexing `parts` out of bounds when a malformed entry had fewer than 2
+parts - the bucket-based rewrite has no such indexing at all.
+
+**Correctness, verified before trusting it**: full smoke suite green (same
+one pre-existing CRLF failure); `task_board` byte-identical. The existing
+suite already exercises every branch this touches end-to-end -
+`protocol implementation constraint` (E0680 for a user protocol),
+`unknown protocol implementation`, `missing protocol method`, `protocol
+method signature`, `extra protocol method` - all still pass with
+byte-identical messages. Added one more manual check beyond the smoke
+suite: two protocols (`Named`, `Aged`) each implemented for a different
+type (`Person`/`Robot`), confirming `keep_named<T: Named>(robot)` still
+correctly fails with `E0680` - ruling out cross-contamination between the
+`"protocolName|typeName"` bucket keys for different protocol/type
+combinations.
+
+**Performance result - another complexity-class change, confirmed to
+N = 32,000**:
+
+| N | Before | After |
+| ---: | ---: | ---: |
+| 500 | 0.062 s | 0.024 s |
+| 1,000 | 0.138 s | 0.027 s |
+| 2,000 | 0.433 s | 0.039 s |
+| 4,000 | 1.892 s | 0.073 s |
+| 8,000 | 8.224 s | 0.139 s |
+| 16,000 | — | 0.348 s |
+| 32,000 | — | 0.665 s |
+
+N = 8,000: **~59x faster.** Doubling ratios after the fix (1.90x, 2.50x,
+1.91x from N = 4,000 onward) confirm linear scaling, the same bar every
+other complexity-class fix in this file has been held to.
+
+**End-to-end effect on the representative feature-mix benchmark is the
+largest single jump recorded in this entire file** - larger than the
+lexer fix, larger than the closure fixes, larger than the unconstrained-
+generics fix, because the feature mix's own generic function is
+constrained by a user marker protocol (its own description: "a
+marker-protocol constraint"), exactly the pattern this fix targets:
+
+| Stage | Mean compile | Lines/second | `TargetMet` |
+| --- | ---: | ---: | --- |
+| Original (no 2026-09-11 fixes) | 21,563 ms | 464 | False |
+| After lexer + `verifyTypes` binding fixes | 14,125 ms | 708 | False |
+| After closure fixes | 3,391 ms | 2,949 | False |
+| After the generics `and`/`or` fix | 1,719 ms | 5,817 | False |
+| **After this protocol-scan fix** | **156 ms** | **64,103** | **True** |
+
+**This is the first time in this entire investigation that the
+representative feature-mix benchmark has cleared its own 10,000-
+lines/second bar** - reproduced twice (156 ms both runs) before trusting
+it. The trivial benchmark is unaffected (57.8 ms this run, within normal
+noise).
+
+**Bottom line**: what looked like "the generics mechanism is fixed" after
+the `and`/`or` short-circuit fix was actually only the *unconstrained* and
+*built-in-marker-constrained* cases. A real, common pattern - a generic
+function constrained by a project's own protocol, the pattern the 0.1
+milestone's own "Now" section (generic protocol-method dispatch) is
+explicitly building toward - was still quadratic underneath, hidden
+because `checkCallTypes` itself no longer showed as the dominant cost once
+the wasted empty-constraint scans were removed, but the constraint check
+still cost real O(program-size) time whenever it was genuinely needed.
+Between this and the previous section, every one of `hasProtocol`,
+`hasProtocolImplementation`, `knownGenericConstraint`, and
+`satisfiesGenericConstraint` - the full set of functions this file's
+protocol/generic-constraint machinery touches - is now backed by an O(1)-
+ish bucket lookup rather than an O(program-size) scan, whether called
+wastefully or legitimately.
