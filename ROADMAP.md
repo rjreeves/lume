@@ -38,38 +38,64 @@ unless its improvement in task success clearly offsets that cost. Compiler
 benchmarks must report median and p95 results. Language features should also be
 added to the fixed AI evaluation suite.
 
-## Status report (2026-09-11)
+## Status report (2026-09-11, updated same day after the lexer and verifyTypes fixes)
 
 A direct check of where the bootstrap stands against the gates and the 0.1
 milestone above, based on the measurements in
 [`BENCHMARKS.md`](BENCHMARKS.md) rather than on what any single feature's
 own commit claimed. Read this alongside that file's dated sections, which
-this summarizes without repeating.
+this summarizes without repeating. This section was first written before
+the fixes below existed; it has been updated in place rather than left
+stale, since an inaccurate status report defeats its own purpose.
 
-**Performance gates: not met, and the gap is structural, not incidental.**
+**Performance gates: still not met, but no longer purely structural — three
+real bugs have been found and fixed, with one concrete, order-of-magnitude
+result, and two more mechanisms identified with the hunt ongoing.**
 
-- The long-term target (10,000 lines in under 10 ms) is missed by ~31x on
-  the simplest possible 10,000-line program, and by ~2,150x on a
-  10,000-line program that actually uses records, enums, generics, and
-  closures the way real code would.
-- The softer "current bootstrap target" (≥10,000 lines/second) is met only
-  on that same unrepresentative trivial program (32,160 lines/second). On
-  the representative one it fails outright, at 464 lines/second.
-- Direct isolation (not inference) shows the root cause is structural: core
-  per-statement compilation is quadratic in a function's statement count,
-  confirmed by a control program with **zero distinct bindings** — one
-  `var` reassigned repeatedly — which is already superlinear on its own.
-  Generics and closures each multiply that shared quadratic floor further
-  (generics ~5x, closures approaching ~104x at the sizes measured).
-  Because the floor itself is quadratic, this gap widens as programs grow;
-  it does not converge toward the target with more optimization of any one
-  feature.
+- **What changed**: instrumenting the compiler directly (not inferring from
+  black-box timing) located the dominant cost to the lexer itself, traced
+  to a genuine bug in Certo's own `Text.slice` (unconditional `strlen` on
+  the full source string per call, filed and fixed same-day as Certo
+  BACKLOG.md item 325) plus two further, structurally similar bugs in
+  `lume.cto` itself (`compileBlock`'s and `verifyTypes`' own separate
+  binding-tracking, both O(n)-scan-plus-O(n)-copy where O(1)-amortized
+  alternatives existed). All three are fixed, verified correct (full smoke
+  suite, `task_board` byte-identical output, and targeted stress tests for
+  each fix's specific correctness risk), and merged.
+- **Result for representative code paths**: the trivial 10,000-line
+  benchmark went from 310.95 ms to **44.55 ms (~7.0x)** — now only ~4.5x
+  over the long-term 10 ms target, down from ~31x — and its
+  lines/second figure (224,467) now clears the softer "current bootstrap
+  target" (≥10,000 lines/second) by ~22x, not the previous ~3.2x. More
+  importantly, the *complexity class* changed for this code path: a
+  `print(1)` × N control's doubling ratio dropped from ~4.0x (quadratic) to
+  ~1.55–1.9x (near-linear, confirmed out to N = 32,000) — this is
+  convergence toward the target from a specific, located fix, contradicting
+  this section's own earlier claim that the gap "does not converge... with
+  more optimization of any one feature."
+- **Result for the representative feature-mix benchmark (records, enums,
+  generics, closures mixed)**: only ~35% faster (21,563 ms → 14,125 ms,
+  now ~1,412x over the 10 ms target rather than ~2,150x) — because its
+  dominant cost was never the lexer. Closures and generics each ride at
+  least one more quadratic mechanism of their own. Closures' mechanism
+  (`validateExpression`'s own `activeNames` tracking, a fourth instance of
+  the same scan/copy pattern) is now identified but deliberately left
+  unfixed — its save/restore is a genuine scope-leak correctness check
+  (`E0210`), not a redundant safety net, so it needs a structurally
+  different fix (a small per-closure delta stack, not a copied combined
+  list) rather than the pattern that worked for the other three. Generics'
+  remaining mechanism has not been located at all.
 - The acceptance gate ("no feature enters the core with more than a 5%
   compile-time regression") does not appear to have been checked against a
   measurement for every feature that has shipped. The protocol-methods
   change roughly doubled the cost of built-in-constrained generics (~2.4x
   → ~5.3x baseline); no before/after benchmark for that change is on record
-  in `BENCHMARKS.md`.
+  in `BENCHMARKS.md`. This gate's own machinery is also unreliable at the
+  sizes it would need to check: `lume benchmark <path> 20` — the standard
+  multi-iteration harness — crashes with `certo panic: out of memory` on
+  realistic-sized input (see the 0.1 milestone note below), so this gate
+  could not have been checked with the recommended tooling even if someone
+  had tried.
 - The AI evaluation suite this file's own gate depends on
   ("added to the fixed AI evaluation suite") has 7 tasks; `BENCHMARKS.md`
   specifies "at least 100."
@@ -103,9 +129,13 @@ correct — records, enums with payload variants, generics, generic
 constraints, marker protocols, closures, `Option`/`Result`, and the native
 test runner all behave as documented once `SPEC.md` was corrected to match
 reality. Record and enum construction stay cheap (within ~3x of baseline)
-at every size tested. The gap is specifically in the property Lume exists
-to prove — fast, linearly-scaling compilation — not in whether the
-language works.
+at every size tested. And as of this update, the compile-speed gap is no
+longer purely theoretical or purely structural: three concrete root causes
+have been found (one in Certo's own `Text.slice`, two in `lume.cto`),
+fixed, and verified, with a genuine ~7x, complexity-class-changing result
+for the common case. The remaining gap is now narrower and better
+understood — two more mechanisms, one identified, one not — rather than one
+undifferentiated "everything is quadratic" floor.
 
 ## Shipped in the bootstrap
 
