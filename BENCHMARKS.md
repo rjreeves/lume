@@ -345,8 +345,78 @@ same underlying quadratic cost rather than compounding it further.
 automation scripts — does not merely pay a fixed per-closure cost; each
 additional closure in the same scope makes every other closure in that
 scope more expensive to check. This is the single most actionable finding
-in this file: unlike the generics-constraint cost (expensive but flat per
-call) or record/enum construction (cheap and apparently linear), the
-closure cost compounds specifically as a function's closure count grows,
-which is exactly the shape that turns "slow" into "unusable" as a codebase
-scales.
+in this file: unlike record/enum construction (cheap and apparently
+linear), the closure cost compounds specifically as a function's closure
+count grows, which is exactly the shape that turns "slow" into "unusable"
+as a codebase scales.
+
+*Correction, see the next section: the "generics-constraint cost (expensive
+but flat per call)" comparison originally made here was wrong.* A proper
+scaling sweep shows generic calls are quadratic too — the "flat per call"
+read came from comparing two single-size data points, the same mistake this
+file already corrected once for the trivial 10,000-line benchmark.
+
+## Generics scaling isolation (2026-09-11)
+
+The same question the closure sweep answered — "is this expensive-but-flat,
+or expensive-and-worsening?" — hadn't been asked of generics yet. Every
+earlier generics number (the built-in-vs-user-protocol isolation, and its
+post-protocol-methods re-measurement) was a single data point at one size.
+Two control families — plain non-generic calls and unconstrained generic
+calls (`fn identity<T>(value: T) -> T`, no constraint syntax at all) —
+swept across N = 250 / 500 / 1,000 / 2,000 / 4,000 / 8,000, `lume check`
+timed standalone:
+
+| N | Plain call | Unconstrained generic call |
+| ---: | ---: | ---: |
+| 250 | 0.023 s | 0.028 s |
+| 500 | 0.042 s | 0.061 s |
+| 1,000 | 0.081 s | 0.149 s |
+| 2,000 | 0.202 s | 0.487 s |
+| 4,000 | 0.675 s | 1.948 s |
+| 8,000 | 2.57 s | 8.65 s |
+
+N = 8,000 was reproduced on a second run for both (2.593 s / 2.546 s and
+8.670 s / 8.628 s) before trusting it.
+
+| N doubling | Plain call | Generic call |
+| --- | ---: | ---: |
+| 250 → 500 | 1.8x | 2.2x |
+| 500 → 1,000 | 1.9x | 2.4x |
+| 1,000 → 2,000 | 2.5x | 3.3x |
+| 2,000 → 4,000 | 3.3x | 4.0x |
+| 4,000 → 8,000 | 3.8x | 4.4x |
+
+**Both curves are quadratic.** Both doubling ratios climb toward and settle
+near 4x, the same O(n²) signature the closure sweep found (smaller N is
+noise-dominated by fixed process overhead). This was cross-checked by
+extrapolating each curve from N = 8,000 up to N ≈ 9,992 — the size of the
+original full 10,000-line generics comparison — using pure N² scaling:
+predicted plain ≈ 4.0 s, predicted generic ≈ 13.5 s, against the actual
+measured 4.1 s and 13.9 s. The quadratic model doesn't just look right, it
+quantitatively accounts for every number measured so far across both
+generics benchmarks in this file.
+
+**This isn't a "generics" problem — it's the same duplicate-binding-scope
+cost every `let`-heavy function already pays, and generics inherit it.**
+Every control file in this sweep, generic or not, declares N distinct `let`
+bindings, which is exactly the shape identified as O(n²) back in the
+representative-feature-mix benchmark's unique-bindings control. A plain,
+non-generic function call already shows the same quadratic curve on its
+own. Generics don't introduce a different algorithmic shape on top of
+that — they pay a bigger constant on the *same* shape: the generic/plain
+ratio at each N (1.2x, 1.5x, 1.8x, 2.4x, 2.9x, 3.4x) is still drifting
+upward at N = 8,000, not clearly flat, but its own growth is far slower
+than the underlying quadratic (each doubling only moves the ratio ~1.2x,
+not ~4x) — consistent with a larger per-comparison cost rather than a
+separate superlinear term, though a small additional generic-specific
+factor on top of the shared O(n²) floor can't be ruled out from six points
+alone.
+
+**Revised bottom line, superseding "generics are slow" from earlier in this
+file**: any function with many distinct bindings gets quadratically slower
+to compile, full stop — generics, closures, and even plain function calls
+all ride the same underlying cost curve; generics and (much more severely)
+closures just multiply it. The duplicate-binding/declaration-scan cost
+itself, not any single feature built on top of it, is the actual root
+cause worth fixing.
