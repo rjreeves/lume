@@ -501,3 +501,110 @@ in this file — generics' ~5x, closures' ~104x, records/enums' ~3x — is a
 multiplier stacked on top of this shared floor, not an independent
 mechanism. Fixing *this* would improve every number in this file at once;
 fixing any single feature's multiplier would not.
+
+## Fixing the two identified binding-scope bugs (2026-09-11)
+
+The previous section isolated the shared quadratic floor but explicitly
+left it unfixed. Separately, two concrete, source-confirmed bugs in the
+*unique-bindings* multiplier on top of that floor were found and fixed in
+`compileBlock` (`src/lume.cto`):
+
+**Bug 1 — `List.push` instead of `List.pushMut` for `names`/`mutables`.**
+Certo's `List.push` reallocates and copies the *entire* list on every call
+(confirmed by reading `certo_list_push` in Certo's own
+`crates/stdlib/src/collections.rs` — a genuine O(n) "functional update"),
+while `List.pushMut` grows geometrically in place, genuinely O(1)
+amortized. `compileBlock` used the copying version for every `let`/`var`
+declaration. Fixed by making `compileBlock` take an explicit, independent
+copy of `initialNames`/`initialMutables` once at entry (`List.slice`, not
+an alias) and using `List.pushMut` for every subsequent growth within that
+call. The explicit copy is required, not optional: `compileBlock` recurses
+for nested `if`/`while` blocks, passing the current scope's `names`/
+`mutables` down as the nested call's `initialNames`/`initialMutables` — if
+that were an alias rather than a copy, a binding declared inside a nested
+block would mutate the same buffer the enclosing scope still holds,
+silently leaking into it.
+
+**Bug 2 — `containsName`'s linear scan.** Every duplicate-binding check
+(and every "undefined binding" / "cannot assign to immutable" check) was a
+full linear scan of the current `names`/`mutables` list, independent of
+bug 1's list-growth cost. Certo's `Map<K,V>` cannot fix this: it hashes on
+raw *pointer* identity, not text content (`crates/stdlib/src/
+collections.rs`'s own header comment: "Map (open-addressing, pointer-
+equality keys)"), so two separately-lexed occurrences of the same
+identifier text — the normal case, since `Text.slice` allocates a fresh
+string each time — would not compare equal as map keys; and
+`certo_map_insert` is itself copy-on-write, so it would give no complexity
+benefit even if the key problem didn't exist. A sorted-list-plus-binary-
+search alternative was also considered and rejected: maintaining sort order
+requires shifting every element after the insertion point, an O(n) cost
+per insert that just moves the bottleneck from lookup to insert without
+changing the overall complexity class.
+
+The actual fix: a small hand-rolled hash set, entirely within
+`src/lume.cto` (`bucketCount`, `characterIndex`, `hashName`,
+`emptyBuckets`, `seedBuckets`, `bucketsContains`, `insertBucket`) —
+1024 fixed buckets, each a `List<Text>`, hashed via a polynomial hash over
+each character's position in a reference alphabet (there being no built-in
+string-hash or char-to-int function available for `Text`). `compileBlock`
+seeds a bucket set from its already-copied `names`/`mutables` at entry
+(same aliasing-safety requirement as bug 1) and uses it for the duplicate/
+undefined/immutable checks instead of `containsName` directly. This is a
+constant-factor improvement, explicitly not an asymptotic one: with a
+*fixed* bucket count, average bucket occupancy still grows with a
+function's binding count, so a lookup is O(n / 1024), not true O(1). A
+genuinely scale-invariant fix needs dynamic resizing/rehashing, which was
+judged not worth the added correctness risk for this pass.
+
+**Correctness, verified before trusting either fix**: the full smoke suite
+(`test.ps1`) passes unchanged (same one pre-existing, unrelated CRLF-byte
+failure as every other entry in this file); `examples/task_board.lume`
+produces identical output; and a hand-written stress test specifically
+targets the aliasing risk bug 1 and bug 2's copy-once step both depend on —
+a binding declared inside a nested `if` block, followed by the *same name*
+redeclared in the outer scope, followed by two *sibling* `if` blocks each
+independently declaring the same name — passes exactly as it should (no
+leak into the outer scope, no false cross-contamination between siblings).
+All three error paths gated by the new bucket lookups (`E0211` duplicate
+binding, `E0210` undefined binding, `E0215` assignment to immutable) still
+fire correctly.
+
+**Performance result — real, but does not change the complexity class:**
+
+| N | Original | After bug 1 (pushMut) | After bug 2 (hash buckets) |
+| ---: | ---: | ---: | ---: |
+| 250 | 0.022 s | 0.021 s | 0.021 s |
+| 500 | 0.035 s | 0.026 s | 0.026 s |
+| 1,000 | 0.059 s | 0.052 s | 0.042 s |
+| 2,000 | 0.140 s | 0.108 s | 0.105 s |
+| 4,000 | 0.442 s | 0.386 s | 0.350 s |
+| 8,000 | 1.694 s | 1.569 s | 1.351 s |
+
+Total improvement at N = 8,000: **~20%**. Real, and cheap to keep, but the
+doubling ratios tell the more important story:
+
+| N doubling | Original | After bug 1 | After bug 2 |
+| --- | ---: | ---: | ---: |
+| 250 → 500 | 1.59x | 1.24x | 1.24x |
+| 500 → 1,000 | 1.69x | 2.00x | 1.62x |
+| 1,000 → 2,000 | 2.37x | 2.08x | 2.50x |
+| 2,000 → 4,000 | 3.16x | 3.57x | 3.33x |
+| 4,000 → 8,000 | 3.83x | 4.06x | 3.86x |
+
+All three still converge to ~4x at N = 8,000 - still quadratic, both fixes
+applied. **This means neither bug was the dominant cost.** Both fixes
+specifically targeted binding-tracking machinery; the section above already
+established that even a program with *zero* bindings (`total = total + 1`
+repeated, or `print(1)` repeated) is independently quadratic. The ~20%
+recovered here is consistent with removing the binding-specific overhead
+from a total that was mostly something else all along - something in the
+shared per-statement compilation path, not yet located. Finding it would
+need actual profiling instrumentation rather than more source reading or
+black-box wall-clock sweeps, which is where this investigation's diagnostic
+tools available in this environment reach their limit.
+
+**Bottom line**: both fixes are correct, verified, and worth keeping on
+their own merits - they resolve genuine O(n) operations that had cheaper
+O(1)-amortized or O(1)-average alternatives available. But they are not
+the fix for this file's headline finding. The dominant, still-unlocated
+cost affecting every measurement in this file remains open.

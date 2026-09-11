@@ -664,6 +664,81 @@ fn containsName(names: List<Text>, name: Text): Bool = {
   found
 }
 
+// Fixed-bucket hash set for compileBlock's own names/mutables membership
+// checks (duplicate-binding and undefined/immutable checks), which run once
+// per statement and were previously an O(n) linear scan via containsName -
+// making a flat function body of n bindings O(n^2) overall. Certo's own
+// Map<K,V> cannot be used here: it hashes on raw pointer identity, not text
+// content (crates/stdlib/src/collections.rs), so two separately-lexed
+// occurrences of the same identifier text would not compare equal as keys,
+// and certo_map_insert is itself copy-on-write, giving no complexity
+// benefit anyway. This is a plain array of buckets instead, hashed on
+// content via characterIndex/hashName below.
+//
+// bucketCount is fixed (not a resizing hash table): average bucket
+// occupancy grows with a function's binding count, so lookups are O(n /
+// bucketCount), not true O(1). That is a large constant-factor win (up to
+// ~bucketCount times fewer comparisons per check), not an asymptotic fix -
+// a genuinely scale-invariant fix would need dynamic resizing/rehashing,
+// which was judged not worth the added correctness risk for this pass.
+fn bucketCount(): Int = 1024
+
+fn characterIndex(ch: Text): Int = {
+  val alphabet = "abcdefghijklmnopqrstuvwxyz_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+  Text.indexOf(alphabet, ch) ?? 63
+}
+
+fn hashName(name: Text): Int = {
+  var h = 0
+  var i = 0
+  val len = Text.len(name)
+  while i < len {
+    h = (h * 31 + characterIndex(charAt(name, i))) % bucketCount()
+    i = i + 1
+  }
+  h
+}
+
+fn emptyBuckets(): List<List<Text>> = {
+  var result: List<List<Text>> = []
+  var i = 0
+  while i < bucketCount() {
+    result = List.pushMut(result, [])
+    i = i + 1
+  }
+  result
+}
+
+// Builds a fresh bucket structure from an existing names/mutables list.
+// Called once per compileBlock invocation, including nested if/while
+// blocks, from a names/mutables list that compileBlock has already made an
+// independent copy of - so a nested block's subsequent insertBucket calls
+// (which mutate a bucket in place via List.pushMut) can never be visible
+// to the enclosing scope's own buckets.
+fn seedBuckets(items: List<Text>): List<List<Text>> = {
+  var buckets = emptyBuckets()
+  var i = 0
+  val count = List.len(items)
+  while i < count {
+    val name = List.getOrPanic(items, i)
+    val bucket = List.getOrPanic(buckets, hashName(name))
+    List.pushMut(bucket, name)
+    i = i + 1
+  }
+  buckets
+}
+
+fn bucketsContains(buckets: List<List<Text>>, name: Text): Bool = {
+  val bucket = List.getOrPanic(buckets, hashName(name))
+  containsName(bucket, name)
+}
+
+fn insertBucket(buckets: List<List<Text>>, name: Text): Bool = {
+  val bucket = List.getOrPanic(buckets, hashName(name))
+  List.pushMut(bucket, name)
+  true
+}
+
 fn nameIndex(names: List<Text>, name: Text): Int = {
   var index = 0
   var found = -1
@@ -751,8 +826,22 @@ fn validateExpression(code: List<Instruction>, names: List<Text>, mutables: List
 
 fn compileBlock(tokens: List<Token>, start: Int, initialNames: List<Text>, initialMutables: List<Text>, functionNames: List<Text>, functionCounts: List<Int>): BlockResult = {
   var code: List<Instruction> = []
-  var names = initialNames
-  var mutables = initialMutables
+  // Explicit copy, not an alias: this call may recurse for a nested if/while
+  // block, passing the current names/mutables down as initialNames/
+  // initialMutables. Every subsequent growth below uses List.pushMut, which
+  // mutates in place - safe only because this copy guarantees no other
+  // scope (in particular the parent call we may have been invoked from)
+  // shares the underlying buffer. Aliasing this instead of copying would
+  // let a binding declared inside a nested block silently leak into (or
+  // corrupt) the enclosing scope names list.
+  var names = List.slice(initialNames, 0, List.len(initialNames))
+  var mutables = List.slice(initialMutables, 0, List.len(initialMutables))
+  // See seedBuckets's comment: these are rebuilt fresh from the (already
+  // copied, unaliased) names/mutables lists on every call, including
+  // nested if/while blocks, so a nested block's inserts can never be
+  // visible to the enclosing scope's buckets.
+  var nameBuckets = seedBuckets(names)
+  var mutableBuckets = seedBuckets(mutables)
   var index = start
   var problem = ""
   var finished = false
@@ -771,7 +860,7 @@ fn compileBlock(tokens: List<Token>, start: Int, initialNames: List<Text>, initi
       val equals = at(tokens, index + 2)
       if not Text.eq(name.kind, "name") then { problem = "E0203 expected binding name" }
       else if not Text.eq(equals.text, "=") then { problem = "E0204 expected `=`" }
-      else if containsName(names, name.text) then { problem = "E0211 line " ++ intToText(name.line) ++ ": duplicate binding `" ++ name.text ++ "`" }
+      else if bucketsContains(nameBuckets, name.text) then { problem = "E0211 line " ++ intToText(name.line) ++ ": duplicate binding `" ++ name.text ++ "`" }
       else {
         val value = parseComparison(tokens, index + 3)
         if not Text.eq(value.problem, "") then { problem = value.problem }
@@ -780,8 +869,12 @@ fn compileBlock(tokens: List<Token>, start: Int, initialNames: List<Text>, initi
           if not Text.eq(expressionProblem, "") then { problem = expressionProblem }
           else {
             code = List.pushMut(appendCode(code, value.code), makeInstruction("store", name.text, 0, name.line))
-            names = List.push(names, name.text)
-            if Text.eq(current.text, "var") then { mutables = List.push(mutables, name.text) }
+            insertBucket(nameBuckets, name.text)
+            names = List.pushMut(names, name.text)
+            if Text.eq(current.text, "var") then {
+              insertBucket(mutableBuckets, name.text)
+              mutables = List.pushMut(mutables, name.text)
+            }
             index = value.next
           }
         }
@@ -876,8 +969,8 @@ fn compileBlock(tokens: List<Token>, start: Int, initialNames: List<Text>, initi
       }
     } else if Text.eq(current.kind, "name") and Text.eq(at(tokens, index + 1).text, "=") then {
       val value = parseComparison(tokens, index + 2)
-      if not containsName(names, current.text) then { problem = "E0210 line " ++ intToText(current.line) ++ ": undefined binding `" ++ current.text ++ "`" }
-      else if not containsName(mutables, current.text) then { problem = "E0215 line " ++ intToText(current.line) ++ ": cannot assign to immutable `" ++ current.text ++ "`" }
+      if not bucketsContains(nameBuckets, current.text) then { problem = "E0210 line " ++ intToText(current.line) ++ ": undefined binding `" ++ current.text ++ "`" }
+      else if not bucketsContains(mutableBuckets, current.text) then { problem = "E0215 line " ++ intToText(current.line) ++ ": cannot assign to immutable `" ++ current.text ++ "`" }
       else if not Text.eq(value.problem, "") then { problem = value.problem }
       else {
         val expressionProblem = validateExpression(value.code, names, mutables, functionNames, functionCounts)
