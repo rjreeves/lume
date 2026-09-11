@@ -825,3 +825,356 @@ is that it found and fixed three real bugs across two files (one in Certo,
 two in `lume.cto`), improved the common case by ~7x and closures/generics
 by a further ~15-30% beyond that, and still has real, quadratic scaling
 left in the two most feature-rich code paths this bootstrap has.
+
+## Closures' remaining mechanism, fixed - and a second, bigger one found alongside it (2026-09-11)
+
+The previous section's "real fix" sketch for `validateExpression`'s
+`activeNames` bug - keep the outer scope as an untouched reference, track
+only a small per-closure "local additions" stack, check both on lookup -
+was implemented. `validateExpression` no longer takes raw `names`/`mutables`
+lists at all; it takes the same `nameBuckets`/`mutableBuckets` hash-bucket
+structures `compileBlock` already builds for its own duplicate/undefined
+checks, and tracks closure-parameter and match-arm-binding names in a
+small `localNames` list, truncated back to a recorded boundary (an
+integer, not a snapshot) on `closure_end`/`match_arm`/`match_finish`. This
+list's size is bounded by nesting depth and per-scope parameter count, not
+by the enclosing function's total statement count, so both the growth
+(`List.pushMut`, not `List.push`) and the truncation (`List.slice` of a
+small list) stay cheap regardless of how large the function is.
+
+Rebuilding and re-measuring a capturing-closure sweep (same
+`list.map(items, fn(v) -> int => v + base)` × N shape as the original
+closure-scaling section) with only this fix applied, against the
+previous section's own post-`verifyTypes`-fix baseline:
+
+| N | After lexer + `verifyTypes` fixes (previous section) | After `validateExpression` fix alone |
+| ---: | ---: | ---: |
+| 2,000 | 4.61 s | 3.02 s |
+| 4,000 | 18.74 s | 12.83 s |
+
+A real ~30% improvement, but the doubling ratio (12.83 / 3.02 = 4.2x)
+was still unmistakably quadratic - direct instrumentation (temporary
+`monotonicMillis` timers around `compileBlock` and `verifyTypes` in
+`compile`, the same technique as the lexer investigation, reverted before
+committing) showed why: `compileBlock` (which contains
+`validateExpression`) dropped to 15 ms at N = 4,000, but `verifyTypes`
+still cost 11,828 ms. **The fix was correct but wasn't the dominant cost -
+`validateExpression`'s bug was real but smaller than assumed, sitting
+underneath a second, larger mechanism in a completely different
+function.**
+
+**The actual dominant mechanism, located by the same instrumentation**:
+`findFunction` (used throughout `verifyTypes` and its helpers to resolve a
+called name to its declaration site) scans the *entire* combined
+instruction list from index 0 until it finds a matching `"function"`
+marker - and returns -1 only after scanning every single instruction, for
+a name that will never match one. `checkCallTypes` called `findFunction`
+unconditionally for every `"call"` instruction, including calls to
+`list.map`/`str.len`/every other builtin, none of which have a
+`"function"` marker at all - so every builtin call paid a full O(program
+size) scan just to learn "not a user function", before falling through to
+`checkBuiltinTypes`. Worse, `checkBuiltinTypes`'s own `list.map`/`filter`/
+`find`/`fold` handling called `findFunction` *again*, unconditionally, even
+when the callback was a closure (`callbackName` is `""` in that case, so
+this call could never have succeeded) - a second full scan thrown away
+immediately after computing it. A function with N `list.map` calls, each
+triggering two wasted full-list scans of an instruction list that itself
+grows with N, is exactly O(n²).
+
+**The fix**: skip `findFunction` entirely when it cannot possibly help.
+`checkCallTypes` now checks `containsName(builtinNames(), call.text)` (a
+fixed ~40-entry list, O(1) relative to program size) before calling
+`findFunction` at all - `validateExpression` has already rejected any call
+whose name is neither a declared function nor a builtin (`E0216`), so a
+builtin-list hit is guaranteed to route to `checkBuiltinTypes` either way,
+just without paying the scan to reach that answer. `checkBuiltinTypes`'s
+`list.map`/`filter`/`find`/`fold` handling now only calls `findFunction` in
+the non-closure branch, where a named-function target is actually needed.
+Calls to genuinely user-declared functions are completely unaffected -
+`findFunction` still runs for them, exactly as before.
+
+**Correctness, verified before trusting it**: full smoke suite green (same
+one pre-existing, unrelated CRLF-byte failure as every other entry in this
+file); `task_board` output byte-identical to the pre-session baseline; and
+two new stress tests specifically targeting the scope-leak risk the
+`validateExpression` rewrite depends on now live in the permanent suite
+(`examples/invalid_closure_scope_leak.lume`, two sibling closures reusing
+the parameter name `value`, confirming neither leaks past its own
+`closure_end`; `examples/invalid_closure_match_scope_leak.lume`, a `match`
+nested inside a closure, confirming the two independent boundary stacks
+unwind correctly in LIFO order) - both correctly report `E0210 undefined
+binding` for a reference after the relevant scope has closed.
+
+**Performance result - the complexity class changed, not just the
+constant**, confirmed with the same doubling-ratio sweep used for the
+lexer fix, out to N = 32,000:
+
+| N | Before any 2026-09-11 closure fix | After both fixes |
+| ---: | ---: | ---: |
+| 250 | 0.123 s | 0.024 s |
+| 500 | 0.434 s | 0.027 s |
+| 1,000 | 1.630 s | 0.040 s |
+| 2,000 | 7.05 s | 0.071 s |
+| 4,000 | 31.95 s | 0.130 s |
+| 8,000 | (not measured; extrapolates to ~140 s) | 0.267 s |
+| 16,000 | — | 0.633 s |
+| 32,000 | — | 1.300 s |
+
+| N doubling | Before (quadratic signature) | After |
+| --- | ---: | ---: |
+| 2,000 → 4,000 | ~4.5x | 1.83x |
+| 4,000 → 8,000 | (extrapolated ~4x) | 2.06x |
+| 8,000 → 16,000 | — | 2.37x |
+| 16,000 → 32,000 | — | 2.05x |
+
+The doubling ratio settles at ~2.0–2.4x across four consecutive doublings
+from N = 4,000 to N = 32,000 - the linear signature, not the ~4x quadratic
+one this same workload showed at every previous stage of this
+investigation. At N = 4,000, closures went from ~104x the trivial
+baseline (the original closure-scaling section) to effectively free. The
+representative feature-mix benchmark (records, enums, generics, closures
+mixed - the same file used throughout this document) confirms the effect
+end-to-end:
+
+| Benchmark | 2026-09-11, after lexer + `verifyTypes` fixes | After today's closure fixes |
+| --- | ---: | ---: |
+| `benchmark-10000-features.ps1 -Iterations 1` (mean compile) | 14,125 ms | **3,391 ms** (~4.2x faster) |
+| Lines/second | ~708 | **2,949** |
+
+Still below the benchmark's own 10,000-lines/second bar (`TargetMet:
+False`), and the trivial benchmark is unaffected (51.6 ms / 193,798
+lines/second this run, within normal run-to-run noise of the 44.55 ms
+figure above - this workload has no closures to fix). But the
+feature-mix number, which is the one workload in this file that actually
+resembles a real Lume program's `main`, just got ~4.2x faster from two
+fixes confined to `validateExpression` and `verifyTypes`/`checkBuiltinTypes`.
+
+**Generics are confirmed unaffected, not accidentally fixed too** - a
+targeted re-check (`identity<T>(value: T) -> T`, N calls, same doubling
+sweep) after both fixes:
+
+| N | Before (2026-09-11 generics-scaling section) | After today's fixes |
+| ---: | ---: | ---: |
+| 2,000 | 0.487 s | 0.345 s |
+| 4,000 | 1.948 s | 1.333 s |
+| 8,000 | 8.65 s | 6.14 s |
+
+Doubling ratios (3.9x, 4.6x) are still clearly quadratic - the small
+constant-factor improvement here is incidental (generic calls also lex and
+parse their own bodies, same as every other workload in this file
+benefited from the earlier lexer fix's residual effect), not evidence that
+today's fixes touched whatever generics' own mechanism is.
+`checkCallTypes`'s new builtin fast path never applies to a call to a
+user-declared generic function, and `findFunction`'s successful-match scan
+for `identity` (declared once, near the top of every control file in this
+sweep) was already cheap before today - so this result is exactly what the
+fix's own scope predicts, not a surprise.
+
+**Bottom line**: this investigation's own two remaining, identified/
+unidentified mechanisms from the previous section are down to one.
+Closures' mechanism was two mechanisms, not one - the identified
+`validateExpression` bug (real, fixed, but a modest ~6% contributor by
+itself) and a second, unidentified-until-now, much larger one
+(`findFunction`'s wasted full-list scans on every builtin call, ~2x-plus
+contributor, fixed) - and fixing both together changed capturing closures'
+complexity class from quadratic to linear, confirmed out to N = 32,000, the
+same bar the lexer fix was held to. **Generics' mechanism remains the one
+open item**: still quadratic (~3.9-4.6x per doubling), still not located,
+confirmed unaffected by everything fixed today. Whatever drives it is
+neither the lexer, nor `compileBlock`'s or `verifyTypes`' binding-tracking,
+nor `validateExpression`'s local-scope tracking, nor `findFunction`'s
+wasted scans on builtin calls - all five are now fixed or ruled out for
+this specific workload, and a call to a single, early-declared generic
+function still gets quadratically slower to compile as call count grows.
+Finding it is the natural next step for this investigation.
+
+## Generics' mechanism, located: a Certo `and`/`or` short-circuit bug (2026-09-11)
+
+Every prior source-reading pass over `checkCallTypes`'s generic-call
+handling (the argument loop, `inferGeneric`, `substituteType`, the
+generic-completeness loop) found nothing that should scale with N - every
+list involved (`genericNames`, `genericTypes`, `stack`) stays at length 1
+or less for a single-type-parameter call like `identity<T>(value)`. Direct
+instrumentation (the same `monotonicMillis`-timer technique used
+throughout this file, reverted before committing) confirmed the cost was
+still entirely inside `checkCallTypes` (5,656 of 5,672 ms of `verifyTypes`'
+total at N = 8,000 - `findFunction` itself measured at a flat, non-scaling
+2 steps per call, ruling it back out) but source reading alone couldn't
+find where inside it.
+
+**The isolating experiment**: cumulative cost per call, measured across
+different total-program sizes, wasn't the same at each size - the average
+per-call cost inside `checkCallTypes` grew with N (0.14 ms at N = 2,000,
+0.30 ms at N = 4,000, 0.71 ms at N = 8,000) even though a per-batch
+breakdown *within* one run stayed flat throughout (every 500-call window
+in the N = 8,000 run cost ~350-390 ms, no growth from the first batch to
+the last). That combination - flat within a run, scaling only *across*
+differently-sized runs - pointed at something proportional to the whole
+program's size, computed identically on every call, rather than something
+that accumulates as the run progresses. A direct test confirmed it: 100
+plain (non-generic) calls added after 7,900 unrelated padding statements
+cost 0 ms, but 100 *generic* calls added after the same 7,900 lines of
+padding cost 31 ms - the padding contains no calls at all, so whatever
+this is, it is triggered by being a generic call specifically, and its
+cost is set by how much file precedes it, not by how many calls came
+before it.
+
+**Fine-grained phase timestamps inside `checkCallTypes`'s generic branch**
+narrowed it to one specific loop: the generic-constraint-completeness
+check,
+
+```
+if not Text.eq(requirement, "") and not knownGenericConstraint(code, requirement) then {
+  problem = "E0679 ..."
+} else if not Text.eq(requirement, "") and not satisfiesGenericConstraint(code, ..., requirement) then {
+  problem = "E0680 ..."
+}
+```
+
+For an *unconstrained* generic like `identity<T>`, `requirement` is `""`
+and `not Text.eq(requirement, "")` is `false` - this code is written on
+the assumption that `and`'s left operand being `false` skips the right
+operand entirely, so `knownGenericConstraint`/`satisfiesGenericConstraint`
+should never run. A call counter added directly inside `hasProtocol` (the
+function `knownGenericConstraint` falls through to, which does a full
+`for item in code` scan of the *entire program's instruction list* looking
+for a matching `protocol_type` declaration) showed it firing exactly once
+per generic call anyway - 100 times for the 100-call padded file, with
+`codeLen=16110` printed alongside every call, confirming each firing scans
+the whole program. `hasProtocolImplementation` (reached the same way
+through `satisfiesGenericConstraint`, an equally full scan of every
+`protocol_impl` instruction) fired exactly as often.
+
+**Root cause, confirmed with a minimal, standalone, isolated `.cto`
+program run directly through `certo run` (independent of Lume entirely -
+this is a Certo bug, not a `lume.cto` bug, same as item 325's
+`Text.slice`)**:
+
+```
+fn expensive(): Bool = { println("called"); false }
+fn main(): Unit = {
+  val requirement = ""
+  if not Text.eq(requirement, "") and not expensive() then { println("A") }
+  else { println("B") }
+}
+```
+
+prints `called` then `B` - `expensive()` runs even though the left operand
+of `and` is `false` and fully determines the result. A broader sweep
+(`false and expensiveTrue()`, `true or expensiveFalse()`, `not false and
+not expensiveFalse()`, `not true and not expensiveFalse()`) confirmed this
+for both `and` and `or`, with and without `not`: **every case evaluates
+both operands unconditionally**, contradicting the language specification's
+own operator table, which documents both `and` and `or` as
+"(short-circuit)". The final boolean result was correct in every case
+tested - this is a wasted-evaluation and unguarded-panic-risk bug, not a
+wrong-answer bug - but it means any guard of the shape `cheapCheck() and
+expensiveCall()` in Certo, including several in `lume.cto` itself, silently
+never skips the expensive call. Filed as Certo BACKLOG.md item 326 for
+that project to investigate the actual root cause (eager HIR/MIR lowering
+of `and`/`or` instead of the conditional-branch codegen the spec's contract
+requires, or something narrower - not yet determined on the Certo side).
+
+**The fix, entirely on the `lume.cto` side**: replace reliance on `and`
+short-circuiting with actual nested control flow, which - unlike `and`/
+`or` - genuinely does only execute the reached branch. `checkCallTypes`'s
+constraint check became `if not Text.eq(requirement, "") then { if not
+knownGenericConstraint(...) then {...} else if not
+satisfiesGenericConstraint(...) then {...} }`, guaranteeing both expensive
+calls are skipped whenever `requirement` is empty, independent of Certo's
+`and` behavior. `knownGenericConstraint` itself had the identical bug one
+level in: `Text.eq(requirement, "Eq") or ... or hasProtocol(code,
+requirement)` called `hasProtocol` even when an earlier clause (a built-in
+marker like `"Eq"`) already matched - rewritten as an `if`/`else if` chain,
+which only evaluates and runs the one branch actually reached. A third,
+lower-impact instance in `verifyTypes`'s function-declaration constraint
+check (`if Text.eq(problem, "") and not knownGenericConstraint(...)`,
+bounded by a function's own declared-constraint count rather than N) got
+the same nested-`if` treatment for consistency, though it wasn't part of
+the measured quadratic cost.
+
+**Correctness, verified before trusting it**: full smoke suite green (same
+one pre-existing, unrelated CRLF-byte failure as every other entry in this
+file); `task_board` output byte-identical to every prior baseline in this
+file. More directly relevant here than for most fixes in this file: the
+existing smoke suite already exercises every branch this change touches
+end-to-end - `generic constraint validation` and `generic constraint name
+validation` (E0680/E0679 for a built-in marker constraint),
+`protocol implementation constraint` (E0680 for a user protocol
+constraint) - all four still produce byte-identical error messages
+(including line numbers) after the rewrite, confirming the nested-`if`
+restructuring preserves exactly the semantics the original `and`-based
+guards were written to express, just without relying on a short-circuit
+contract Certo doesn't actually honor.
+
+**Performance result - another complexity-class change, confirmed out to
+N = 32,000 for the unconstrained case**:
+
+| N | Unconstrained generic (`identity<T>`), before | after |
+| ---: | ---: | ---: |
+| 2,000 | 0.487 s (original) / 0.345 s (post-closure-fixes) | 0.035 s |
+| 4,000 | 1.948 s / 1.333 s | 0.064 s |
+| 8,000 | 8.65 s / 6.14 s | 0.118 s |
+| 16,000 | — | 0.308 s |
+| 32,000 | — | 0.598 s |
+
+| N doubling | Before (quadratic, ~3.9-4.6x) | After |
+| --- | ---: | ---: |
+| 2,000 → 4,000 | ~3.9x | 1.83x |
+| 4,000 → 8,000 | ~4.6x | 1.84x |
+| 8,000 → 16,000 | — | 2.61x |
+| 16,000 → 32,000 | — | 1.94x |
+
+**Built-in-marker-constrained generics (`fn keep_number<T: Number>`)
+improved by the same mechanism**, since every constrained call also went
+through the now-fixed `knownGenericConstraint`/`satisfiesGenericConstraint`
+path (previously paying the wasted scans on top of an actually-needed
+constraint check, rather than instead of a skipped one):
+
+| N | Constrained generic (`keep_number<T: Number>`), after |
+| ---: | ---: |
+| 2,000 | 0.063 s |
+| 4,000 | 0.095 s |
+| 8,000 | 0.150 s |
+| 16,000 | 0.295 s |
+
+Doubling ratios (1.52x, 1.58x, 1.97x) confirm the same shift to
+near-linear scaling. This closes the gap the "Generics vs. protocols,
+re-measured after protocol methods" section left open, where built-in-
+marker-constrained and user-protocol-constrained generics had converged to
+the same ~5x-baseline cost after protocol methods landed - both were
+riding this same bug, just reached from different call shapes.
+
+**End-to-end effect on the representative feature-mix benchmark** (the one
+workload in this file that actually resembles a real Lume program,
+combining records, enums, generics, and closures):
+
+| Stage | Mean compile |
+| --- | ---: |
+| Original (no 2026-09-11 fixes) | 21,563 ms |
+| After lexer + `verifyTypes` binding fixes | 14,125 ms |
+| After closure fixes (`validateExpression` + `findFunction`) | 3,391 ms |
+| After this generics fix | **1,719 ms** |
+
+Still below the benchmark's own 10,000-lines/second bar (5,817 achieved),
+but the gap has closed from ~69x at the start of this file's investigation
+to under 2x now. The trivial benchmark is unaffected (54.7 ms this run,
+within normal noise of the 44.55 ms figure recorded earlier).
+
+**Bottom line**: this was the last of the mechanisms this investigation
+had explicitly left open. Every quadratic-or-worse mechanism identified in
+this file across both sessions - the lexer (Certo `Text.slice`, fixed
+upstream), `compileBlock`'s and `verifyTypes`' own binding-tracking (two
+`lume.cto` bugs, fixed), `validateExpression`'s local-scope tracking
+(`lume.cto`, fixed), `findFunction`'s wasted scans on builtin and closure
+calls (`lume.cto`, fixed), and now generic-constraint checking's wasted
+scans caused by Certo's own non-short-circuiting `and`/`or`
+(`lume.cto`-side workaround shipped; root cause filed upstream as item
+326) - is now either fixed or ruled out. Closures went from ~104x the
+trivial baseline to linear; generics went from ~5x-and-quadratic to
+linear. What remains is incremental: profile whether any smaller,
+non-quadratic constant-factor costs are worth chasing, and re-run the
+acceptance-gate and AI-evaluation-suite checks this file has repeatedly
+noted as unverified, now that the compiler they'd be measuring is in a
+fundamentally different performance class than when this investigation
+began.

@@ -309,6 +309,14 @@ $closureCapture = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_closu
 if ($LASTEXITCODE -ne 1) { throw "mutable closure capture validation should exit 1" }
 Assert-Equal 'immutable closure capture validation' 'E0678 line 4: closure cannot capture mutable binding `offset`' ($closureCapture -join "`n")
 
+$closureScopeLeak = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_closure_scope_leak.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "closure scope leak validation should exit 1" }
+Assert-Equal 'closure scope leak validation' 'E0210 line 6: undefined binding `value`' ($closureScopeLeak -join "`n")
+
+$closureMatchScopeLeak = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_closure_match_scope_leak.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "nested closure/match scope leak validation should exit 1" }
+Assert-Equal 'nested closure/match scope leak validation' 'E0210 line 12: undefined binding `code`' ($closureMatchScopeLeak -join "`n")
+
 $propagate = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_propagate.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "propagation validation should exit 1" }
 Assert-Equal 'propagation context validation' 'E0624 line 2: `?` requires an enclosing result-returning function' ($propagate -join "`n")

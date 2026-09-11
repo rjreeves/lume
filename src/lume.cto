@@ -796,6 +796,41 @@ fn insertBindingBucket(buckets: List<List<Text>>, name: Text, value: Text): Bool
   true
 }
 
+// Closure parameters cannot go through insertBindingBucket/bindingBucketGet
+// above: those buckets are seeded once per function and only ever grow
+// (correct for top-level params/stores, which never need rollback), but a
+// closure's own parameters DO go out of scope when the closure ends. Routing
+// them through the shared buckets anyway (as a prior fix did, to reuse the
+// same fast path) meant a bucket for a commonly-reused closure parameter
+// name accumulated one entry per closure ever compiled in the function, and
+// bindingBucketGet's "scan the whole bucket, keep the last match" lookup
+// (needed so distinct closures resolve their own, most-recent type) then
+// cost O(closures-so-far-with-this-name) per lookup - quadratic overall, and
+// the shared buckets were never restored on closure_end, so a closure that
+// shadowed an outer name of the same one would also leave the wrong type
+// resolving for the outer name afterward.
+//
+// Fix: keep closure parameters out of the shared buckets entirely, in their
+// own small, explicitly-scoped list instead. Its size is bounded by the
+// total parameter count of currently-open closures (nesting depth x params
+// per closure), never by how many closures a function has compiled overall,
+// because closure_end truncates it back on exit - same technique as
+// validateExpression's localNames, below. Scanning backward (not forward)
+// returns the innermost open closure's own parameter first, matching the
+// correct shadowing precedence for closures nested inside closures.
+fn closureParamLookup(names: List<Text>, types: List<Text>, name: Text): Text? = {
+  var index = List.len(names) - 1
+  var found = false
+  var result = ""
+  while index >= 0 and not found {
+    if Text.eq(List.getOrPanic(names, index), name) then {
+      result = List.getOrPanic(types, index)
+      found = true
+    } else { index = index - 1 }
+  }
+  if found then Some(result) else None
+}
+
 fn nameIndex(names: List<Text>, name: Text): Int = {
   var index = 0
   var found = -1
@@ -832,39 +867,69 @@ fn builtinCounts(): List<Int> = [
   2, 1, 1, 1, 1
 ]
 
-fn validateExpression(code: List<Instruction>, names: List<Text>, mutables: List<Text>, functionNames: List<Text>, functionCounts: List<Int>): Text = {
+// activeNames used to be a single combined List<Text> that every closure
+// parameter and match-arm binding got pushed onto with List.push (a full
+// copy of the whole thing per push - see BENCHMARKS.md's "two remaining
+// mechanisms" section). Because that list started as (an alias of) the
+// enclosing function's own names list, its size scaled with the function's
+// total statement count, making every closure/match-arm registration in
+// this scan O(current-scope-size) and the whole function O(n^2).
+//
+// The fix: names/mutables are never copied or scanned linearly here at all.
+// The caller (compileBlock) already maintains nameBuckets/mutableBuckets -
+// fixed-bucket hash sets seeded from the base scope - and passes those in
+// directly, giving an O(bucketCount) lookup for anything declared outside
+// this expression. Only closure parameters and match-arm bindings - names
+// that exist solely for the lifetime of one nested scope within this one
+// expression - are tracked here, in localNames, an append-only list grown
+// with pushMut (O(1) amortized, not a copy). Because localNames only ever
+// holds names local to currently-open closures/match arms in *this single
+// expression's* instruction stream, its size is bounded by nesting depth and
+// per-scope parameter count, not by the enclosing function's total size -
+// unlike the base scope, it does not grow across statements, so truncating
+// it with List.slice on scope exit stays cheap regardless of how large the
+// function is. closureBoundaries and matchBoundaries record, as plain
+// integers (not full snapshots), how long localNames was when each scope
+// opened, so exiting a scope means slicing localNames back to that recorded
+// length - correct as long as closures and match arms open and close in
+// strict LIFO order, which the instruction stream already guarantees.
+fn validateExpression(code: List<Instruction>, nameBuckets: List<List<Text>>, mutableBuckets: List<List<Text>>, functionNames: List<Text>, functionCounts: List<Int>): Text = {
   var problem = ""
-  var activeNames = names
-  var matchScopes: List<List<Text>> = []
-  var closureScopes: List<List<Text>> = []
+  var localNames: List<Text> = []
+  var closureBoundaries: List<Int> = []
+  var matchBoundaries: List<Int> = []
   for item in code {
     if Text.eq(problem, "") and Text.eq(item.op, "closure_start") then {
-      closureScopes = List.push(closureScopes, activeNames)
+      closureBoundaries = List.pushMut(closureBoundaries, List.len(localNames))
       val parameterText = closureDescriptorPart(item.text, 0)
       if not Text.eq(parameterText, "") then {
-        for parameter in Text.split(parameterText, ",") { activeNames = List.push(activeNames, parameter) }
+        for parameter in Text.split(parameterText, ",") { localNames = List.pushMut(localNames, parameter) }
       }
     } else if Text.eq(problem, "") and Text.eq(item.op, "closure_end") then {
-      activeNames = List.getOrPanic(closureScopes, List.len(closureScopes) - 1)
-      closureScopes = List.slice(closureScopes, 0, List.len(closureScopes) - 1)
+      val boundary = List.getOrPanic(closureBoundaries, List.len(closureBoundaries) - 1)
+      closureBoundaries = List.slice(closureBoundaries, 0, List.len(closureBoundaries) - 1)
+      localNames = List.slice(localNames, 0, boundary)
     } else if Text.eq(problem, "") and Text.eq(item.op, "match_start") then {
-      matchScopes = List.push(matchScopes, activeNames)
+      matchBoundaries = List.pushMut(matchBoundaries, List.len(localNames))
     } else if Text.eq(problem, "") and Text.eq(item.op, "match_arm") then {
-      activeNames = List.getOrPanic(matchScopes, List.len(matchScopes) - 1)
+      val boundary = List.getOrPanic(matchBoundaries, List.len(matchBoundaries) - 1)
+      localNames = List.slice(localNames, 0, boundary)
       val bindingText = afterPipe(item.text)
       if not Text.eq(bindingText, "*") and not Text.eq(bindingText, "") then {
-        for binding in Text.split(bindingText, ",") { activeNames = List.push(activeNames, binding) }
+        for binding in Text.split(bindingText, ",") { localNames = List.pushMut(localNames, binding) }
       }
     } else if Text.eq(problem, "") and Text.eq(item.op, "match_arm_end") then {
-      activeNames = List.getOrPanic(matchScopes, List.len(matchScopes) - 1)
+      val boundary = List.getOrPanic(matchBoundaries, List.len(matchBoundaries) - 1)
+      localNames = List.slice(localNames, 0, boundary)
     } else if Text.eq(problem, "") and Text.eq(item.op, "match_finish") then {
-      activeNames = List.getOrPanic(matchScopes, List.len(matchScopes) - 1)
-      matchScopes = List.slice(matchScopes, 0, List.len(matchScopes) - 1)
+      val boundary = List.getOrPanic(matchBoundaries, List.len(matchBoundaries) - 1)
+      matchBoundaries = List.slice(matchBoundaries, 0, List.len(matchBoundaries) - 1)
+      localNames = List.slice(localNames, 0, boundary)
     } else if Text.eq(problem, "") and Text.eq(item.op, "fn_ref") and not containsName(functionNames, item.text) then {
       problem = "E0216 line " ++ intToText(item.line) ++ ": unknown function `" ++ item.text ++ "`"
-    } else if Text.eq(problem, "") and Text.eq(item.op, "load") and List.len(closureScopes) > 0 and containsName(mutables, item.text) then {
+    } else if Text.eq(problem, "") and Text.eq(item.op, "load") and List.len(closureBoundaries) > 0 and bucketsContains(mutableBuckets, item.text) then {
       problem = "E0678 line " ++ intToText(item.line) ++ ": closure cannot capture mutable binding `" ++ item.text ++ "`"
-    } else if Text.eq(problem, "") and Text.eq(item.op, "load") and not containsName(activeNames, item.text) then {
+    } else if Text.eq(problem, "") and Text.eq(item.op, "load") and not containsName(localNames, item.text) and not bucketsContains(nameBuckets, item.text) then {
       problem = "E0210 line " ++ intToText(item.line) ++ ": undefined binding `" ++ item.text ++ "`"
     } else if Text.eq(problem, "") and Text.eq(item.op, "call") then {
       val functionIndex = nameIndex(functionNames, item.text)
@@ -922,7 +987,7 @@ fn compileBlock(tokens: List<Token>, start: Int, initialNames: List<Text>, initi
         val value = parseComparison(tokens, index + 3)
         if not Text.eq(value.problem, "") then { problem = value.problem }
         else {
-          val expressionProblem = validateExpression(value.code, names, mutables, functionNames, functionCounts)
+          val expressionProblem = validateExpression(value.code, nameBuckets, mutableBuckets, functionNames, functionCounts)
           if not Text.eq(expressionProblem, "") then { problem = expressionProblem }
           else {
             code = List.pushMut(appendCode(code, value.code), makeInstruction("store", name.text, 0, name.line))
@@ -943,7 +1008,7 @@ fn compileBlock(tokens: List<Token>, start: Int, initialNames: List<Text>, initi
         if not Text.eq(value.problem, "") then { problem = value.problem }
         else if not Text.eq(at(tokens, value.next).text, ")") then { problem = "E0206 expected `)`" }
         else {
-          val expressionProblem = validateExpression(value.code, names, mutables, functionNames, functionCounts)
+          val expressionProblem = validateExpression(value.code, nameBuckets, mutableBuckets, functionNames, functionCounts)
           if not Text.eq(expressionProblem, "") then { problem = expressionProblem }
           else {
             val op = if Text.eq(current.text, "print") then "print" else "eprint"
@@ -956,7 +1021,7 @@ fn compileBlock(tokens: List<Token>, start: Int, initialNames: List<Text>, initi
       val value = parseComparison(tokens, index + 1)
       if not Text.eq(value.problem, "") then { problem = value.problem }
       else {
-        val expressionProblem = validateExpression(value.code, names, mutables, functionNames, functionCounts)
+        val expressionProblem = validateExpression(value.code, nameBuckets, mutableBuckets, functionNames, functionCounts)
         if not Text.eq(expressionProblem, "") then { problem = expressionProblem }
         else {
           code = List.pushMut(appendCode(code, value.code), makeInstruction("return", "", 0, current.line))
@@ -965,7 +1030,7 @@ fn compileBlock(tokens: List<Token>, start: Int, initialNames: List<Text>, initi
       }
     } else if Text.eq(current.text, "if") then {
       val condition = parseComparison(tokens, index + 1)
-      val expressionProblem = validateExpression(condition.code, names, mutables, functionNames, functionCounts)
+      val expressionProblem = validateExpression(condition.code, nameBuckets, mutableBuckets, functionNames, functionCounts)
       if not Text.eq(condition.problem, "") then { problem = condition.problem }
       else if not Text.eq(expressionProblem, "") then { problem = expressionProblem }
       else if not Text.eq(at(tokens, condition.next).text, "{") then { problem = "E0212 expected `{` after if condition" }
@@ -998,7 +1063,7 @@ fn compileBlock(tokens: List<Token>, start: Int, initialNames: List<Text>, initi
       }
     } else if Text.eq(current.text, "while") then {
       val condition = parseComparison(tokens, index + 1)
-      val expressionProblem = validateExpression(condition.code, names, mutables, functionNames, functionCounts)
+      val expressionProblem = validateExpression(condition.code, nameBuckets, mutableBuckets, functionNames, functionCounts)
       if not Text.eq(condition.problem, "") then { problem = condition.problem }
       else if not Text.eq(expressionProblem, "") then { problem = expressionProblem }
       else if not Text.eq(at(tokens, condition.next).text, "{") then { problem = "E0214 expected `{` after while condition" }
@@ -1017,7 +1082,7 @@ fn compileBlock(tokens: List<Token>, start: Int, initialNames: List<Text>, initi
       val value = parseComparison(tokens, index)
       if not Text.eq(value.problem, "") then { problem = value.problem }
       else {
-        val expressionProblem = validateExpression(value.code, names, mutables, functionNames, functionCounts)
+        val expressionProblem = validateExpression(value.code, nameBuckets, mutableBuckets, functionNames, functionCounts)
         if not Text.eq(expressionProblem, "") then { problem = expressionProblem }
         else {
           code = List.pushMut(appendCode(code, value.code), makeInstruction("test_expect", current.text, 0, current.line))
@@ -1030,7 +1095,7 @@ fn compileBlock(tokens: List<Token>, start: Int, initialNames: List<Text>, initi
       else if not bucketsContains(mutableBuckets, current.text) then { problem = "E0215 line " ++ intToText(current.line) ++ ": cannot assign to immutable `" ++ current.text ++ "`" }
       else if not Text.eq(value.problem, "") then { problem = value.problem }
       else {
-        val expressionProblem = validateExpression(value.code, names, mutables, functionNames, functionCounts)
+        val expressionProblem = validateExpression(value.code, nameBuckets, mutableBuckets, functionNames, functionCounts)
         if not Text.eq(expressionProblem, "") then { problem = expressionProblem }
         else {
           code = List.pushMut(appendCode(code, value.code), makeInstruction("store", current.text, 0, current.line))
@@ -1923,8 +1988,20 @@ fn satisfiesGenericConstraint(code: List<Instruction>, valueType: Text, requirem
   } else { hasProtocolImplementation(code, requirement, valueType) }
 }
 
-fn knownGenericConstraint(code: List<Instruction>, requirement: Text): Bool =
-  Text.eq(requirement, "Eq") or Text.eq(requirement, "Ord") or Text.eq(requirement, "Number") or Text.eq(requirement, "Text") or hasProtocol(code, requirement)
+// Written as an if/else-if chain rather than a chain of `or`s: Certo's `or`
+// does not actually short-circuit (confirmed directly - see checkCallTypes's
+// comment on the same bug), so `... or hasProtocol(code, requirement)` was
+// scanning the whole program's instruction list even when requirement was
+// one of the four built-in markers and the answer was already known to be
+// true. if/else-if branch selection is genuine control flow (unlike `and`/
+// `or`), so only the reached branch's condition and body ever run.
+fn knownGenericConstraint(code: List<Instruction>, requirement: Text): Bool = {
+  if Text.eq(requirement, "Eq") then true
+  else if Text.eq(requirement, "Ord") then true
+  else if Text.eq(requirement, "Number") then true
+  else if Text.eq(requirement, "Text") then true
+  else hasProtocol(code, requirement)
+}
 
 fn substituteType(value: Text, parameters: List<Text>, arguments: List<Text>): Text = {
   var output = value
@@ -2042,7 +2119,6 @@ fn checkBuiltinTypes(code: List<Instruction>, name: Text, stackInput: List<Text>
     val listType = pop(callbackType.stack)
     stack = listType.stack
     val callbackName = if Text.startsWith(callbackType.value, "fn:") then Text.slice(callbackType.value, 3, Text.len(callbackType.value)) else ""
-    val target = findFunction(code, callbackName)
     val isClosure = Text.startsWith(callbackType.value, "closure:")
     if not Text.startsWith(listType.value, "list<") then { problem = "E0671 " ++ name ++ " requires a list" }
     else if isClosure then {
@@ -2055,8 +2131,16 @@ fn checkBuiltinTypes(code: List<Instruction>, name: Text, stackInput: List<Text>
       else if Text.eq(name, "list.filter") and not Text.eq(closureReturn, "bool") then { problem = "E0674 list.filter callback must return bool" }
       resultType = if Text.eq(name, "list.map") then "list<" ++ closureReturn ++ ">" else if Text.eq(name, "list.find") then "Option<" ++ listElementType(listType.value) ++ ">" else listType.value
     }
-    else if target < 0 then { problem = "E0672 " ++ name ++ " requires a function value" }
     else {
+      // Only a named-function callback (never a closure - handled above
+      // without ever needing this) reaches findFunction's full-scan lookup,
+      // for the same reason checkCallTypes now skips it for builtins: paying
+      // an O(program size) scan on every list.map/filter/find call, even
+      // when the callback is a closure and the result is thrown away, is
+      // what made any function with many such calls quadratic.
+      val target = findFunction(code, callbackName)
+      if target < 0 then { problem = "E0672 " ++ name ++ " requires a function value" }
+      else {
       val callbackMarker = List.getOrPanic(code, target)
       val callbackGenericText = markerGenericParameters(callbackMarker.text)
       val callbackGenerics = if Text.eq(callbackGenericText, "") then [] else Text.split(callbackGenericText, ",")
@@ -2069,6 +2153,7 @@ fn checkBuiltinTypes(code: List<Instruction>, name: Text, stackInput: List<Text>
       if not typesCompatible(inputType, listElementType(listType.value)) then { problem = "E0673 callback parameter type does not match list element type" }
       else if Text.eq(name, "list.filter") and not Text.eq(outputType, "bool") then { problem = "E0674 list.filter callback must return bool" }
       resultType = if Text.eq(name, "list.map") then "list<" ++ outputType ++ ">" else if Text.eq(name, "list.find") then "Option<" ++ listElementType(listType.value) ++ ">" else listType.value
+      }
     }
   } else if Text.eq(name, "list.fold") then {
     val callbackType = pop(stack)
@@ -2076,7 +2161,6 @@ fn checkBuiltinTypes(code: List<Instruction>, name: Text, stackInput: List<Text>
     val listType = pop(initialType.stack)
     stack = listType.stack
     val callbackName = if Text.startsWith(callbackType.value, "fn:") then Text.slice(callbackType.value, 3, Text.len(callbackType.value)) else ""
-    val target = findFunction(code, callbackName)
     val isClosure = Text.startsWith(callbackType.value, "closure:")
     if not Text.startsWith(listType.value, "list<") then { problem = "E0671 list.fold requires a list" }
     else if isClosure then {
@@ -2088,8 +2172,12 @@ fn checkBuiltinTypes(code: List<Instruction>, name: Text, stackInput: List<Text>
       else if not typesCompatible(List.getOrPanic(closureParameters, 0), initialType.value) or not typesCompatible(List.getOrPanic(closureParameters, 1), listElementType(listType.value)) or not typesCompatible(closureReturn, initialType.value) then { problem = "E0675 list.fold callback must be (accumulator, item) -> accumulator" }
       resultType = initialType.value
     }
-    else if target < 0 then { problem = "E0672 list.fold requires a function value" }
     else {
+      // Same fix as list.map/filter/find above: findFunction's full-scan
+      // lookup only runs for a named-function callback, never a closure.
+      val target = findFunction(code, callbackName)
+      if target < 0 then { problem = "E0672 list.fold requires a function value" }
+      else {
       val callbackMarker = List.getOrPanic(code, target)
       val callbackGenericText = markerGenericParameters(callbackMarker.text)
       val callbackGenerics = if Text.eq(callbackGenericText, "") then [] else Text.split(callbackGenericText, ",")
@@ -2104,6 +2192,7 @@ fn checkBuiltinTypes(code: List<Instruction>, name: Text, stackInput: List<Text>
       val outputType = substituteType(markerReturnType(callbackMarker.text), callbackGenerics, callbackTypes)
       if not typesCompatible(itemType, listElementType(listType.value)) or not typesCompatible(accumulatorType, initialType.value) or not typesCompatible(outputType, initialType.value) then { problem = "E0675 list.fold callback must be (accumulator, item) -> accumulator" }
       resultType = initialType.value
+      }
     }
   } else if Text.eq(name, "process.run") then {
     val arguments = pop(stack)
@@ -2154,8 +2243,23 @@ fn checkBuiltinTypes(code: List<Instruction>, name: Text, stackInput: List<Text>
   TypeStackResult { stack: stack, resultType: resultType, problem: problem }
 }
 
+// containsName(builtinNames(), call.text) is checked before findFunction,
+// not after: findFunction returns -1 on a miss only by scanning every
+// instruction in the whole program's combined code list looking for a
+// "function" marker that isn't there (see its own definition) - a genuinely
+// unbounded cost for a program with many instructions, paid on every single
+// call to a builtin. validateExpression has already rejected any call whose
+// name is neither a declared function nor a builtin (E0216), so by the time
+// this runs, a name found in builtinNames() is guaranteed to route to
+// checkBuiltinTypes either way - checking the ~40-entry builtin list first
+// (a fixed, small cost, not O(program size)) just avoids paying findFunction's
+// full-scan cost to reach the same answer. This was the dominant remaining
+// cost for any function that calls list.map/filter/find/fold repeatedly
+// (confirmed by direct instrumentation): each call's miss-scan cost grows
+// with the whole function's instruction count, and N such calls in one
+// function made the whole thing O(n^2).
 fn checkCallTypes(code: List<Instruction>, call: Instruction, stackInput: List<Text>): TypeStackResult = {
-  val target = findFunction(code, call.text)
+  val target = if containsName(builtinNames(), call.text) then -1 else findFunction(code, call.text)
   if target < 0 then { checkBuiltinTypes(code, call.text, stackInput) }
   else {
     var stack = stackInput
@@ -2184,10 +2288,29 @@ fn checkCallTypes(code: List<Instruction>, call: Instruction, stackInput: List<T
       else {
         val genericName = List.getOrPanic(genericNames, genericIndex)
         val requirement = genericConstraintFor(markerGenericConstraints(marker.text), genericName)
-        if not Text.eq(requirement, "") and not knownGenericConstraint(code, requirement) then {
-          problem = "E0679 line " ++ intToText(call.line) ++ ": unknown generic constraint `" ++ requirement ++ "`"
-        } else if not Text.eq(requirement, "") and not satisfiesGenericConstraint(code, List.getOrPanic(genericTypes, genericIndex), requirement) then {
-          problem = "E0680 line " ++ intToText(call.line) ++ ": type `" ++ List.getOrPanic(genericTypes, genericIndex) ++ "` does not satisfy `" ++ requirement ++ "` for `" ++ genericName ++ "` calling `" ++ call.text ++ "`"
+        // Certo's `and`/`or` do not short-circuit despite the language spec
+        // documenting both as short-circuit (confirmed directly: a minimal
+        // isolated .cto repro shows the right operand of `and`/`or` always
+        // evaluates, even when the left operand alone determines the
+        // result). `if not Text.eq(requirement, "") and not
+        // knownGenericConstraint(...)` therefore called knownGenericConstraint
+        // (and, through it, hasProtocol's full scan of the whole program's
+        // instruction list) on every generic call regardless of whether
+        // requirement was even non-empty - and satisfiesGenericConstraint
+        // (hasProtocolImplementation's equally full scan) the same way in
+        // the sibling branch below. An unconstrained generic function
+        // called N times therefore paid two wasted O(program size) scans
+        // per call, which is what made generic calls quadratic while plain
+        // calls (no constraint check at all) stayed linear. Nesting an
+        // explicit `if` around the emptiness check - rather than relying on
+        // `and` to skip the expensive call - fixes it regardless of Certo's
+        // short-circuit behavior; filed as a Certo bug report separately.
+        if not Text.eq(requirement, "") then {
+          if not knownGenericConstraint(code, requirement) then {
+            problem = "E0679 line " ++ intToText(call.line) ++ ": unknown generic constraint `" ++ requirement ++ "`"
+          } else if not satisfiesGenericConstraint(code, List.getOrPanic(genericTypes, genericIndex), requirement) then {
+            problem = "E0680 line " ++ intToText(call.line) ++ ": type `" ++ List.getOrPanic(genericTypes, genericIndex) ++ "` does not satisfy `" ++ requirement ++ "` for `" ++ genericName ++ "` calling `" ++ call.text ++ "`"
+          }
         }
       }
       genericIndex = genericIndex + 1
@@ -2320,6 +2443,9 @@ fn verifyTypes(code: List<Instruction>): Text = {
   var closures: List<ClosureTypeContext> = []
   var bindings = Bindings { names: [], values: [] }
   var bindingBuckets = emptyBuckets()
+  var closureParamNames: List<Text> = []
+  var closureParamTypes: List<Text> = []
+  var closureParamBoundaries: List<Int> = []
   var returnType = "unit"
   var problem = ""
   for item in code {
@@ -2330,24 +2456,34 @@ fn verifyTypes(code: List<Instruction>): Text = {
         closures = []
         bindings = Bindings { names: [], values: [] }
         bindingBuckets = emptyBuckets()
+        closureParamNames = []
+        closureParamTypes = []
+        closureParamBoundaries = []
         returnType = markerReturnType(item.text)
         val requirements = markerGenericConstraints(item.text)
         if not Text.eq(requirements, "") then {
           for entry in Text.split(requirements, ",") {
             val requirement = schemaFieldType(entry)
-            if Text.eq(problem, "") and not knownGenericConstraint(code, requirement) then {
-              problem = "E0679 line " ++ intToText(item.line) ++ ": unknown generic constraint `" ++ requirement ++ "`"
+            if Text.eq(problem, "") then {
+              if not knownGenericConstraint(code, requirement) then {
+                problem = "E0679 line " ++ intToText(item.line) ++ ": unknown generic constraint `" ++ requirement ++ "`"
+              }
             }
           }
         }
       } else if Text.eq(item.op, "closure_start") then {
         closures = List.push(closures, ClosureTypeContext { stack: stack, bindings: bindings, returnType: returnType })
+        closureParamBoundaries = List.pushMut(closureParamBoundaries, List.len(closureParamNames))
         stack = []
         returnType = closureDescriptorPart(item.text, 2)
       } else if Text.eq(item.op, "closure_end") then {
         val actual = pop(stack)
         val popped = popClosureTypeContext(closures)
         closures = popped.stack
+        val paramBoundary = List.getOrPanic(closureParamBoundaries, List.len(closureParamBoundaries) - 1)
+        closureParamBoundaries = List.slice(closureParamBoundaries, 0, List.len(closureParamBoundaries) - 1)
+        closureParamNames = List.slice(closureParamNames, 0, paramBoundary)
+        closureParamTypes = List.slice(closureParamTypes, 0, paramBoundary)
         if not typesCompatible(returnType, actual.value) then { problem = "E0676 line " ++ intToText(item.line) ++ ": closure return type mismatch; expected " ++ returnType ++ ", got " ++ actual.value }
         else {
           stack = List.push(popped.value.stack, closureType(item.text))
@@ -2355,13 +2491,19 @@ fn verifyTypes(code: List<Instruction>): Text = {
           returnType = popped.value.returnType
         }
       } else if Text.eq(item.op, "param") or Text.eq(item.op, "main_param") then {
-        val discardParamInsert = insertBindingBucket(bindingBuckets, beforePipe(item.text), afterPipe(item.text))
+        if List.len(closureParamBoundaries) > 0 then {
+          closureParamNames = List.pushMut(closureParamNames, beforePipe(item.text))
+          closureParamTypes = List.pushMut(closureParamTypes, afterPipe(item.text))
+        } else {
+          val discardParamInsert = insertBindingBucket(bindingBuckets, beforePipe(item.text), afterPipe(item.text))
+        }
       } else if Text.eq(item.op, "const_int") then { stack = List.push(stack, "int") }
       else if Text.eq(item.op, "const_str") then { stack = List.push(stack, "str") }
       else if Text.eq(item.op, "const_bool") then { stack = List.push(stack, "bool") }
       else if Text.eq(item.op, "fn_ref") then { stack = List.push(stack, "fn:" ++ item.text) }
       else if Text.eq(item.op, "load") then {
-        if let Some(bindingType) = bindingBucketGet(bindingBuckets, item.text) { stack = List.push(stack, bindingType) }
+        if let Some(bindingType) = closureParamLookup(closureParamNames, closureParamTypes, item.text) { stack = List.push(stack, bindingType) }
+        else if let Some(bindingType) = bindingBucketGet(bindingBuckets, item.text) { stack = List.push(stack, bindingType) }
         else if let Some(bindingType) = getBinding(bindings, item.text) { stack = List.push(stack, bindingType) }
         else { problem = "E0610 line " ++ intToText(item.line) ++ ": type unavailable for `" ++ item.text ++ "`" }
       } else if Text.eq(item.op, "store") then {
