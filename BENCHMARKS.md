@@ -677,14 +677,151 @@ Certo BACKLOG.md item 325 for that project to act on. All diagnostic
 instrumentation used to locate this was reverted before this was written;
 nothing in this section changed `src/lume.cto`.
 
-**This closes the investigation this file has carried across seven
-sections** (representative-benchmark discovery, generics/protocols
-isolation twice, record/enum isolation, closure-scaling isolation,
-generics-scaling isolation, the duplicate-binding-scan fixes): every
-multiplier found along the way (closures ~104x, generics ~5x, the two now-
-fixed binding-tracking bugs' ~20%) was real and worth fixing on its own
-terms, but all of them were multiplying the same O(N²) lexer floor, not
-independent causes. Fixing the lexer would improve every number in this
-file at once, by an order the individual multipliers can't reach on their
-own - closing this file's headline gap requires a Certo-side fix, not
-further work in this repository.
+**Correction to this section's own closing claim, see below**: "fixing the
+lexer would improve every number in this file at once" turned out to be
+wrong for closures and generics specifically. It was a real, large, and
+worth-fixing floor - just not the *only* one.
+
+## The lexer fix landed; closures and generics turned out to have their own, separate mechanisms too (2026-09-11)
+
+Certo's own team fixed item 325 fast: `Text.sliceUnchecked` (mirroring
+`Text.byteAtUnchecked`'s "caller already validated bounds" contract) shipped
+the same day it was filed. This repository's lexer was updated to call it at
+its three `Text.slice(source, ...)` call sites (the two identifier/number
+token sites, plus a third, previously-unnoticed one: the two-character
+operator lookahead, whose bounds are equally guaranteed by its own preceding
+`index + 1 < sourceLength` guard).
+
+**The shared floor is genuinely gone, and the complexity class changed, not
+just the constant:**
+
+| Benchmark | Before | After | Improvement |
+| --- | ---: | ---: | ---: |
+| Trivial (`benchmark-10000.ps1`, mean compile) | 310.95 ms | **44.55 ms** | ~7.0x |
+| Trivial (lines/second) | 32,160 | **224,467** | ~7.0x |
+| `print(1)` × 8,000 doubling ratio | ~4.0x (quadratic) | **~1.55–1.9x** (near-linear, confirmed out to N = 32,000) | complexity class changed |
+
+**But the representative feature-mix benchmark barely moved** (21,563 ms →
+14,125 ms, ~35% faster, nowhere near ~7x) — because its dominant cost was
+never the lexer. Re-checking closures and generics in isolation after the
+lexer fix landed:
+
+| Workload | Doubling ratio before | Doubling ratio after lexer fix alone |
+| --- | ---: | ---: |
+| Capturing closures | ~4.3–4.5x | **~4.2–4.4x** (still quadratic) |
+| Unconstrained generics | ~4.0–4.4x | **~3.4–3.7x** (still quadratic) |
+
+Both got a real, modest constant-factor improvement (~20–30%, since they
+lex their own bodies too) but kept their own complexity class. **This means
+closures and generics each ride at least one more quadratic mechanism of
+their own, independent of the lexer** — contradicting this section's
+original prediction that the lexer was the whole story.
+
+### A second bug, found and fixed: `verifyTypes`' own `Bindings` (Lume-side, not Certo's)
+
+Instrumenting `verifyTypes` directly (temporary timers, same technique,
+reverted before committing) showed it dominating both remaining workloads —
+1,281 ms of generics' 1,324 ms total at N = 4,000; 4,516 ms of closures'
+4,613 ms at N = 2,000. Tracing why: `verifyTypes` maintains its own
+`Bindings` structure (distinct from `compileBlock`'s `names`/`mutables`,
+already fixed in the previous section) for tracking each `let`/`var`'s
+type during whole-program verification, and it has the *exact same*
+two-part bug in a third, previously untouched location:
+
+- `findBinding` — a plain linear scan, called on every `load`/`store`.
+- `putBinding` — grows via `List.push` (Certo's O(n)-copying version),
+  called on every `param`/`store`.
+
+**This one could not be fixed with the same "copy once at entry, then
+`pushMut`" pattern used for `compileBlock`.** A match arm's payload binding
+(`Some(value) => ...`) has a genuine, functionally necessary rollback
+requirement — `MatchContext.baseBindings` is restored via
+`bindings = matchState.baseBindings` at every arm transition, relying on
+`putBinding`'s non-mutating `List.push` to leave the saved snapshot
+untouched. Switching that to `pushMut` would corrupt the snapshot the same
+way naively switching `compileBlock`'s own `names`/`mutables` would have
+without first copying them.
+
+The fix instead splits the two cases: a new fixed-bucket hash structure
+(`bindingBucketGet`/`insertBindingBucket`, reusing the same
+`hashName`/`bucketCount`/`emptyBuckets` machinery from the `compileBlock`
+fix, entries encoded as `"name=value"` per bucket) now handles `param` and
+top-level `store` bindings — which only ever accumulate within one
+function and never need rollback — while match-arm payload bindings
+continue to flow through the original, untouched `Bindings`/`putBinding`/
+`getBinding` mechanism. A lookup checks the fast buckets first and falls
+back to the original mechanism only for the rare, arm-count-bounded (not
+N-scaling) payload case.
+
+One subtlety this surfaced: closures emit their own `param` instructions
+(sharing the same handler as top-level function parameters), and a
+`List<Text>` bucket has no in-place "update at index" the way `putBinding`
+used to overwrite an existing entry — so two separate closures in the same
+function both naming their parameter `value`, each with a different type
+(a very common pattern: `list.map(a, fn(value: int) => ...)` and
+`list.map(b, fn(value: str) => ...)` in the same function), would have
+resolved to whichever closure's type happened to be inserted *first* if
+the lookup stopped at the first match. Fixed by having the lookup scan the
+whole bucket and keep the *last* match instead, matching `putBinding`'s
+original "overwrite on existing name" behavior exactly rather than
+"append and shadow."
+
+**Verified correct**, not just fast: full smoke suite green (same one
+pre-existing, unrelated CRLF failure), `task_board` output byte-identical,
+and two new targeted stress tests pass — two closures in the same function
+reusing the parameter name `value` with different types (`int` and `str`)
+each resolve to their own correct type; a match-arm payload binding named
+`msg` is correctly rolled back so a later, unrelated outer-scope `let msg`
+of the same name resolves correctly rather than picking up the payload's
+stale value.
+
+**Performance result — another real improvement, still not the dominant
+remaining cost:**
+
+| Workload | Before any fix | After lexer fix | After `verifyTypes` fix | Doubling ratio now |
+| --- | ---: | ---: | ---: | ---: |
+| Closures (N=2,000 → 4,000) | 7.05 s / 31.95 s | 5.27 s / 22.08 s | **4.61 s / 18.74 s** | still ~4.1–4.3x |
+| Generics (N=2,000 → 4,000) | 0.487 s / 1.948 s | 0.402 s / 1.503 s | **0.338 s / 1.324 s** | still ~3.3–3.9x |
+
+Another real, modest (~12–16%) improvement. **Both workloads are still
+clearly quadratic.** This was not the dominant remaining cost for either.
+
+### Two remaining mechanisms, identified but deliberately left unfixed
+
+**Closures**: tracing the remainder re-confirmed a mechanism flagged
+earlier in this file's own closure-scaling section (before the lexer bug
+was found) and never actually fixed: `validateExpression`'s
+`activeNames = names` is a plain *alias* of the enclosing function's own
+growing name list, not a copy, and every closure or match arm's parameter
+registration does `activeNames = List.push(activeNames, parameter)` — the
+same non-mut-growth bug, in a fourth location. Unlike the two bugs already
+fixed, this one resists the same "copy once, then `pushMut`" trick: the
+closure/match-arm save-and-restore here (`closureScopes`/`matchScopes`) is
+the actual scope-leak correctness check (`E0210 undefined binding` after a
+closure ends), not a redundant safety net the way `verifyTypes`' equivalent
+turned out to be — so *any* copy taken to make it pushMut-safe still costs
+O(current-scope-size) per occurrence, same as the bug it would replace. A
+real fix needs a structurally different approach: keep the large outer
+scope as an untouched reference and track only a small, per-closure "local
+additions" stack, checking both on lookup, rather than one combined,
+copied-on-every-nesting list. Scoped out of this pass as a bigger redesign
+than warranted a rushed attempt.
+
+**Generics**: the remaining ~3.3–3.9x doubling ratio's mechanism was not
+located. `generic_calls.lume`'s control contains no closures or match
+expressions, so the closures mechanism above cannot be it — something else
+in generic call-site handling still scales with N, unidentified.
+
+**Bottom line, superseding this section's own earlier claim**: there is no
+single dominant floor left. Compile time in this bootstrap is the sum of
+at least four identified, mostly-independent quadratic-or-worse
+mechanisms — the lexer (fixed), `compileBlock`'s and `verifyTypes`' own
+binding-tracking (both fixed), and at least two more (closures'
+`validateExpression` mechanism, identified; generics' mechanism,
+unidentified) still open. Each fix so far has been real and worth keeping,
+and each has revealed that the next-largest number was riding on a
+*different* mechanism than assumed - the honest state of this investigation
+is that it found and fixed three real bugs across two files (one in Certo,
+two in `lume.cto`), improved the common case by ~7x and closures/generics
+by a further ~15-30% beyond that, and still has real, quadratic scaling
+left in the two most feature-rich code paths this bootstrap has.

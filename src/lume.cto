@@ -249,15 +249,17 @@ fn lex(source: Text): List<Token> = {
       while index < sourceLength and isDigit(charAt(source, index)) {
         index = index + 1
       }
-      output = List.pushMut(output, makeToken("number", Text.slice(source, start, index), line))
+      output = List.pushMut(output, makeToken("number", Text.sliceUnchecked(source, start, index), line))
     } else if isAlpha(ch) then {
       val start = index
       while index < sourceLength and isAlphaNumeric(charAt(source, index)) {
         index = index + 1
       }
-      output = List.pushMut(output, makeToken("name", Text.slice(source, start, index), line))
+      output = List.pushMut(output, makeToken("name", Text.sliceUnchecked(source, start, index), line))
     } else {
-      val pair = if index + 1 < sourceLength then Text.slice(source, index, index + 2) else ""
+      // index + 1 < sourceLength guarantees index + 2 <= sourceLength, matching
+      // sliceUnchecked's contract (0 <= start <= end <= Text.byteLength(text)).
+      val pair = if index + 1 < sourceLength then Text.sliceUnchecked(source, index, index + 2) else ""
       if Text.eq(pair, "==") or Text.eq(pair, "!=") or Text.eq(pair, "<=") or Text.eq(pair, ">=") or Text.eq(pair, "->") or Text.eq(pair, "=>") then {
         output = List.pushMut(output, makeToken("symbol", pair, line))
         index = index + 2
@@ -736,6 +738,61 @@ fn bucketsContains(buckets: List<List<Text>>, name: Text): Bool = {
 fn insertBucket(buckets: List<List<Text>>, name: Text): Bool = {
   val bucket = List.getOrPanic(buckets, hashName(name))
   List.pushMut(bucket, name)
+  true
+}
+
+// Same fixed-bucket approach as above, but for name->value lookup rather
+// than plain membership: verifyTypes' own Bindings/putBinding/findBinding
+// (used for the "load"/"store" type-checking hot path) has the identical
+// O(n)-per-call bug this file already fixed once in compileBlock - a plain
+// linear scan for lookup, and growth via the non-mut List.push. Entries are
+// encoded as "name=value" within a bucket, following this codebase's own
+// existing convention for packing a pair into one Text (see schemaFieldName/
+// schemaFieldType elsewhere in this file) rather than adding a second,
+// parallel bucket structure to keep in sync.
+//
+// This intentionally only replaces the param/store case, not match-arm
+// payload bindings (still routed through the original, unreplaced Bindings/
+// putBinding/getBinding): a match arm's payload binding must roll back to
+// exactly its pre-arm state when the next arm starts (MatchContext's own
+// baseBindings field, restored at match_start/match_arm_end/match_finish),
+// which depends on putBinding's non-mut List.push never touching the saved
+// snapshot. Pushing payload bindings into these buckets via pushMut instead
+// would corrupt that snapshot the same way switching compileBlock's own
+// names/mutables to pushMut would have without first copying them (see
+// compileBlock's own comment on that). Param/store bindings never need this
+// rollback - once a function starts, they only ever accumulate - so they are
+// safe to move to the fast path; a lookup here checks these buckets first
+// and falls back to the original Bindings for the rare, arm-count-bounded
+// (not N-scaling) case of a match-payload name.
+// Scans the whole bucket rather than stopping at the first match, keeping
+// the *last* one: insertBindingBucket always appends rather than replacing
+// an existing entry (a flat List<Text> bucket has no in-place "update at
+// index" to replace one), so a name inserted more than once - e.g. two
+// separate closures in the same function both naming their parameter
+// "value", each with its own type - must resolve to whichever insert
+// happened most recently, matching putBinding's original overwrite-on-
+// existing behavior exactly.
+fn bindingBucketGet(buckets: List<List<Text>>, name: Text): Text? = {
+  val bucket = List.getOrPanic(buckets, hashName(name))
+  var index = 0
+  var found = false
+  var result = ""
+  while index < List.len(bucket) {
+    val entry = List.getOrPanic(bucket, index)
+    val separator = Text.indexOf(entry, "=") ?? -1
+    if separator >= 0 and Text.eq(Text.slice(entry, 0, separator), name) then {
+      result = Text.slice(entry, separator + 1, Text.len(entry))
+      found = true
+    }
+    index = index + 1
+  }
+  if found then Some(result) else None
+}
+
+fn insertBindingBucket(buckets: List<List<Text>>, name: Text, value: Text): Bool = {
+  val bucket = List.getOrPanic(buckets, hashName(name))
+  List.pushMut(bucket, name ++ "=" ++ value)
   true
 }
 
@@ -2262,6 +2319,7 @@ fn verifyTypes(code: List<Instruction>): Text = {
   var matches: List<MatchContext> = []
   var closures: List<ClosureTypeContext> = []
   var bindings = Bindings { names: [], values: [] }
+  var bindingBuckets = emptyBuckets()
   var returnType = "unit"
   var problem = ""
   for item in code {
@@ -2271,6 +2329,7 @@ fn verifyTypes(code: List<Instruction>): Text = {
         matches = []
         closures = []
         bindings = Bindings { names: [], values: [] }
+        bindingBuckets = emptyBuckets()
         returnType = markerReturnType(item.text)
         val requirements = markerGenericConstraints(item.text)
         if not Text.eq(requirements, "") then {
@@ -2296,20 +2355,23 @@ fn verifyTypes(code: List<Instruction>): Text = {
           returnType = popped.value.returnType
         }
       } else if Text.eq(item.op, "param") or Text.eq(item.op, "main_param") then {
-        bindings = putBinding(bindings, beforePipe(item.text), afterPipe(item.text))
+        val discardParamInsert = insertBindingBucket(bindingBuckets, beforePipe(item.text), afterPipe(item.text))
       } else if Text.eq(item.op, "const_int") then { stack = List.push(stack, "int") }
       else if Text.eq(item.op, "const_str") then { stack = List.push(stack, "str") }
       else if Text.eq(item.op, "const_bool") then { stack = List.push(stack, "bool") }
       else if Text.eq(item.op, "fn_ref") then { stack = List.push(stack, "fn:" ++ item.text) }
       else if Text.eq(item.op, "load") then {
-        if let Some(bindingType) = getBinding(bindings, item.text) { stack = List.push(stack, bindingType) }
+        if let Some(bindingType) = bindingBucketGet(bindingBuckets, item.text) { stack = List.push(stack, bindingType) }
+        else if let Some(bindingType) = getBinding(bindings, item.text) { stack = List.push(stack, bindingType) }
         else { problem = "E0610 line " ++ intToText(item.line) ++ ": type unavailable for `" ++ item.text ++ "`" }
       } else if Text.eq(item.op, "store") then {
         val valueType = pop(stack)
         stack = valueType.stack
-        if let Some(existingType) = getBinding(bindings, item.text) {
+        if let Some(existingType) = bindingBucketGet(bindingBuckets, item.text) {
           if not typesCompatible(existingType, valueType.value) then { problem = "E0611 line " ++ intToText(item.line) ++ ": cannot assign " ++ valueType.value ++ " to " ++ existingType }
-        } else { bindings = putBinding(bindings, item.text, valueType.value) }
+        } else if let Some(existingType) = getBinding(bindings, item.text) {
+          if not typesCompatible(existingType, valueType.value) then { problem = "E0611 line " ++ intToText(item.line) ++ ": cannot assign " ++ valueType.value ++ " to " ++ existingType }
+        } else { val discardStoreInsert = insertBindingBucket(bindingBuckets, item.text, valueType.value) }
       } else if Text.eq(item.op, "test_expect") then {
         val valueType = pop(stack)
         stack = valueType.stack
