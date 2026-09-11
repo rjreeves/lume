@@ -1,44 +1,605 @@
 [
   {
-    "id": "arithmetic",
+    "id": "add_basic",
+    "prompt": "Print the sum of 3 and 4, then return success.",
+    "args": [],
+    "stdout": "7"
+  },
+  {
+    "id": "subtract_basic",
+    "prompt": "Print 10 minus 3, then return success.",
+    "args": [],
+    "stdout": "7"
+  },
+  {
+    "id": "multiply_basic",
     "prompt": "Print the product of 6 and 7, then return success.",
     "args": [],
     "stdout": "42"
   },
   {
-    "id": "greeting",
-    "prompt": "Join the strings 'hello, ' and 'Lume', print the result, then return success.",
+    "id": "divide_basic",
+    "prompt": "Print 20 divided by 4, then return success.",
     "args": [],
-    "stdout": "hello, Lume"
+    "stdout": "5"
   },
   {
-    "id": "control_flow",
-    "prompt": "Use a while loop to sum integers from 0 through 4. Print 'control flow works' when the total is 10, then print the total.",
+    "id": "modulo_basic",
+    "prompt": "Print 17 modulo 5, then return success.",
     "args": [],
-    "stdout": "control flow works\n10"
+    "stdout": "2"
   },
   {
-    "id": "functions",
-    "prompt": "Define add and recursive factorial functions. Print add(20, 22) and factorial(5).",
+    "id": "precedence_basic",
+    "prompt": "Print 2 plus 3 times 4, respecting operator precedence, then return success.",
     "args": [],
-    "stdout": "42\n120"
+    "stdout": "14"
   },
   {
-    "id": "core_api",
-    "prompt": "Read the JSON file path in argument zero. Print argument count, file length, JSON validity, uppercase name, numeric version, whether PATH exists, and the exit code from hostname.exe.",
-    "args": ["examples/data.json"],
-    "stdout": "1\n28\ntrue\nLUME\n1\ntrue\n0"
+    "id": "negative_basic",
+    "prompt": "Bind -7 to a variable, print it, then return success.",
+    "args": [],
+    "stdout": "-7"
   },
   {
-    "id": "lists",
-    "prompt": "Create [10, 20, 30], print its length and item one, append 40 immutably, then print item three of the new list.",
+    "id": "comparison_lt",
+    "prompt": "Print whether 3 is less than 5, then return success.",
     "args": [],
-    "stdout": "3\n20\n40"
+    "stdout": "true"
   },
   {
-    "id": "modules",
-    "prompt": "Import modules.stats and print stats.sum_of_squares(3, 4). Put reusable qualified public functions in module files.",
+    "id": "comparison_gte",
+    "prompt": "Print whether 5 is greater than or equal to 5, then return success.",
     "args": [],
-    "stdout": "25"
+    "stdout": "true"
+  },
+  {
+    "id": "boolean_and",
+    "prompt": "Compose two conditions with a nested if statement to express logical AND (Lume has no and/or/not operators).",
+    "args": [],
+    "stdout": "false"
+  },
+  {
+    "id": "boolean_or",
+    "prompt": "Compose two conditions with sequential if statements to express logical OR (Lume has no and/or/not operators).",
+    "args": [],
+    "stdout": "true"
+  },
+  {
+    "id": "boolean_not",
+    "prompt": "Write a predicate function that returns the negated polarity directly, since Lume has no not/! operator.",
+    "args": [],
+    "stdout": "true"
+  },
+  {
+    "id": "boolean_combo",
+    "prompt": "Combine two conditions with nested if statements, since Lume has no and/or operators.",
+    "args": [],
+    "stdout": "true"
+  },
+  {
+    "id": "equality_int",
+    "prompt": "Print whether 4 equals 4, then return success.",
+    "args": [],
+    "stdout": "true"
+  },
+  {
+    "id": "equality_str",
+    "prompt": "Print whether the strings 'abc' and 'abc' are equal, then return success.",
+    "args": [],
+    "stdout": "true"
+  },
+  {
+    "id": "string_concat",
+    "prompt": "Concatenate 'foo' and 'bar', print the result, then return success.",
+    "args": [],
+    "stdout": "foobar"
+  },
+  {
+    "id": "string_upper",
+    "prompt": "Print the uppercase form of 'abc', then return success.",
+    "args": [],
+    "stdout": "ABC"
+  },
+  {
+    "id": "string_lower",
+    "prompt": "Print the lowercase form of 'ABC', then return success.",
+    "args": [],
+    "stdout": "abc"
+  },
+  {
+    "id": "string_trim",
+    "prompt": "Print the trimmed form of '  hi  ', then return success.",
+    "args": [],
+    "stdout": "hi"
+  },
+  {
+    "id": "string_contains",
+    "prompt": "Print whether 'hello world' contains 'wor', then return success.",
+    "args": [],
+    "stdout": "true"
+  },
+  {
+    "id": "string_starts_with",
+    "prompt": "Print whether 'hello' starts with 'he', then return success.",
+    "args": [],
+    "stdout": "true"
+  },
+  {
+    "id": "string_ends_with",
+    "prompt": "Print whether 'hello' ends with 'lo', then return success.",
+    "args": [],
+    "stdout": "true"
+  },
+  {
+    "id": "string_len",
+    "prompt": "Print the length of 'hello', then return success.",
+    "args": [],
+    "stdout": "5"
+  },
+  {
+    "id": "string_build",
+    "prompt": "Build the string 'abc' from three separate pieces, then print it.",
+    "args": [],
+    "stdout": "abc"
+  },
+  {
+    "id": "if_else_basic",
+    "prompt": "Print 'big' if 5 is greater than 3, else print 'small'.",
+    "args": [],
+    "stdout": "big"
+  },
+  {
+    "id": "if_elseif_chain",
+    "prompt": "Classify the number 2 using nested if/else statements (Lume has no else-if chaining, only if/else).",
+    "args": [],
+    "stdout": "two"
+  },
+  {
+    "id": "while_sum",
+    "prompt": "Use a while loop to sum integers 1 through 5, then print the total.",
+    "args": [],
+    "stdout": "15"
+  },
+  {
+    "id": "while_countdown",
+    "prompt": "Use a while loop to print 3, 2, 1 counting down.",
+    "args": [],
+    "stdout": "3\n2\n1"
+  },
+  {
+    "id": "nested_loop",
+    "prompt": "Use nested while loops to sum i*j for i and j each from 1 to 2.",
+    "args": [],
+    "stdout": "9"
+  },
+  {
+    "id": "early_return",
+    "prompt": "Define a function that returns early for negative numbers.",
+    "args": [],
+    "stdout": "negative\nnon-negative"
+  },
+  {
+    "id": "function_add",
+    "prompt": "Define a three-argument add function and print its result.",
+    "args": [],
+    "stdout": "6"
+  },
+  {
+    "id": "function_multiple_params",
+    "prompt": "Define a function combining three integers with subtraction and addition.",
+    "args": [],
+    "stdout": "9"
+  },
+  {
+    "id": "recursion_factorial",
+    "prompt": "Define a recursive factorial function and print factorial(6).",
+    "args": [],
+    "stdout": "720"
+  },
+  {
+    "id": "recursion_fibonacci",
+    "prompt": "Define a recursive Fibonacci function and print fib(10).",
+    "args": [],
+    "stdout": "55"
+  },
+  {
+    "id": "recursion_gcd",
+    "prompt": "Define a recursive GCD function and print gcd(48, 18).",
+    "args": [],
+    "stdout": "6"
+  },
+  {
+    "id": "recursion_power",
+    "prompt": "Define a recursive power function and print 3 to the 4th power.",
+    "args": [],
+    "stdout": "81"
+  },
+  {
+    "id": "recursion_sum_to_n",
+    "prompt": "Define a recursive function summing 1 through n and print sumTo(10).",
+    "args": [],
+    "stdout": "55"
+  },
+  {
+    "id": "function_is_prime",
+    "prompt": "Define an is-prime function and test it on 17 and 18.",
+    "args": [],
+    "stdout": "true\nfalse"
+  },
+  {
+    "id": "list_literal_len",
+    "prompt": "Create a five-element list and print its length.",
+    "args": [],
+    "stdout": "5"
+  },
+  {
+    "id": "list_get_index",
+    "prompt": "Create a list and print the element at index 2.",
+    "args": [],
+    "stdout": "30"
+  },
+  {
+    "id": "list_push_immutable",
+    "prompt": "Push onto a list immutably and print both lengths.",
+    "args": [],
+    "stdout": "2\n3"
+  },
+  {
+    "id": "list_map_double",
+    "prompt": "Map a list to double each value using a closure.",
+    "args": [],
+    "stdout": "2\n6"
+  },
+  {
+    "id": "list_filter_even",
+    "prompt": "Filter a list to keep only even values.",
+    "args": [],
+    "stdout": "3"
+  },
+  {
+    "id": "list_find_first",
+    "prompt": "Find the first even value in a list.",
+    "args": [],
+    "stdout": "6"
+  },
+  {
+    "id": "list_fold_sum",
+    "prompt": "Fold a list to compute its sum.",
+    "args": [],
+    "stdout": "10"
+  },
+  {
+    "id": "list_map_closure_capture",
+    "prompt": "Map a list adding a captured outer value to each element.",
+    "args": [],
+    "stdout": "101\n103"
+  },
+  {
+    "id": "list_of_strings",
+    "prompt": "Create a list of strings and print its length and second element.",
+    "args": [],
+    "stdout": "3\nb"
+  },
+  {
+    "id": "list_nested_access",
+    "prompt": "Create a list of lists and access a nested element.",
+    "args": [],
+    "stdout": "3"
+  },
+  {
+    "id": "record_basic",
+    "prompt": "Define a Point record and print its fields.",
+    "args": [],
+    "stdout": "3\n4"
+  },
+  {
+    "id": "record_field_access",
+    "prompt": "Define a Person record and print its name and age.",
+    "args": [],
+    "stdout": "Ada\n30"
+  },
+  {
+    "id": "record_nested",
+    "prompt": "Define nested records and access a field through the nesting.",
+    "args": [],
+    "stdout": "Bo\nNYC"
+  },
+  {
+    "id": "record_with_update",
+    "prompt": "Use record with-update to change one field immutably.",
+    "args": [],
+    "stdout": "1\n9\n2"
+  },
+  {
+    "id": "record_multiple_instances",
+    "prompt": "Create two record instances and combine their fields.",
+    "args": [],
+    "stdout": "3\n3"
+  },
+  {
+    "id": "record_generic_box",
+    "prompt": "Define a generic Box record and print its held value.",
+    "args": [],
+    "stdout": "42"
+  },
+  {
+    "id": "enum_basic_variant",
+    "prompt": "Define a Color enum with no payload variants and match on it.",
+    "args": [],
+    "stdout": "g"
+  },
+  {
+    "id": "enum_payload_variant",
+    "prompt": "Define a Shape enum with payload variants and match on one.",
+    "args": [],
+    "stdout": "5"
+  },
+  {
+    "id": "enum_match_exhaustive",
+    "prompt": "Define a Status enum and describe two of its values through a match.",
+    "args": [],
+    "stdout": "on\nwait"
+  },
+  {
+    "id": "enum_multiple_variants",
+    "prompt": "Define a four-variant Direction enum and match to a number.",
+    "args": [],
+    "stdout": "2"
+  },
+  {
+    "id": "enum_generic_maybe",
+    "prompt": "Define a generic Maybe enum and match Some and None cases.",
+    "args": [],
+    "stdout": "7\n-1"
+  },
+  {
+    "id": "enum_nested_payload",
+    "prompt": "Define a Tree enum with a two-field variant and match on it.",
+    "args": [],
+    "stdout": "7"
+  },
+  {
+    "id": "generic_identity",
+    "prompt": "Define a generic identity function and call it at two different types.",
+    "args": [],
+    "stdout": "5\nhi"
+  },
+  {
+    "id": "generic_constrained_number",
+    "prompt": "Define a Number-constrained generic function and call it.",
+    "args": [],
+    "stdout": "42"
+  },
+  {
+    "id": "generic_constrained_text",
+    "prompt": "Define a Text-constrained generic function and call it.",
+    "args": [],
+    "stdout": "hi"
+  },
+  {
+    "id": "generic_wrap_box",
+    "prompt": "Define a generic function that wraps a value in a generic Box record.",
+    "args": [],
+    "stdout": "9"
+  },
+  {
+    "id": "generic_enum_either",
+    "prompt": "Define a two-parameter generic Either enum and match on it.",
+    "args": [],
+    "stdout": "5"
+  },
+  {
+    "id": "generic_list_of_generic",
+    "prompt": "Fold a list of generic Box records to sum their values.",
+    "args": [],
+    "stdout": "6"
+  },
+  {
+    "id": "protocol_declare_impl",
+    "prompt": "Declare a protocol, implement it for a type, and call the method.",
+    "args": [],
+    "stdout": "woof"
+  },
+  {
+    "id": "protocol_static_dispatch",
+    "prompt": "Implement a Named protocol for a type and call it via static dispatch.",
+    "args": [],
+    "stdout": "Whiskers"
+  },
+  {
+    "id": "protocol_generic_constraint",
+    "prompt": "Constrain a generic function by a user protocol and call it.",
+    "args": [],
+    "stdout": "Box"
+  },
+  {
+    "id": "closure_capture_immutable",
+    "prompt": "Map a list with a closure capturing an outer immutable value, then fold it.",
+    "args": [],
+    "stdout": "36"
+  },
+  {
+    "id": "closure_list_map_inline",
+    "prompt": "Map a list to squares using an inline closure.",
+    "args": [],
+    "stdout": "16"
+  },
+  {
+    "id": "closure_filter_inline",
+    "prompt": "Filter a list using an inline closure comparing against a threshold.",
+    "args": [],
+    "stdout": "4"
+  },
+  {
+    "id": "option_list_find_some",
+    "prompt": "Find the first odd value in a list and unwrap the Option.",
+    "args": [],
+    "stdout": "5"
+  },
+  {
+    "id": "option_list_find_none",
+    "prompt": "Search a list with no matching element and handle the None case.",
+    "args": [],
+    "stdout": "-1"
+  },
+  {
+    "id": "result_ok_path",
+    "prompt": "Define a Result-returning division function and describe its success case.",
+    "args": [],
+    "stdout": "ok"
+  },
+  {
+    "id": "result_err_path",
+    "prompt": "Define a Result-returning division function and describe its error case.",
+    "args": [],
+    "stdout": "div by zero"
+  },
+  {
+    "id": "result_shorthand_ok",
+    "prompt": "Use the shorthand result type to return success from a division.",
+    "args": [],
+    "stdout": "5"
+  },
+  {
+    "id": "result_shorthand_err",
+    "prompt": "Use the shorthand result type to return an error from a division.",
+    "args": [],
+    "stdout": "div by zero"
+  },
+  {
+    "id": "json_valid_check",
+    "prompt": "Check whether two strings are valid JSON.",
+    "args": [],
+    "stdout": "true\nfalse"
+  },
+  {
+    "id": "json_get_field",
+    "prompt": "Read two fields out of a JSON string.",
+    "args": [],
+    "stdout": "Ada\n36"
+  },
+  {
+    "id": "typed_json_decode",
+    "prompt": "Decode JSON directly into a typed Point record.",
+    "args": [],
+    "stdout": "3\n4"
+  },
+  {
+    "id": "file_write_read_roundtrip",
+    "prompt": "Write a file then read it back and print its contents.",
+    "args": [],
+    "stdout": "hello file"
+  },
+  {
+    "id": "file_try_read_missing",
+    "prompt": "Try to read a missing file and report the failure.",
+    "args": [],
+    "stdout": "false"
+  },
+  {
+    "id": "process_run_ok",
+    "prompt": "Run a subprocess and print its success, exit code, and trimmed output.",
+    "args": [],
+    "stdout": "true\n0\nhello from process"
+  },
+  {
+    "id": "env_has_path",
+    "prompt": "Check whether the PATH environment variable is set.",
+    "args": [],
+    "stdout": "true"
+  },
+  {
+    "id": "args_count_and_get",
+    "prompt": "Print the argument count and each argument.",
+    "args": [
+      "alpha",
+      "beta"
+    ],
+    "stdout": "2\nalpha\nbeta"
+  },
+  {
+    "id": "combined_records_list",
+    "prompt": "Fold a list of Item records to sum their prices.",
+    "args": [],
+    "stdout": "30"
+  },
+  {
+    "id": "list_fold_boolean_and",
+    "prompt": "Fold a list of numbers, using a helper function instead of an and operator, to check that all are even.",
+    "args": [],
+    "stdout": "true"
+  },
+  {
+    "id": "string_repeat_via_loop",
+    "prompt": "Build a repeated string using a while loop.",
+    "args": [],
+    "stdout": "ababab"
+  },
+  {
+    "id": "list_len_after_multiple_push",
+    "prompt": "Push twice immutably and print all three list lengths.",
+    "args": [],
+    "stdout": "1\n2\n3"
+  },
+  {
+    "id": "nested_function_calls",
+    "prompt": "Nest one function call inside another.",
+    "args": [],
+    "stdout": "17"
+  },
+  {
+    "id": "boolean_and_or_mixed",
+    "prompt": "Combine two comparisons with a nested if statement instead of an and operator.",
+    "args": [],
+    "stdout": "false"
+  },
+  {
+    "id": "list_map_then_filter_chain",
+    "prompt": "Map a list then filter the result in a two-step pipeline.",
+    "args": [],
+    "stdout": "3"
+  },
+  {
+    "id": "generic_function_multiple_types",
+    "prompt": "Call a generic identity function at int, str, and bool types.",
+    "args": [],
+    "stdout": "1\ntwo\ntrue"
+  },
+  {
+    "id": "protocol_multiple_impls",
+    "prompt": "Implement one protocol for two different types and call both.",
+    "args": [],
+    "stdout": "Rex\nTom"
+  },
+  {
+    "id": "record_with_list_field",
+    "prompt": "Define a record containing a list field and inspect it.",
+    "args": [],
+    "stdout": "Team\n2\nBo"
+  },
+  {
+    "id": "enum_variant_with_multiple_fields",
+    "prompt": "Define an Event enum with a two-field variant and match on it.",
+    "args": [],
+    "stdout": "14"
+  },
+  {
+    "id": "deep_recursion_sum",
+    "prompt": "Recursively sum integers 1 through 100.",
+    "args": [],
+    "stdout": "5050"
+  },
+  {
+    "id": "combined_json_and_record",
+    "prompt": "Decode JSON into a record, then update one field immutably.",
+    "args": [],
+    "stdout": "3\n5\nsvc"
+  },
+  {
+    "id": "expect_equal_check",
+    "prompt": "Use the expect.equal builtin to compare a computed value against an expected one.",
+    "args": [],
+    "stdout": "true"
   }
 ]

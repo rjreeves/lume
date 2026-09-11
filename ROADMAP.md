@@ -151,9 +151,31 @@ compile-time complexity class from quadratic to linear.**
   realistic-sized input (see the 0.1 milestone note below), so this gate
   could not have been checked with the recommended tooling even if someone
   had tried.
-- The AI evaluation suite this file's own gate depends on
-  ("added to the fixed AI evaluation suite") has 7 tasks; `BENCHMARKS.md`
-  specifies "at least 100."
+- **Closed**: the AI evaluation suite this file's own gate depends on
+  (`ai/tasks.json`, "added to the fixed AI evaluation suite") had 7 tasks;
+  `BENCHMARKS.md` specifies "at least 100." Expanded to exactly 100,
+  spanning arithmetic, strings, control flow (including composing
+  conditions without `and`/`or`/`not`, which Lume's grammar has no operator
+  for — nested `if` and predicate functions instead, per `SPEC.md` §7),
+  functions and recursion, lists (including closures passed to
+  `list.map`/`filter`/`find`/`fold`), records (construction, nesting,
+  `with`-update), enums and exhaustive `match` (including generic and
+  multi-field variants), generics (unconstrained, `Number`/`Text`-
+  constrained, generic records and enums), user protocols (declaration,
+  implementation, static dispatch, generic constraint), `Option`/`Result`
+  (both the full `Result<T,E>` shape and the `T ! E` shorthand), JSON
+  (`json.valid`/`get` and typed `Type.from_json` decoding), and files/
+  processes/environment/args. Every task was written from its own prompt
+  and verified end-to-end (`lume check` + `lume run`, output compared
+  byte-for-byte) before being added — one task's first draft used `++`
+  instead of Lume's `+` for string concatenation, and several used
+  `and`/`or`/`not`/`else if` before `SPEC.md` §7's "no boolean operators,
+  no else-if chaining" constraint was found and every affected task
+  rewritten around it. Final result: 100/100 compile, 100/100 correct via
+  the real `ai-eval.ps1` harness. This only closes the suite-*size* gate;
+  it does not by itself validate any given AI model's actual generation
+  quality against it, since these reference solutions were written with
+  the language's own documentation in hand rather than blind.
 
 **0.1 "Coherent bootstrap" milestone: partially met, one item actively
 false.**
