@@ -608,3 +608,83 @@ their own merits - they resolve genuine O(n) operations that had cheaper
 O(1)-amortized or O(1)-average alternatives available. But they are not
 the fix for this file's headline finding. The dominant, still-unlocated
 cost affecting every measurement in this file remains open.
+
+## The dominant cost, located: `lex()` (2026-09-11)
+
+The previous section explicitly deferred locating the shared quadratic
+floor, on the grounds that source reading and black-box wall-clock sweeps
+had reached their limit. Direct instrumentation (temporary `monotonicMillis`
+timers added around every major phase of `compileSource`/`compile`/
+`compileBlock`, run against the same `print(1)` × N control used
+throughout this file, then reverted before committing anything) settles it.
+
+| N | Total tokens | `lex()` time | Every other instrumented phase | Total `check` time |
+| ---: | ---: | ---: | ---: | ---: |
+| 1,000 | 5,020 | 0 ms | 0 ms | 26 ms |
+| 2,000 | 10,020 | 16 ms | 0 ms | 42 ms |
+| 4,000 | 20,020 | 16 ms | 0 ms | 96 ms |
+| 8,000 | 40,020 | **94 ms** | 0 ms | 292 ms |
+
+"Every other instrumented phase" is `parseComparison`, `validateExpression`,
+`appendCode`, the entire `compileBlock` call as one unit, `verifyTypes`, and
+`scanRecords`/`scanEnums`/`scanFunctions` - each measured at 0 ms even at
+N = 8,000. **`lex()` is the only phase that shows any cost at all**, and its
+own growth (16 ms → 94 ms, ~5.9x for a 2x token-count increase) is itself
+clearly superlinear, not just a large constant.
+
+**Located mechanism, source-confirmed**: Certo's `certo_text_slice`
+(`crates/stdlib/src/text.rs`, the runtime backing `Text.slice`) calls
+`strlen(s)` unconditionally on every invocation, where `s` is whatever
+`Text` value was passed as the *first* argument - regardless of how small
+the requested slice range is:
+
+```c
+certo_text_t certo_text_slice(certo_text_t s, int64_t start, int64_t end) {
+    if (!s) return "";
+    int64_t n = (int64_t)strlen(s);   /* scans the WHOLE string, every call */
+    ...
+```
+
+Lume's lexer calls `Text.slice(source, start, index)` once per identifier
+and number token, and `source` is always the *entire file* being lexed, not
+the token. Every token's slice call therefore re-scans the whole file just
+to clamp bounds the lexer's own `while index < sourceLength` loop had
+already guaranteed valid. Tokenizing a file with N identifier/number tokens
+costs O(file-length) per token, i.e. O(N²), before a single byte of parsing,
+type-checking, or bytecode emission happens - fully explaining why every
+control in this file, including ones with zero bindings, generics, or
+closures, showed the same quadratic floor.
+
+**Caveat, stated plainly rather than overclaimed**: an attempt to reproduce
+this mechanism in an isolated Certo microbenchmark (fixed tiny slice size,
+varying only the source string's length) gave inconsistent results across
+two different string-construction methods - one showed a 1.375-second cost
+for 50,000 calls that should take microseconds (consistent with the
+theory), another showed 0 ms at a comparable final size (most likely the
+compiler hoisting a loop-invariant call in a synthetic loop too trivial to
+defeat that optimization, or a memory-fragmentation artifact in the first
+method's own O(n²) string-building setup - not evidence against the
+theory, just an inconclusive isolation attempt). The located-in-context
+evidence (`lex()` measured directly, inside the real compiler, against real
+source) is strong and unambiguous; the specific mechanism is the most
+plausible explanation consistent with that evidence and with reading the
+exact function being called, but was not independently proven in a clean,
+minimal repro.
+
+**This is a Certo runtime bug, not a `lume.cto` bug** - `certo_text_slice`
+is Certo's own stdlib, not something this repository can fix. Filed as
+Certo BACKLOG.md item 325 for that project to act on. All diagnostic
+instrumentation used to locate this was reverted before this was written;
+nothing in this section changed `src/lume.cto`.
+
+**This closes the investigation this file has carried across seven
+sections** (representative-benchmark discovery, generics/protocols
+isolation twice, record/enum isolation, closure-scaling isolation,
+generics-scaling isolation, the duplicate-binding-scan fixes): every
+multiplier found along the way (closures ~104x, generics ~5x, the two now-
+fixed binding-tracking bugs' ~20%) was real and worth fixing on its own
+terms, but all of them were multiplying the same O(N²) lexer floor, not
+independent causes. Fixing the lexer would improve every number in this
+file at once, by an order the individual multipliers can't reach on their
+own - closing this file's headline gap requires a Certo-side fix, not
+further work in this repository.
