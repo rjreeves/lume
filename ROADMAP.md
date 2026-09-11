@@ -38,6 +38,75 @@ unless its improvement in task success clearly offsets that cost. Compiler
 benchmarks must report median and p95 results. Language features should also be
 added to the fixed AI evaluation suite.
 
+## Status report (2026-09-11)
+
+A direct check of where the bootstrap stands against the gates and the 0.1
+milestone above, based on the measurements in
+[`BENCHMARKS.md`](BENCHMARKS.md) rather than on what any single feature's
+own commit claimed. Read this alongside that file's dated sections, which
+this summarizes without repeating.
+
+**Performance gates: not met, and the gap is structural, not incidental.**
+
+- The long-term target (10,000 lines in under 10 ms) is missed by ~31x on
+  the simplest possible 10,000-line program, and by ~2,150x on a
+  10,000-line program that actually uses records, enums, generics, and
+  closures the way real code would.
+- The softer "current bootstrap target" (≥10,000 lines/second) is met only
+  on that same unrepresentative trivial program (32,160 lines/second). On
+  the representative one it fails outright, at 464 lines/second.
+- Direct isolation (not inference) shows the root cause is structural: core
+  per-statement compilation is quadratic in a function's statement count,
+  confirmed by a control program with **zero distinct bindings** — one
+  `var` reassigned repeatedly — which is already superlinear on its own.
+  Generics and closures each multiply that shared quadratic floor further
+  (generics ~5x, closures approaching ~104x at the sizes measured).
+  Because the floor itself is quadratic, this gap widens as programs grow;
+  it does not converge toward the target with more optimization of any one
+  feature.
+- The acceptance gate ("no feature enters the core with more than a 5%
+  compile-time regression") does not appear to have been checked against a
+  measurement for every feature that has shipped. The protocol-methods
+  change roughly doubled the cost of built-in-constrained generics (~2.4x
+  → ~5.3x baseline); no before/after benchmark for that change is on record
+  in `BENCHMARKS.md`.
+- The AI evaluation suite this file's own gate depends on
+  ("added to the fixed AI evaluation suite") has 7 tasks; `BENCHMARKS.md`
+  specifies "at least 100."
+
+**0.1 "Coherent bootstrap" milestone: partially met, one item actively
+false.**
+
+- *Reconcile the specification, guide, examples, and API manifest* —
+  in progress rather than done. `SPEC.md` was reconciled against the
+  compiler once and has already needed follow-up correction as other work
+  landed underneath it; that is expected of a document tracking a moving
+  target, but it means "reconciled" is not yet a stable, closed state.
+- *Finish generic protocol-method dispatch* — not done; this file's own
+  "Now" section above says so, and the benchmark data independently
+  confirms it: a generic function constrained by a user protocol gets no
+  compile-time benefit over an unconstrained one today.
+- *Stabilize diagnostics and bytecode serialization* — not assessed by this
+  investigation.
+- *Keep the complete smoke, test-runner, LSP, benchmark, and AI suites
+  green* — **the benchmark suite is not green in a meaningful sense**: the
+  `lume benchmark <path> 20` command used to produce median/p95 numbers
+  crashes with `certo panic: out of memory` on a realistic-sized program,
+  before completing. A single `lume check` of the same file succeeds, so
+  this is a bug in the measurement tool, not only in the thing being
+  measured — and it means every multi-iteration number this gate asks for,
+  on anything beyond a trivial workload, currently cannot be produced at
+  all.
+
+**What is working:** the feature surface itself is broad and functionally
+correct — records, enums with payload variants, generics, generic
+constraints, marker protocols, closures, `Option`/`Result`, and the native
+test runner all behave as documented once `SPEC.md` was corrected to match
+reality. Record and enum construction stay cheap (within ~3x of baseline)
+at every size tested. The gap is specifically in the property Lume exists
+to prove — fast, linearly-scaling compilation — not in whether the
+language works.
+
 ## Shipped in the bootstrap
 
 ### Core language
