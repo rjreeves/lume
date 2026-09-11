@@ -1988,8 +1988,20 @@ fn satisfiesGenericConstraint(code: List<Instruction>, valueType: Text, requirem
   } else { hasProtocolImplementation(code, requirement, valueType) }
 }
 
-fn knownGenericConstraint(code: List<Instruction>, requirement: Text): Bool =
-  Text.eq(requirement, "Eq") or Text.eq(requirement, "Ord") or Text.eq(requirement, "Number") or Text.eq(requirement, "Text") or hasProtocol(code, requirement)
+// Written as an if/else-if chain rather than a chain of `or`s: Certo's `or`
+// does not actually short-circuit (confirmed directly - see checkCallTypes's
+// comment on the same bug), so `... or hasProtocol(code, requirement)` was
+// scanning the whole program's instruction list even when requirement was
+// one of the four built-in markers and the answer was already known to be
+// true. if/else-if branch selection is genuine control flow (unlike `and`/
+// `or`), so only the reached branch's condition and body ever run.
+fn knownGenericConstraint(code: List<Instruction>, requirement: Text): Bool = {
+  if Text.eq(requirement, "Eq") then true
+  else if Text.eq(requirement, "Ord") then true
+  else if Text.eq(requirement, "Number") then true
+  else if Text.eq(requirement, "Text") then true
+  else hasProtocol(code, requirement)
+}
 
 fn substituteType(value: Text, parameters: List<Text>, arguments: List<Text>): Text = {
   var output = value
@@ -2276,10 +2288,29 @@ fn checkCallTypes(code: List<Instruction>, call: Instruction, stackInput: List<T
       else {
         val genericName = List.getOrPanic(genericNames, genericIndex)
         val requirement = genericConstraintFor(markerGenericConstraints(marker.text), genericName)
-        if not Text.eq(requirement, "") and not knownGenericConstraint(code, requirement) then {
-          problem = "E0679 line " ++ intToText(call.line) ++ ": unknown generic constraint `" ++ requirement ++ "`"
-        } else if not Text.eq(requirement, "") and not satisfiesGenericConstraint(code, List.getOrPanic(genericTypes, genericIndex), requirement) then {
-          problem = "E0680 line " ++ intToText(call.line) ++ ": type `" ++ List.getOrPanic(genericTypes, genericIndex) ++ "` does not satisfy `" ++ requirement ++ "` for `" ++ genericName ++ "` calling `" ++ call.text ++ "`"
+        // Certo's `and`/`or` do not short-circuit despite the language spec
+        // documenting both as short-circuit (confirmed directly: a minimal
+        // isolated .cto repro shows the right operand of `and`/`or` always
+        // evaluates, even when the left operand alone determines the
+        // result). `if not Text.eq(requirement, "") and not
+        // knownGenericConstraint(...)` therefore called knownGenericConstraint
+        // (and, through it, hasProtocol's full scan of the whole program's
+        // instruction list) on every generic call regardless of whether
+        // requirement was even non-empty - and satisfiesGenericConstraint
+        // (hasProtocolImplementation's equally full scan) the same way in
+        // the sibling branch below. An unconstrained generic function
+        // called N times therefore paid two wasted O(program size) scans
+        // per call, which is what made generic calls quadratic while plain
+        // calls (no constraint check at all) stayed linear. Nesting an
+        // explicit `if` around the emptiness check - rather than relying on
+        // `and` to skip the expensive call - fixes it regardless of Certo's
+        // short-circuit behavior; filed as a Certo bug report separately.
+        if not Text.eq(requirement, "") then {
+          if not knownGenericConstraint(code, requirement) then {
+            problem = "E0679 line " ++ intToText(call.line) ++ ": unknown generic constraint `" ++ requirement ++ "`"
+          } else if not satisfiesGenericConstraint(code, List.getOrPanic(genericTypes, genericIndex), requirement) then {
+            problem = "E0680 line " ++ intToText(call.line) ++ ": type `" ++ List.getOrPanic(genericTypes, genericIndex) ++ "` does not satisfy `" ++ requirement ++ "` for `" ++ genericName ++ "` calling `" ++ call.text ++ "`"
+          }
         }
       }
       genericIndex = genericIndex + 1
@@ -2433,8 +2464,10 @@ fn verifyTypes(code: List<Instruction>): Text = {
         if not Text.eq(requirements, "") then {
           for entry in Text.split(requirements, ",") {
             val requirement = schemaFieldType(entry)
-            if Text.eq(problem, "") and not knownGenericConstraint(code, requirement) then {
-              problem = "E0679 line " ++ intToText(item.line) ++ ": unknown generic constraint `" ++ requirement ++ "`"
+            if Text.eq(problem, "") then {
+              if not knownGenericConstraint(code, requirement) then {
+                problem = "E0679 line " ++ intToText(item.line) ++ ": unknown generic constraint `" ++ requirement ++ "`"
+              }
             }
           }
         }

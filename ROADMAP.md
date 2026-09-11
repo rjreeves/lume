@@ -38,7 +38,7 @@ unless its improvement in task success clearly offsets that cost. Compiler
 benchmarks must report median and p95 results. Language features should also be
 added to the fixed AI evaluation suite.
 
-## Status report (2026-09-11, updated same day after the closure-scaling fixes)
+## Status report (2026-09-11, updated same day after the generics-scaling fix)
 
 A direct check of where the bootstrap stands against the gates and the 0.1
 milestone above, based on the measurements in
@@ -48,11 +48,11 @@ this summarizes without repeating. This section was first written before
 the fixes below existed; it has been updated in place rather than left
 stale, since an inaccurate status report defeats its own purpose.
 
-**Performance gates: still not met, but no longer purely structural — five
-real bugs have been found and fixed (one in Certo, four in `lume.cto`),
-closures' compile-time complexity class changed from quadratic to linear,
-and one mechanism (generics') remains identified-as-open with the hunt
-ongoing.**
+**Performance gates: still not met, but no longer purely structural — six
+real bugs have been found and fixed (two in Certo, four in `lume.cto`),
+and every quadratic-or-worse mechanism this investigation identified
+across two sessions is now either fixed or ruled out. Both closures and
+generics changed compile-time complexity class from quadratic to linear.**
 
 - **What changed**: instrumenting the compiler directly (not inferring from
   black-box timing) located the dominant cost to the lexer itself, traced
@@ -89,14 +89,32 @@ ongoing.**
   unconditional full-instruction-list scan on every builtin call
   (`list.map`/`filter`/`find`/`fold` included) even though a builtin can
   never have the `"function"` marker that scan is looking for. Fixing both
-  took the feature-mix benchmark to **3,391 ms — a further ~4.2x on top of
-  the lexer/`verifyTypes` result**, and changed capturing closures'
+  took the feature-mix benchmark to 3,391 ms — a further ~4.2x on top of
+  the lexer/`verifyTypes` result — and changed capturing closures'
   complexity class from quadratic to linear (doubling ratio ~4.3x → ~2.0–2.4x,
   confirmed out to N = 32,000, the same bar the lexer fix was held to).
-  **Generics' remaining mechanism is now the only one of the two left from
-  the previous update, and remains unlocated** — confirmed unaffected by
-  everything fixed today (still ~3.9–4.6x per doubling on a plain call to a
-  single, early-declared generic function).
+- **Generics' remaining mechanism, the one item left open, is now also
+  found and fixed — and it turned out to be a genuine Certo interpreter
+  bug, not a `lume.cto` algorithm problem**: Certo's `and`/`or` operators do
+  not short-circuit, despite the language specification explicitly
+  documenting both as "(short-circuit)" — confirmed with a minimal,
+  standalone `.cto` program run independently of Lume, showing the right
+  operand of `and`/`or` always evaluates regardless of the left operand.
+  `checkCallTypes`'s generic-constraint check (`if not Text.eq(requirement,
+  "") and not knownGenericConstraint(...) then {...}`) was written assuming
+  the left operand being false would skip the expensive right-hand call —
+  instead, `knownGenericConstraint` (and the full-program-instruction-list
+  scan inside it) ran on *every* generic call regardless of whether it even
+  had a constraint, making an unconstrained generic function called N times
+  pay two wasted O(program-size) scans per call. Restructured as nested
+  `if` statements, which — unlike `and`/`or` — are genuine control flow and
+  only execute the branch actually reached; filed as Certo BACKLOG.md item
+  326 for the Certo team to find the real root cause. Took an unconstrained
+  generic call from 6.14 s to **0.118 s at N = 8,000 (~52x)**, changing its
+  complexity class from quadratic (~3.9–4.6x per doubling) to linear
+  (~1.8–2.6x, confirmed to N = 32,000) — and took the feature-mix benchmark
+  from 3,391 ms to **1,719 ms**, closing the gap from this file's original
+  ~69x finding to under 2x against the benchmark's own bar.
 - The acceptance gate ("no feature enters the core with more than a 5%
   compile-time regression") does not appear to have been checked against a
   measurement for every feature that has shipped. The protocol-methods
@@ -142,15 +160,19 @@ constraints, marker protocols, closures, `Option`/`Result`, and the native
 test runner all behave as documented once `SPEC.md` was corrected to match
 reality. Record and enum construction stay cheap (within ~3x of baseline)
 at every size tested. And as of this update, the compile-speed gap is no
-longer purely theoretical or purely structural: five concrete root causes
-have been found (one in Certo's own `Text.slice`, four in `lume.cto`),
-fixed, and verified — a genuine ~7x, complexity-class-changing result for
-the trivial common case, and now a second complexity-class-changing result
-(quadratic to linear, confirmed to N = 32,000) for closures specifically,
-the single most expensive construct this investigation measured. The
-remaining gap is narrower still and down to one open item: generics' own
-mechanism, identified as real and confirmed still unaffected by every fix
-so far, but not yet located.
+longer purely theoretical or purely structural: six concrete root causes
+have been found (two in Certo — `Text.slice`'s unconditional `strlen`, and
+`and`/`or` silently not short-circuiting despite the spec documenting both
+as short-circuit — four in `lume.cto`), fixed, and verified. Every
+mechanism this investigation set out to find has now been found: the
+trivial case is ~7x faster and linear instead of quadratic; closures went
+from the single most expensive construct measured (~104x the trivial
+baseline) to linear; generics went from quadratic to linear once a
+genuine Certo interpreter bug (not a `lume.cto` algorithm problem) was
+identified and worked around. The representative feature-mix benchmark —
+the one workload in this file that actually resembles a real Lume
+program — closed from ~69x over its own target at the start of this
+investigation to under 2x now.
 
 ## Shipped in the bootstrap
 

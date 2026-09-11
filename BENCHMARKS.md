@@ -987,3 +987,194 @@ wasted scans on builtin calls - all five are now fixed or ruled out for
 this specific workload, and a call to a single, early-declared generic
 function still gets quadratically slower to compile as call count grows.
 Finding it is the natural next step for this investigation.
+
+## Generics' mechanism, located: a Certo `and`/`or` short-circuit bug (2026-09-11)
+
+Every prior source-reading pass over `checkCallTypes`'s generic-call
+handling (the argument loop, `inferGeneric`, `substituteType`, the
+generic-completeness loop) found nothing that should scale with N - every
+list involved (`genericNames`, `genericTypes`, `stack`) stays at length 1
+or less for a single-type-parameter call like `identity<T>(value)`. Direct
+instrumentation (the same `monotonicMillis`-timer technique used
+throughout this file, reverted before committing) confirmed the cost was
+still entirely inside `checkCallTypes` (5,656 of 5,672 ms of `verifyTypes`'
+total at N = 8,000 - `findFunction` itself measured at a flat, non-scaling
+2 steps per call, ruling it back out) but source reading alone couldn't
+find where inside it.
+
+**The isolating experiment**: cumulative cost per call, measured across
+different total-program sizes, wasn't the same at each size - the average
+per-call cost inside `checkCallTypes` grew with N (0.14 ms at N = 2,000,
+0.30 ms at N = 4,000, 0.71 ms at N = 8,000) even though a per-batch
+breakdown *within* one run stayed flat throughout (every 500-call window
+in the N = 8,000 run cost ~350-390 ms, no growth from the first batch to
+the last). That combination - flat within a run, scaling only *across*
+differently-sized runs - pointed at something proportional to the whole
+program's size, computed identically on every call, rather than something
+that accumulates as the run progresses. A direct test confirmed it: 100
+plain (non-generic) calls added after 7,900 unrelated padding statements
+cost 0 ms, but 100 *generic* calls added after the same 7,900 lines of
+padding cost 31 ms - the padding contains no calls at all, so whatever
+this is, it is triggered by being a generic call specifically, and its
+cost is set by how much file precedes it, not by how many calls came
+before it.
+
+**Fine-grained phase timestamps inside `checkCallTypes`'s generic branch**
+narrowed it to one specific loop: the generic-constraint-completeness
+check,
+
+```
+if not Text.eq(requirement, "") and not knownGenericConstraint(code, requirement) then {
+  problem = "E0679 ..."
+} else if not Text.eq(requirement, "") and not satisfiesGenericConstraint(code, ..., requirement) then {
+  problem = "E0680 ..."
+}
+```
+
+For an *unconstrained* generic like `identity<T>`, `requirement` is `""`
+and `not Text.eq(requirement, "")` is `false` - this code is written on
+the assumption that `and`'s left operand being `false` skips the right
+operand entirely, so `knownGenericConstraint`/`satisfiesGenericConstraint`
+should never run. A call counter added directly inside `hasProtocol` (the
+function `knownGenericConstraint` falls through to, which does a full
+`for item in code` scan of the *entire program's instruction list* looking
+for a matching `protocol_type` declaration) showed it firing exactly once
+per generic call anyway - 100 times for the 100-call padded file, with
+`codeLen=16110` printed alongside every call, confirming each firing scans
+the whole program. `hasProtocolImplementation` (reached the same way
+through `satisfiesGenericConstraint`, an equally full scan of every
+`protocol_impl` instruction) fired exactly as often.
+
+**Root cause, confirmed with a minimal, standalone, isolated `.cto`
+program run directly through `certo run` (independent of Lume entirely -
+this is a Certo bug, not a `lume.cto` bug, same as item 325's
+`Text.slice`)**:
+
+```
+fn expensive(): Bool = { println("called"); false }
+fn main(): Unit = {
+  val requirement = ""
+  if not Text.eq(requirement, "") and not expensive() then { println("A") }
+  else { println("B") }
+}
+```
+
+prints `called` then `B` - `expensive()` runs even though the left operand
+of `and` is `false` and fully determines the result. A broader sweep
+(`false and expensiveTrue()`, `true or expensiveFalse()`, `not false and
+not expensiveFalse()`, `not true and not expensiveFalse()`) confirmed this
+for both `and` and `or`, with and without `not`: **every case evaluates
+both operands unconditionally**, contradicting the language specification's
+own operator table, which documents both `and` and `or` as
+"(short-circuit)". The final boolean result was correct in every case
+tested - this is a wasted-evaluation and unguarded-panic-risk bug, not a
+wrong-answer bug - but it means any guard of the shape `cheapCheck() and
+expensiveCall()` in Certo, including several in `lume.cto` itself, silently
+never skips the expensive call. Filed as Certo BACKLOG.md item 326 for
+that project to investigate the actual root cause (eager HIR/MIR lowering
+of `and`/`or` instead of the conditional-branch codegen the spec's contract
+requires, or something narrower - not yet determined on the Certo side).
+
+**The fix, entirely on the `lume.cto` side**: replace reliance on `and`
+short-circuiting with actual nested control flow, which - unlike `and`/
+`or` - genuinely does only execute the reached branch. `checkCallTypes`'s
+constraint check became `if not Text.eq(requirement, "") then { if not
+knownGenericConstraint(...) then {...} else if not
+satisfiesGenericConstraint(...) then {...} }`, guaranteeing both expensive
+calls are skipped whenever `requirement` is empty, independent of Certo's
+`and` behavior. `knownGenericConstraint` itself had the identical bug one
+level in: `Text.eq(requirement, "Eq") or ... or hasProtocol(code,
+requirement)` called `hasProtocol` even when an earlier clause (a built-in
+marker like `"Eq"`) already matched - rewritten as an `if`/`else if` chain,
+which only evaluates and runs the one branch actually reached. A third,
+lower-impact instance in `verifyTypes`'s function-declaration constraint
+check (`if Text.eq(problem, "") and not knownGenericConstraint(...)`,
+bounded by a function's own declared-constraint count rather than N) got
+the same nested-`if` treatment for consistency, though it wasn't part of
+the measured quadratic cost.
+
+**Correctness, verified before trusting it**: full smoke suite green (same
+one pre-existing, unrelated CRLF-byte failure as every other entry in this
+file); `task_board` output byte-identical to every prior baseline in this
+file. More directly relevant here than for most fixes in this file: the
+existing smoke suite already exercises every branch this change touches
+end-to-end - `generic constraint validation` and `generic constraint name
+validation` (E0680/E0679 for a built-in marker constraint),
+`protocol implementation constraint` (E0680 for a user protocol
+constraint) - all four still produce byte-identical error messages
+(including line numbers) after the rewrite, confirming the nested-`if`
+restructuring preserves exactly the semantics the original `and`-based
+guards were written to express, just without relying on a short-circuit
+contract Certo doesn't actually honor.
+
+**Performance result - another complexity-class change, confirmed out to
+N = 32,000 for the unconstrained case**:
+
+| N | Unconstrained generic (`identity<T>`), before | after |
+| ---: | ---: | ---: |
+| 2,000 | 0.487 s (original) / 0.345 s (post-closure-fixes) | 0.035 s |
+| 4,000 | 1.948 s / 1.333 s | 0.064 s |
+| 8,000 | 8.65 s / 6.14 s | 0.118 s |
+| 16,000 | — | 0.308 s |
+| 32,000 | — | 0.598 s |
+
+| N doubling | Before (quadratic, ~3.9-4.6x) | After |
+| --- | ---: | ---: |
+| 2,000 → 4,000 | ~3.9x | 1.83x |
+| 4,000 → 8,000 | ~4.6x | 1.84x |
+| 8,000 → 16,000 | — | 2.61x |
+| 16,000 → 32,000 | — | 1.94x |
+
+**Built-in-marker-constrained generics (`fn keep_number<T: Number>`)
+improved by the same mechanism**, since every constrained call also went
+through the now-fixed `knownGenericConstraint`/`satisfiesGenericConstraint`
+path (previously paying the wasted scans on top of an actually-needed
+constraint check, rather than instead of a skipped one):
+
+| N | Constrained generic (`keep_number<T: Number>`), after |
+| ---: | ---: |
+| 2,000 | 0.063 s |
+| 4,000 | 0.095 s |
+| 8,000 | 0.150 s |
+| 16,000 | 0.295 s |
+
+Doubling ratios (1.52x, 1.58x, 1.97x) confirm the same shift to
+near-linear scaling. This closes the gap the "Generics vs. protocols,
+re-measured after protocol methods" section left open, where built-in-
+marker-constrained and user-protocol-constrained generics had converged to
+the same ~5x-baseline cost after protocol methods landed - both were
+riding this same bug, just reached from different call shapes.
+
+**End-to-end effect on the representative feature-mix benchmark** (the one
+workload in this file that actually resembles a real Lume program,
+combining records, enums, generics, and closures):
+
+| Stage | Mean compile |
+| --- | ---: |
+| Original (no 2026-09-11 fixes) | 21,563 ms |
+| After lexer + `verifyTypes` binding fixes | 14,125 ms |
+| After closure fixes (`validateExpression` + `findFunction`) | 3,391 ms |
+| After this generics fix | **1,719 ms** |
+
+Still below the benchmark's own 10,000-lines/second bar (5,817 achieved),
+but the gap has closed from ~69x at the start of this file's investigation
+to under 2x now. The trivial benchmark is unaffected (54.7 ms this run,
+within normal noise of the 44.55 ms figure recorded earlier).
+
+**Bottom line**: this was the last of the mechanisms this investigation
+had explicitly left open. Every quadratic-or-worse mechanism identified in
+this file across both sessions - the lexer (Certo `Text.slice`, fixed
+upstream), `compileBlock`'s and `verifyTypes`' own binding-tracking (two
+`lume.cto` bugs, fixed), `validateExpression`'s local-scope tracking
+(`lume.cto`, fixed), `findFunction`'s wasted scans on builtin and closure
+calls (`lume.cto`, fixed), and now generic-constraint checking's wasted
+scans caused by Certo's own non-short-circuiting `and`/`or`
+(`lume.cto`-side workaround shipped; root cause filed upstream as item
+326) - is now either fixed or ruled out. Closures went from ~104x the
+trivial baseline to linear; generics went from ~5x-and-quadratic to
+linear. What remains is incremental: profile whether any smaller,
+non-quadratic constant-factor costs are worth chasing, and re-run the
+acceptance-gate and AI-evaluation-suite checks this file has repeatedly
+noted as unverified, now that the compiler they'd be measuring is in a
+fundamentally different performance class than when this investigation
+began.
