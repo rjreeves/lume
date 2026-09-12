@@ -165,6 +165,7 @@ json.encode(value)
 path.join(a, b)              path.basename(text)
 path.dirname(text)           path.stem(text)
 path.extension(text)         dir.list(path)
+time.now()                   time.to_iso(seconds)
 list.len(values)             list.get(values, index)
 list.push(values, item)
 map.new()                    map.len(m)
@@ -541,6 +542,21 @@ if result.is_ok(listed) {
 ```
 
 There is no recursive traversal yet — `dir.list` covers a single level.
+
+### Time
+
+`time.now() -> int` returns the current time as Unix epoch seconds;
+`time.to_iso(seconds) -> str` formats an epoch value as UTC ISO-8601:
+
+```lume
+let now = time.now()
+print(time.to_iso(now))
+```
+
+There is no `Duration` type, calendar-component access (year/month/day),
+custom format strings, or timezone support yet — plain `int` arithmetic
+on epoch seconds covers offsets (`time.now() + 300` for five minutes
+from now).
 
 ## Example: a multi-module task board
 

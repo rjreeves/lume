@@ -422,6 +422,7 @@ json.encode(value)
 path.join(a, b)                  path.basename(text)
 path.dirname(text)               path.stem(text)
 path.extension(text)             dir.list(path)
+time.now()                        time.to_iso(seconds)
 list.len(values)                list.get(values, index)
 list.push(values, item)         list.map/filter/find/fold(...)
 map.new()                        map.len(m)
@@ -452,6 +453,13 @@ a leading-dot name like `.gitignore` (no extension, not an empty one).
 names only (not full paths; combine with `path.join` when a full path is
 needed), in whatever order the filesystem returns them (not sorted).
 Recursive traversal is not implemented yet.
+
+`time.now() -> int` returns the current time as Unix epoch seconds (UTC);
+`time.to_iso(seconds) -> str` formats an epoch value as a fixed
+`"YYYY-MM-DDTHH:MM:SSZ"` UTC string. There is no `Duration` type, no
+calendar-component access (year/month/day, etc.), no custom format
+strings, and no timezone support yet — plain `int` arithmetic on epoch
+seconds covers offsets (`time.now() + 300` for five minutes from now).
 
 ## 12. Generic list transformations
 
@@ -642,6 +650,10 @@ simply not built yet and carries no such argument against it.
 - `match` inside a `list.*` callback's reachable call graph (§12)
 - recursive directory traversal (`dir.list` covers one level only; no
   `isDirectory` check exists yet to build a walk on top of it, §11)
+- a `Duration` type, calendar-component access (year/month/day/...),
+  custom time format strings, and timezone support (`time.now`/
+  `time.to_iso` cover only "get the current time" and "show it as UTC
+  ISO-8601" today, §11)
 - multi-line call/record-construction argument lists (§2, §8)
 - postfix field access directly on a call expression's result (§8)
 - `let`/`var` type annotations (§5)

@@ -1,0 +1,7 @@
+fn main(args: [str]) -> int {
+  let now = time.now()
+  print(now > 1700000000)
+  print(time.to_iso(0))
+  print(time.to_iso(1700000000))
+  return 0
+}
