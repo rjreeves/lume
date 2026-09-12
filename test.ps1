@@ -94,6 +94,10 @@ $mapFunctions = & $Lume run (Join-Path $PSScriptRoot 'examples\map_functions.lum
 if ($LASTEXITCODE -ne 0) { throw "map functions exited $LASTEXITCODE" }
 Assert-Equal 'generic map functions' "4`n2`n1`n6" ($mapFunctions -join "`n")
 
+$eqImpl = & $Lume run (Join-Path $PSScriptRoot 'examples\eq_impl.lume')
+if ($LASTEXITCODE -ne 0) { throw "eq impl exited $LASTEXITCODE" }
+Assert-Equal 'explicit Eq implementation' "0`nhome`nfalse" ($eqImpl -join "`n")
+
 $closures = & $Lume run (Join-Path $PSScriptRoot 'examples\closures.lume')
 if ($LASTEXITCODE -ne 0) { throw "closures exited $LASTEXITCODE" }
 Assert-Equal 'closures and function values' "12`n14`n2`n11" ($closures -join "`n")
@@ -351,7 +355,11 @@ Assert-Equal 'map key type mismatch' 'E0696 `map.get` key type does not match ma
 
 $mapKeyNotEligible = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_map_key_not_eligible.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "map key eligibility validation should exit 1" }
-Assert-Equal 'map key not eligible' 'E0697 map key type must be int, str, or bool' ($mapKeyNotEligible -join "`n")
+Assert-Equal 'map key not eligible' 'E0697 map key type must be int, str, bool, or a type with `impl Eq for <Type> {}`' ($mapKeyNotEligible -join "`n")
+
+$ordImpl = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_ord_impl.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "Ord impl validation should exit 1" }
+Assert-Equal 'Ord impl still rejected' 'E0258 unknown protocol `Ord` in implementation' ($ordImpl -join "`n")
 
 $mapValueTypeMismatch = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_map_value_type_mismatch.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "map value type mismatch validation should exit 1" }

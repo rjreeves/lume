@@ -385,6 +385,24 @@ Implementation methods compile to concrete functions and use qualified static
 calls such as `User.name(user)`. The compiler rejects missing, extra, duplicate,
 or incorrectly typed methods. There is no reflection or dynamic dispatch.
 
+`Eq` can be extended the same way — `impl Eq for Point {}` — to make a record
+or enum type usable wherever `T: Eq` is required, including as a `Map<K, V>`
+key. This is an explicit opt-in, not automatic derivation: a type without the
+`impl` does not satisfy `Eq`, matching every other marker protocol. `Ord`
+does not support this yet — ordered comparison has no generic implementation
+for compound types.
+
+```lume
+type Point {
+  x: int
+  y: int
+}
+
+impl Eq for Point {}
+
+let places = map.set(map.new(), Point(x: 1, y: 2), "home")
+```
+
 `Option<T>` and `Result<T, E>` are always available. Their variants work with
 the same exhaustive `match` syntax as declared enums. Use `?` inside a
 result-returning function to return an error immediately; `!` remains supported

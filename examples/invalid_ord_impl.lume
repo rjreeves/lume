@@ -1,0 +1,11 @@
+type Point {
+  x: int
+  y: int
+}
+
+impl Ord for Point {}
+
+fn main(args: [str]) -> int {
+  print("ok")
+  return 0
+}

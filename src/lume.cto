@@ -1682,7 +1682,7 @@ fn compile(tokens: List<Token>): CompileResult = {
     val implementationParts = Text.split(implementation, "|")
     val protocolName = List.getOrPanic(implementationParts, 0)
     val typeName = List.getOrPanic(implementationParts, 1)
-    if Text.eq(problem, "") and not containsName(functions.protocolNames, protocolName) then { problem = "E0258 unknown protocol `" ++ protocolName ++ "` in implementation" }
+    if Text.eq(problem, "") and not containsName(functions.protocolNames, protocolName) and not Text.eq(protocolName, "Eq") then { problem = "E0258 unknown protocol `" ++ protocolName ++ "` in implementation" }
     else if Text.eq(problem, "") and not Text.eq(typeName, "int") and not Text.eq(typeName, "str") and not Text.eq(typeName, "bool") and not containsGenericName(records.names, typeName) and not containsGenericName(enums.names, typeName) then { problem = "E0259 unknown type `" ++ typeName ++ "` in protocol implementation" }
     code = List.pushMut(code, makeInstruction("protocol_impl", implementation, 0, 0))
   }
@@ -2056,15 +2056,16 @@ fn mapValueType(mapType: Text): Text = {
   if List.len(arguments) == 2 then List.getOrPanic(arguments, 1) else "unknown"
 }
 
-// The only types satisfiesGenericConstraint's Eq branch already recognizes
-// (src/lume.cto satisfiesGenericConstraint) - Map keys are restricted to
-// these for now, deferred extension to records/lists/enums is a separate,
-// later "equality and ordering through constraints" roadmap item.
-fn isMapKeyEligible(valueType: Text): Bool =
-  Text.eq(valueType, "int") or Text.eq(valueType, "str") or Text.eq(valueType, "bool")
+// Mirrors satisfiesGenericConstraint's Eq branch exactly (int/str/bool,
+// plus anything with an explicit `impl Eq for <Type> {}`) - kept as a
+// separate function rather than calling satisfiesGenericConstraint
+// directly since map keys aren't a generic-constraint check, just a
+// direct type-eligibility test with its own diagnostic.
+fn isMapKeyEligible(protocolImplBuckets: List<List<Text>>, valueType: Text): Bool =
+  Text.eq(valueType, "int") or Text.eq(valueType, "str") or Text.eq(valueType, "bool") or hasProtocolImplementation(protocolImplBuckets, "Eq", valueType)
 
-fn mapKeyProblem(currentKeyType: Text, keyType: Text, name: Text): Text = {
-  if not isMapKeyEligible(keyType) then { "E0697 map key type must be int, str, or bool" }
+fn mapKeyProblem(protocolImplBuckets: List<List<Text>>, currentKeyType: Text, keyType: Text, name: Text): Text = {
+  if not isMapKeyEligible(protocolImplBuckets, keyType) then { "E0697 map key type must be int, str, bool, or a type with `impl Eq for <Type> {}`" }
   else if not Text.eq(currentKeyType, "any") and not Text.eq(currentKeyType, keyType) then { "E0696 `" ++ name ++ "` key type does not match map key type" }
   else { "" }
 }
@@ -2136,7 +2137,7 @@ fn hasProtocolImplementation(protocolImplBuckets: List<List<Text>>, protocolName
 
 fn satisfiesGenericConstraint(protocolImplBuckets: List<List<Text>>, valueType: Text, requirement: Text): Bool = {
   if Text.eq(requirement, "Eq") then {
-    Text.eq(valueType, "int") or Text.eq(valueType, "str") or Text.eq(valueType, "bool")
+    Text.eq(valueType, "int") or Text.eq(valueType, "str") or Text.eq(valueType, "bool") or hasProtocolImplementation(protocolImplBuckets, "Eq", valueType)
   } else if Text.eq(requirement, "Ord") then {
     Text.eq(valueType, "int") or Text.eq(valueType, "str")
   } else if Text.eq(requirement, "Number") then {
@@ -2249,7 +2250,7 @@ fn inferGeneric(expected: Text, actual: Text, parameters: List<Text>, arguments:
   output
 }
 
-fn checkBuiltinTypes(code: List<Instruction>, name: Text, stackInput: List<Text>): TypeStackResult = {
+fn checkBuiltinTypes(code: List<Instruction>, name: Text, stackInput: List<Text>, protocolImplBuckets: List<List<Text>>): TypeStackResult = {
   var stack = stackInput
   var resultType = "unknown"
   var problem = ""
@@ -2398,7 +2399,7 @@ fn checkBuiltinTypes(code: List<Instruction>, name: Text, stackInput: List<Text>
     stack = mapType.stack
     if not Text.startsWith(mapType.value, "Map<") then { problem = "E0695 `" ++ name ++ "` requires a Map" }
     else {
-      val keyProblem = mapKeyProblem(mapKeyType(mapType.value), keyType.value, name)
+      val keyProblem = mapKeyProblem(protocolImplBuckets, mapKeyType(mapType.value), keyType.value, name)
       if not Text.eq(keyProblem, "") then { problem = keyProblem }
     }
     resultType = if Text.eq(name, "map.get") then "Option<" ++ mapValueType(mapType.value) ++ ">" else if Text.eq(name, "map.has") then "bool" else mapType.value
@@ -2409,7 +2410,7 @@ fn checkBuiltinTypes(code: List<Instruction>, name: Text, stackInput: List<Text>
     stack = mapType.stack
     if not Text.startsWith(mapType.value, "Map<") then { problem = "E0695 `map.set` requires a Map" }
     else {
-      val keyProblem = mapKeyProblem(mapKeyType(mapType.value), keyType.value, name)
+      val keyProblem = mapKeyProblem(protocolImplBuckets, mapKeyType(mapType.value), keyType.value, name)
       val currentValueType = mapValueType(mapType.value)
       if not Text.eq(keyProblem, "") then { problem = keyProblem }
       else if not Text.eq(currentValueType, "any") and not Text.eq(currentValueType, itemType.value) then { problem = "E0698 map.set value type does not match map value type" }
@@ -2551,7 +2552,7 @@ fn checkBuiltinTypes(code: List<Instruction>, name: Text, stackInput: List<Text>
 // function made the whole thing O(n^2).
 fn checkCallTypes(code: List<Instruction>, call: Instruction, stackInput: List<Text>, protocolBuckets: List<List<Text>>, protocolImplBuckets: List<List<Text>>): TypeStackResult = {
   val target = if containsName(builtinNames(), call.text) then -1 else findFunction(code, call.text)
-  if target < 0 then { checkBuiltinTypes(code, call.text, stackInput) }
+  if target < 0 then { checkBuiltinTypes(code, call.text, stackInput, protocolImplBuckets) }
   else {
     var stack = stackInput
     var problem = ""

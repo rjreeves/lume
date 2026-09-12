@@ -336,6 +336,12 @@
     "stdout": "6"
   },
   {
+    "id": "eq_impl_map_key",
+    "prompt": "Define a Point record, implement Eq for it with an empty impl block, use it as a map key, and print the value looked up by an equal-but-separately-constructed key.",
+    "args": [],
+    "stdout": "home"
+  },
+  {
     "id": "record_basic",
     "prompt": "Define a Point record and print its fields.",
     "args": [],
