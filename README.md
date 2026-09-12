@@ -162,6 +162,9 @@ str.contains(text, part)     str.starts_with(text, prefix)
 str.ends_with(text, suffix)
 json.valid(text)             json.get(text, key)
 json.encode(value)
+path.join(a, b)              path.basename(text)
+path.dirname(text)           path.stem(text)
+path.extension(text)
 list.len(values)             list.get(values, index)
 list.push(values, item)
 map.new()                    map.len(m)
@@ -501,6 +504,27 @@ any other `Option`. `map.map`/`map.filter`/`map.fold` mirror the
 (`(V) -> ...`) — keys pass through unchanged for `map.map`/`map.filter`.
 There is no map literal syntax and no `(key, value)` two-parameter
 callback shape yet.
+
+### Path manipulation
+
+`path.*` is pure string manipulation, portable across `/` and `\`
+separators — no filesystem access:
+
+```lume
+let dir = path.join("reports", "2026")
+print(path.basename("reports/2026/summary.csv"))
+print(path.dirname("reports/2026/summary.csv"))
+print(path.stem("reports/2026/summary.csv"))
+print(match path.extension("reports/2026/summary.csv") {
+  Some(ext) => ext
+  None => "none"
+})
+```
+
+`path.stem` returns the last path component with its extension removed
+(not the whole path) — `path.stem("a/b/c.txt")` is `"c"`. `path.extension`
+returns `None` for a path with no dot or a leading-dot name like
+`.gitignore`.
 
 ## Example: a multi-module task board
 

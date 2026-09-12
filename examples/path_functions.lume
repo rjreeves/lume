@@ -1,0 +1,15 @@
+fn main(args: [str]) -> int {
+  print(path.join("reports", "2026"))
+  print(path.basename("reports/2026/summary.csv"))
+  print(path.dirname("reports/2026/summary.csv"))
+  print(path.stem("reports/2026/summary.csv"))
+  print(match path.extension("reports/2026/summary.csv") {
+    Some(ext) => ext
+    None => "none"
+  })
+  print(match path.extension("reports/2026/README") {
+    Some(ext) => ext
+    None => "none"
+  })
+  return 0
+}

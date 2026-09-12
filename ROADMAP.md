@@ -318,6 +318,14 @@ non-trivial benchmark in this file has met its own bar.**
 
 - filesystem, environment, argument, string, JSON, list, result, and process
   APIs;
+- portable path manipulation (`path.join/basename/dirname/extension/
+  stem`) — pure string operations, no filesystem access, wrapping Certo's
+  own `Path.*` primitives rather than reimplementing separator handling;
+  `path.stem` deliberately does not delegate to Certo's own `Path.stem`
+  (which, despite its name, keeps the directory component rather than
+  returning just the basename minus extension) — it's composed instead
+  from `Path.basename` + `Path.extension`, matching the file-stem
+  convention every other language uses;
 - process exit-code, standard-output, and standard-error inspection;
 - human-readable and structured compiler errors;
 - native test declarations, assertions, filters, and direct-child
@@ -373,7 +381,11 @@ into every compilation.
 
 ### 4. Standard scripting APIs
 
-- path manipulation that is portable across Windows, Linux, and macOS;
+- ~~path manipulation that is portable across Windows, Linux, and
+  macOS~~ — shipped as `path.join/basename/dirname/extension/stem` (see
+  "Shipped in the bootstrap" above); wraps Certo's own already-portable
+  `Path.*` primitives, so no separator-handling logic exists on Lume's
+  side at all;
 - directory enumeration and controlled recursive traversal;
 - typed time and duration values;
 - richer process configuration: working directory, environment overrides,

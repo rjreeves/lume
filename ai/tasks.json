@@ -564,6 +564,12 @@
     "stdout": "3"
   },
   {
+    "id": "path_join_basename",
+    "prompt": "Join two path segments with path.join, then print the basename and extension of the joined path (extension via match on the Option result).",
+    "args": [],
+    "stdout": "report.csv\ncsv"
+  },
+  {
     "id": "file_write_read_roundtrip",
     "prompt": "Write a file then read it back and print its contents.",
     "args": [],
