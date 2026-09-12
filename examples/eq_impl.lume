@@ -1,0 +1,23 @@
+type Point {
+  x: int
+  y: int
+}
+
+impl Eq for Point {}
+
+fn keep_eq<T: Eq>(value: T) -> T {
+  return value
+}
+
+fn main(args: [str]) -> int {
+  let origin = keep_eq(Point(x: 0, y: 0))
+  print(origin.x)
+
+  let places = map.set(map.new(), Point(x: 1, y: 2), "home")
+  print(match map.get(places, Point(x: 1, y: 2)) {
+    Some(name) => name
+    None => "missing"
+  })
+  print(map.has(places, Point(x: 3, y: 4)))
+  return 0
+}

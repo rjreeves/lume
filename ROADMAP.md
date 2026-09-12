@@ -280,6 +280,18 @@ non-trivial benchmark in this file has met its own bar.**
 - no trait objects or an indirect dispatch table for calls whose receiver
   type is statically known — those still compile straight to a concrete
   function name with zero runtime branching, exactly as before.
+- `Eq` is extensible to any record or enum type via the same explicit
+  `impl Eq for MyType {}` mechanism user-declared marker protocols
+  already use (e.g. `impl Named for User {}`) — not automatic/derived
+  conformance, which is a listed non-goal of the core language (see
+  "Non-goals for the core language" below). This required no new
+  validation: `==`/`!=` already compare any two values of the same
+  declared type structurally, so the `impl` just lets the *constraint
+  system* recognize what the operator already allowed. `Ord` stays
+  restricted to `int`/`str` — `impl Ord for ...` is deliberately not
+  accepted, since ordered comparison's runtime implementation only
+  handles `int` today and would silently misbehave (not cleanly error)
+  on any other type if the constraint let it through.
 
 ### Collections
 
@@ -328,8 +340,11 @@ foundation — is next.
 - ~~add canonical iterator-style map transforms (`map.map`/`filter`/
   `fold`), mirroring the existing `list.*` transforms~~ — shipped (see
   "Shipped in the bootstrap" above);
-- define equality and ordering support through constraints, extending
-  `Map<K, V>`'s key type beyond `int`/`str`/`bool`;
+- ~~define equality support through constraints, extending `Map<K, V>`'s
+  key type beyond `int`/`str`/`bool`~~ — shipped for `Eq` via explicit
+  `impl Eq for MyType {}` (see "Shipped in the bootstrap" above); `Ord`
+  for compound types remains deferred pending a real per-type comparison
+  implementation, not just a marker-based opt-in;
 - keep collection operations deterministic and easy for AI to select.
 
 ### 2. Packages and dependency resolution

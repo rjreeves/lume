@@ -157,6 +157,16 @@ an interface/trait system. Constraints are validated after call-site
 inference; a generic function compiles once to a type-erased runtime
 representation rather than being specialized per concrete type.
 
+`Eq` is additionally satisfiable by any record or enum type through the
+same `impl` mechanism — `impl Eq for Point {}` — since `==`/`!=` already
+compare any two values of the same declared type structurally. This is
+an explicit opt-in, not automatic/derived conformance (implicit protocol
+conformance is a non-goal of the core language, see `ROADMAP.md`); a
+record without the `impl` does not satisfy `T: Eq`, matching any other
+marker protocol. `Ord` remains restricted to `int`/`str` — ordered
+comparison (`<`, `<=`, `>`, `>=`) has no generic runtime implementation
+for compound types yet, so `impl Ord for ...` is not accepted.
+
 ### Closures
 
 An inline closure — `fn(params) -> ReturnType => expression` — may capture
