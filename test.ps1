@@ -86,6 +86,10 @@ $listFunctions = & $Lume run (Join-Path $PSScriptRoot 'examples\list_functions.l
 if ($LASTEXITCODE -ne 0) { throw "list functions exited $LASTEXITCODE" }
 Assert-Equal 'generic list functions' "6`n2`n2`n10`n4" ($listFunctions -join "`n")
 
+$maps = & $Lume run (Join-Path $PSScriptRoot 'examples\maps.lume')
+if ($LASTEXITCODE -ne 0) { throw "maps exited $LASTEXITCODE" }
+Assert-Equal 'typed maps' "2`n92`n-1`ntrue`nfalse`n2`n2`n1" ($maps -join "`n")
+
 $closures = & $Lume run (Join-Path $PSScriptRoot 'examples\closures.lume')
 if ($LASTEXITCODE -ne 0) { throw "closures exited $LASTEXITCODE" }
 Assert-Equal 'closures and function values' "12`n14`n2`n11" ($closures -join "`n")
@@ -332,6 +336,22 @@ Assert-Equal 'generic dispatch ambiguous method' 'E0694 line 10: call to `T.desc
 $multiConstraintUnsatisfied = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_multi_constraint_unsatisfied.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "multi-constraint unsatisfied should exit 1" }
 Assert-Equal 'multi-constraint unsatisfied' 'E0680 line 20: type `User` does not satisfy `Number` for `T` calling `keep`' ($multiConstraintUnsatisfied -join "`n")
+
+$mapRequiresMap = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_map_requires_map.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "map requires-a-map validation should exit 1" }
+Assert-Equal 'map requires a map' 'E0695 `map.len` requires a Map' ($mapRequiresMap -join "`n")
+
+$mapKeyTypeMismatch = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_map_key_type_mismatch.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "map key type mismatch validation should exit 1" }
+Assert-Equal 'map key type mismatch' 'E0696 `map.get` key type does not match map key type' ($mapKeyTypeMismatch -join "`n")
+
+$mapKeyNotEligible = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_map_key_not_eligible.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "map key eligibility validation should exit 1" }
+Assert-Equal 'map key not eligible' 'E0697 map key type must be int, str, or bool' ($mapKeyNotEligible -join "`n")
+
+$mapValueTypeMismatch = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_map_value_type_mismatch.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "map value type mismatch validation should exit 1" }
+Assert-Equal 'map value type mismatch' 'E0698 map.set value type does not match map value type' ($mapValueTypeMismatch -join "`n")
 
 $listCallback = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_list_callback.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "list callback validation should exit 1" }

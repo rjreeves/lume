@@ -1,0 +1,21 @@
+fn main(args: [str]) -> int {
+  let empty = map.new()
+  let one = map.set(empty, "Ada", 92)
+  let scores = map.set(one, "Grace", 98)
+  print(map.len(scores))
+  print(match map.get(scores, "Ada") {
+    Some(score) => score
+    None => -1
+  })
+  print(match map.get(scores, "Missing") {
+    Some(score) => score
+    None => -1
+  })
+  print(map.has(scores, "Grace"))
+  print(map.has(scores, "Missing"))
+  print(list.len(map.keys(scores)))
+  print(list.len(map.values(scores)))
+  let cleared = map.remove(scores, "Ada")
+  print(map.len(cleared))
+  return 0
+}

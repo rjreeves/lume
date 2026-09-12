@@ -60,6 +60,7 @@ general postfix `.` chaining (see §8).
 ```text
 bool int float str
 [T]             list
+Map<K, V>       key/value map; K restricted to int, str, or bool
 Option<T>       some T or none, spelled `Some`/`None`
 Result<T, E>    ok T or err E, spelled `Ok`/`Err`
 T ! E           sugar for a function's return type only; see §9
@@ -68,8 +69,8 @@ fn(A, B) -> C   the parameter type of a callback slot (see §12)
 
 Integers are signed 64-bit. Floats are IEEE-754 binary64.
 
-**Not yet implemented:** `bytes`, `unit`/`never` as usable types, `{str: T}`
-string-keyed maps, and the `T?` postfix sugar for `Option<T>` — write
+**Not yet implemented:** `bytes`, `unit`/`never` as usable types, and the
+`T?` postfix sugar for `Option<T>` — write
 `Option<T>` explicitly. There are no implicit conversions, and — contrary to
 what the previous draft of this section claimed — there is currently **no
 conversion function either**: no `int.parse`, no `int`-to-`str`, no
@@ -405,14 +406,20 @@ str.ends_with(text, suffix)
 json.valid(text)                json.get(text, key)
 list.len(values)                list.get(values, index)
 list.push(values, item)         list.map/filter/find/fold(...)
+map.new()                        map.len(m)
+map.get(m, key)                  map.has(m, key)
+map.set(m, key, value)           map.remove(m, key)
+map.keys(m)                      map.values(m)
 result.ok(value)                result.err(message)
 result.is_ok(result)            result.value(result)
 result.error(result)
 expect.equal/true/ok/err/some(...)   (inside `test { ... }` blocks only, §13)
 ```
 
-**`http.*`, `time.*`, and `map.*` do not exist yet**, despite appearing as
+**`http.*` and `time.*` do not exist yet**, despite appearing as
 illustrative naming-convention examples in earlier drafts of this document.
+`map.*` covers construction and lookup only — iterator-style transforms
+(`map.map`/`map.filter`/`map.fold`) are a separate, later item.
 
 ## 12. Generic list transformations
 
@@ -595,7 +602,7 @@ simply not built yet and carries no such argument against it.
 - `int`↔`str` conversion of any kind
 - a JSON encoder (decode-only today, §8)
 - `use ... as` import aliasing
-- `{str: T}` maps
+- `map.map`/`map.filter`/`map.fold` and other iterator-style map transforms
 - closures/`&name` references as general first-class values (§6) — usable
   today only as the direct argument to the four `list.*` higher-order
   builtins

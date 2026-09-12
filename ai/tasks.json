@@ -288,6 +288,36 @@
     "stdout": "3"
   },
   {
+    "id": "map_set_get",
+    "prompt": "Create a map, set a key to a value, and print the value read back.",
+    "args": [],
+    "stdout": "92"
+  },
+  {
+    "id": "map_get_missing",
+    "prompt": "Create a map and print -1 when getting a key that was never set, using match on the Option result.",
+    "args": [],
+    "stdout": "-1"
+  },
+  {
+    "id": "map_has_key",
+    "prompt": "Create a map, set one key, and print whether it has that key and whether it has a different, unset key.",
+    "args": [],
+    "stdout": "true\nfalse"
+  },
+  {
+    "id": "map_remove_key",
+    "prompt": "Create a map with two keys, remove one, and print the map's length before and after.",
+    "args": [],
+    "stdout": "2\n1"
+  },
+  {
+    "id": "map_keys_len",
+    "prompt": "Create a map with three keys and print the length of its keys list.",
+    "args": [],
+    "stdout": "3"
+  },
+  {
     "id": "record_basic",
     "prompt": "Define a Point record and print its fields.",
     "args": [],
