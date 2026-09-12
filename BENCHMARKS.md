@@ -1381,3 +1381,62 @@ cost, hash-bucket overhead, `Text`/`List` operation counts - rather than
 finding more mechanisms whose complexity class is wrong, which is a
 fundamentally different (and much lower-leverage, per-change) kind of work
 than everything else in this file.
+
+## Confirming generic-dispatch scaling holds after the non-`Self`-parameter extension (2026-09-12)
+
+The last open item under the generic-dispatch milestone: a dedicated
+benchmark exercising many `T.method(value)` generic-dispatch call sites,
+to confirm this specific mechanism scales linearly rather than
+quadratically - the same doubling-sweep discipline this file has applied
+to every other mechanism, now pointed at `checkGenericProtocolCall` and
+the two new passes added for non-`Self` parameters (`patchGenericDispatch`,
+plus the generalized runtime dispatch branches in `execute()`/`callPure()`).
+
+This mechanism is structurally different from the earlier "generic function
+calls" sweep: type-erased generics check a function's body exactly once
+regardless of how many times that function is later called, so a generic
+function called N times contributes exactly one dispatch call site, not N.
+Stressing dispatch at scale therefore means many *distinct* `T.method(...)`
+sites, not many calls to one - the sweep generator (and the new permanent
+`benchmark-10000-generic-dispatch.ps1`) puts N distinct
+`T.compare(value, target)` statements directly inside one generic
+function's body.
+
+`lume check`, timed standalone, swept across N = 250 / 500 / 1,000 / 2,000
+/ 4,000 / 8,000 / 16,000 distinct dispatch sites:
+
+| N | Time |
+| ---: | ---: |
+| 250 | 0.038 s |
+| 500 | 0.030 s |
+| 1,000 | 0.043 s |
+| 2,000 | 0.070 s |
+| 4,000 | 0.116 s |
+| 8,000 | 0.227 s |
+| 16,000 | 0.428 s |
+
+N = 8,000 was reproduced twice more (0.223 s, 0.228 s) before trusting it -
+consistent within normal run-to-run noise.
+
+| N doubling | Ratio |
+| --- | ---: |
+| 500 → 1,000 | 1.44x |
+| 1,000 → 2,000 | 1.61x |
+| 2,000 → 4,000 | 1.66x |
+| 4,000 → 8,000 | 1.96x |
+| 8,000 → 16,000 | 1.88x |
+
+**Genuinely linear.** The doubling ratio holds near a flat ~1.9-2.0x
+across the whole range rather than climbing toward the ~4x signature every
+quadratic mechanism in this file has shown (250 → 500 alone reads below
+1.0x, but that's fixed process-startup overhead dominating a sub-40ms
+measurement, the same small-N noise every other sweep in this file has
+also shown - not a real speedup). The user-protocol-constrained-generics
+fix earlier in this file already eliminated the one identified quadratic
+mechanism in this area (an unindexed, per-call protocol scan); this sweep
+confirms neither that fix nor the non-`Self`-parameter work added on top
+of it (`patchGenericDispatch`'s own single O(program size) pass, plus one
+small O(schema size) lookup per dispatch site) reintroduced a hidden
+superlinear cost. `benchmark-10000-generic-dispatch.ps1` is the permanent,
+fixed-N regression guard for this mechanism going forward, mirroring
+`benchmark-10000.ps1` and `benchmark-10000-features.ps1`.

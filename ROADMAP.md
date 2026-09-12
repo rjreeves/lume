@@ -185,14 +185,14 @@ false.**
   compiler once and has already needed follow-up correction as other work
   landed underneath it; that is expected of a document tracking a moving
   target, but it means "reconciled" is not yet a stable, closed state.
-- *Finish generic protocol-method dispatch* — functionally complete.
-  Single- and multi-constraint dispatch to protocol methods of any shape
-  (any number of parameters, exactly one typed `Self`) has shipped (see
-  "Shipped in the bootstrap" above); only the dedicated generic-dispatch
-  scaling benchmark remains (see "Now" above). (This bullet used to cite
-  a benchmark finding — "a generic function constrained
-  by a user protocol gets no compile-time benefit over an unconstrained
-  one" — as evidence the feature was entirely missing; that finding was
+- *Finish generic protocol-method dispatch* — complete. Single- and
+  multi-constraint dispatch to protocol methods of any shape (any number
+  of parameters, exactly one typed `Self`) has shipped, with a dedicated
+  benchmark confirming linear scaling (see "Shipped in the bootstrap"
+  above). (This bullet used to cite a benchmark finding — "a generic
+  function constrained by a user protocol gets no compile-time benefit
+  over an unconstrained one" — as evidence the feature was entirely
+  missing; that finding was
   about *compile-time cost*, not the presence of this feature, and it no
   longer holds in either direction after this file's own performance fixes
   — see the "protocol-scan fix" section.)
@@ -273,7 +273,10 @@ non-trivial benchmark in this file has met its own bar.**
   instruction so the runtime can locate the receiver among several
   arguments without disturbing the rest — a zero- or multiple-`Self`
   method still gets a clear "not yet supported" diagnostic (E0691) rather
-  than an attempt to guess;
+  than an attempt to guess. A dedicated benchmark
+  (`benchmark-10000-generic-dispatch.ps1`) exercises many distinct dispatch
+  call sites and a doubling-size sweep confirmed this mechanism scales
+  linearly, not quadratically — see BENCHMARKS.md;
 - no trait objects or an indirect dispatch table for calls whose receiver
   type is statically known — those still compile straight to a concrete
   function name with zero runtime branching, exactly as before.
@@ -291,28 +294,18 @@ non-trivial benchmark in this file has met its own bar.**
 - a machine-readable API manifest, compact AI generation contract, and fixed
   AI evaluation tasks.
 
-## Now: full-shape generic protocol dispatch
+## Now: choosing the next milestone
 
-Single- and multi-constraint generic dispatch, including protocol methods
-with parameters beyond the single `Self` receiver, are all shipped (see
-above): a function constrained by `T: Protocol` or `T: A + B + ...` can
-call any of those protocols' methods on `T` (any shape with exactly one
-`Self` parameter), resolved at runtime by a direct type-tag check, with
-precise diagnostics for every failure mode found while building it
-(unconstrained `T`, a built-in-marker constraint with no methods, a
-protocol lacking the called method, ambiguity across multiple matching
-constraints, wrong argument count, a zero-or-multiple-`Self` method shape,
-and a non-`Self` argument type mismatch). What's left is the one item that
-passed explicitly deferred:
-
-- add a 10,000-line benchmark specifically exercising many generic-dispatch
-  call sites, to confirm this mechanism's own linear-vs-quadratic scaling the
-  way this file's other performance investigations have for every other
-  compiler mechanism.
-
-Completion means any constrained generic algorithm can call any protocol
-method its constraints guarantee exist, regardless of shape, with all
-dispatch still visible to the compiler before bytecode execution.
+Full-shape generic protocol dispatch is complete (see "Shipped in the
+bootstrap" above): a function constrained by `T: Protocol` or `T: A + B +
+...` can call any of those protocols' methods on `T` (any shape with
+exactly one `Self` parameter), resolved at runtime by a direct type-tag
+check, with precise diagnostics for every failure mode found while
+building it, and a dedicated benchmark confirming the mechanism scales
+linearly. This closes out the milestone that has driven recent work; the
+next one to pick up is **production scripting foundation** (below), unless
+benchmark evidence or a real automation workload surfaces something more
+urgent first.
 
 ## Next: production scripting foundation
 
