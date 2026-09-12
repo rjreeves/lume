@@ -167,6 +167,7 @@ map.new()                    map.len(m)
 map.get(m, key)              map.has(m, key)
 map.set(m, key, value)       map.remove(m, key)
 map.keys(m)                  map.values(m)
+map.map/filter/fold(...)
 result.ok(value)              result.err(message)
 result.is_ok(result)          result.value(result)
 result.error(result)
@@ -434,6 +435,8 @@ are usable only as the direct, inline argument to `list.map`/`filter`/
 through `map.*` builtins rather than literal syntax:
 
 ```lume
+fn sum(total: int, value: int) -> int { return total + value }
+
 let empty = map.new()
 let scores = map.set(map.set(empty, "Ada", 92), "Grace", 98)
 print(map.has(scores, "Ada"))
@@ -447,6 +450,10 @@ print(match map.get(scores, "Ada") {
 print(list.len(map.keys(scores)))
 let cleared = map.remove(scores, "Ada")
 print(map.len(cleared))
+
+let raised = map.map(scores, fn(value: int) -> int => value + 1)
+let passing = map.filter(scores, fn(value: int) -> bool => value >= 95)
+let total = map.fold(scores, 0, &sum)
 ```
 
 Like `list.push`, every `map.*` mutation returns a new map rather than
@@ -454,10 +461,11 @@ changing the original in place. Keys are restricted to `int`, `str`, or
 `bool` for now — the same three types the built-in `Eq` constraint already
 recognizes; broader key types (records, enums, lists) are a separate,
 later extension. `map.get` returns `Option<V>`, matched the same way as
-any other `Option`. There is no map literal syntax and no
-`map.map`/`filter`/`fold` yet — those iterator-style transforms are a
-separate, later addition; `map.keys`/`map.values` return plain lists that
-can be passed to the existing `list.*` transforms in the meantime.
+any other `Option`. `map.map`/`map.filter`/`map.fold` mirror the
+`list.*` transforms exactly, except the callback takes the value only
+(`(V) -> ...`) — keys pass through unchanged for `map.map`/`map.filter`.
+There is no map literal syntax and no `(key, value)` two-parameter
+callback shape yet.
 
 ## Example: a multi-module task board
 

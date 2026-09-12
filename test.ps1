@@ -90,6 +90,10 @@ $maps = & $Lume run (Join-Path $PSScriptRoot 'examples\maps.lume')
 if ($LASTEXITCODE -ne 0) { throw "maps exited $LASTEXITCODE" }
 Assert-Equal 'typed maps' "2`n92`n-1`ntrue`nfalse`n2`n2`n1" ($maps -join "`n")
 
+$mapFunctions = & $Lume run (Join-Path $PSScriptRoot 'examples\map_functions.lume')
+if ($LASTEXITCODE -ne 0) { throw "map functions exited $LASTEXITCODE" }
+Assert-Equal 'generic map functions' "4`n2`n1`n6" ($mapFunctions -join "`n")
+
 $closures = & $Lume run (Join-Path $PSScriptRoot 'examples\closures.lume')
 if ($LASTEXITCODE -ne 0) { throw "closures exited $LASTEXITCODE" }
 Assert-Equal 'closures and function values' "12`n14`n2`n11" ($closures -join "`n")
@@ -352,6 +356,10 @@ Assert-Equal 'map key not eligible' 'E0697 map key type must be int, str, or boo
 $mapValueTypeMismatch = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_map_value_type_mismatch.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "map value type mismatch validation should exit 1" }
 Assert-Equal 'map value type mismatch' 'E0698 map.set value type does not match map value type' ($mapValueTypeMismatch -join "`n")
+
+$mapCallback = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_map_callback.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "map callback validation should exit 1" }
+Assert-Equal 'map callback validation' 'E0673 callback parameter type does not match map value type' ($mapCallback -join "`n")
 
 $listCallback = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_list_callback.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "list callback validation should exit 1" }

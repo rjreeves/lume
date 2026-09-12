@@ -318,6 +318,24 @@
     "stdout": "3"
   },
   {
+    "id": "map_map_values",
+    "prompt": "Create a map with two keys, use map.map to double every value, and print the doubled value for one key.",
+    "args": [],
+    "stdout": "184"
+  },
+  {
+    "id": "map_filter_values",
+    "prompt": "Create a map with two keys, use map.filter to keep only entries whose value is at least a given threshold, and print the resulting map's length.",
+    "args": [],
+    "stdout": "1"
+  },
+  {
+    "id": "map_fold_values",
+    "prompt": "Create a map with three keys and use map.fold to sum all its values.",
+    "args": [],
+    "stdout": "6"
+  },
+  {
     "id": "record_basic",
     "prompt": "Define a Point record and print its fields.",
     "args": [],
