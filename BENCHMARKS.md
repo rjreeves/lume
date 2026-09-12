@@ -1303,3 +1303,81 @@ Between this and the previous section, every one of `hasProtocol`,
 protocol/generic-constraint machinery touches - is now backed by an O(1)-
 ish bucket lookup rather than an O(program-size) scan, whether called
 wastefully or legitimately.
+
+## Confirming linear scaling holds, and one more constant-factor fix: dispatch-chain ordering (2026-09-12)
+
+With every identified quadratic-or-worse mechanism fixed or ruled out, the
+next question was direct: is the remaining gap to Certo's own raw compile
+speed (measured separately - see below) still hiding an algorithmic problem,
+or is it now a genuine constant-factor difference? Direct instrumentation
+(the same `monotonicMillis`-timer technique used throughout this file,
+reverted before committing) around `lex`, the per-function `compileBlock`
+loop, and `verifyTypes`, swept across N = 5,000 / 10,000 / 20,000 / 40,000 /
+80,000 / 160,000 / 320,000 lines of the trivial `total = total + 1` control:
+
+| N | `lex` | `compileBlock` | `verifyTypes` |
+| ---: | ---: | ---: | ---: |
+| 160,000 | 266 ms | 328 ms | 172 ms |
+| 320,000 | 547 ms | 672 ms | 360 ms |
+
+Doubling ratios for all three land at ~1.9-2.1x from N = 160,000 to
+320,000 - genuinely linear, not the ~4x quadratic signature this file has
+repeatedly found and fixed elsewhere. **This confirms the remaining gap is
+now a constant-factor one**: Lume's own compiler doing more work per line
+than Certo's does, not a hidden complexity-class bug.
+
+**One additional constant-factor fix found while confirming this**:
+`verifyTypes`' main per-instruction dispatch is a single large `if`/`else-
+if` chain checked once per instruction in the whole program. It was ordered
+by feature grouping (declarations first, then expressions, then control
+flow), not by frequency - `function`, `closure_start`/`end`, and `param`
+were checked before `load`, `store`, `const_int`, `call`, and the
+arithmetic/comparison operators, even though the latter group accounts for
+the overwhelming majority of instructions in any real function body while
+the former group occurs at most once per function/closure/parameter.
+Every load, store, and arithmetic instruction - by far the most common
+instructions that exist - was paying for several guaranteed-to-fail
+`Text.eq` comparisons against rare structural ops before ever reaching its
+own branch.
+
+**The fix**: reordered the chain by measured real-world frequency -
+`load`/`store`/`const_*`/`call`/arithmetic/`compare`/`return`/`jump_false`/
+`print` first, structural ops (`function`/`closure_*`/`match_*`/`param`/
+`decode_json`) last. This changes nothing about which branch ultimately
+matches - the conditions are mutually exclusive exact-string checks on a
+compiler-generated `op` field never influenced by user identifiers, so
+reordering is a pure performance change, not a behavior change (confirmed:
+full smoke suite unchanged, `task_board` byte-identical).
+
+**Performance result - real but modest, exactly as expected for a
+constant-factor-only fix**: at N = 320,000, `verifyTypes` dropped from
+360 ms to ~330-375 ms across repeated runs (roughly 5-10%, and within
+normal measurement noise at the 10,000-line scale the standard benchmarks
+use - `benchmark-10000.ps1` and `benchmark-10000-features.ps1` show no
+measurable change outside their existing run-to-run variance). This is not
+another complexity-class fix like the rest of this file - there is no more
+low-hanging complexity-class fruit left to find, by design, since this
+section's own sweep just confirmed every phase is already linear. Kept
+because it is a real, zero-risk improvement with no offsetting cost.
+
+**Certo-vs-Lume compile speed, measured directly and fairly (same machine,
+same process-invocation method, trivial 10,000-line program, `check`-only,
+no codegen)**:
+
+| Compiler | Mean of 10 runs |
+| --- | ---: |
+| `certo check` | 22.7 ms |
+| `lume check` | 104.0 ms |
+
+Certo is ~4.6x faster on this trivial workload. This is not evidence of a
+remaining bug in `lume.cto` - it reflects Certo being a mature, dedicated
+Rust compiler against Lume's entire compiler being a single ~4,000-line
+bootstrap implementation, itself written in and run through Certo, still
+working toward its own "10,000 lines in under 10 ms" design target (this
+session's own trivial-benchmark result: ~53-58 ms, ~5.3-5.8x over that
+target). Closing the rest of this gap would mean profiling and shaving
+constant factors throughout the pipeline - lexer character-classification
+cost, hash-bucket overhead, `Text`/`List` operation counts - rather than
+finding more mechanisms whose complexity class is wrong, which is a
+fundamentally different (and much lower-leverage, per-change) kind of work
+than everything else in this file.

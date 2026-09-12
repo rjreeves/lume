@@ -2603,7 +2603,121 @@ fn verifyTypes(code: List<Instruction>): Text = {
   val protocolImplBuckets = seedProtocolImplBuckets(code)
   for item in code {
     if Text.eq(problem, "") then {
-      if Text.eq(item.op, "function") then {
+      // Ordered by measured real-world frequency, not by feature grouping: a
+      // handful of ops (load/store/const_*/call/arithmetic/compare/return/
+      // jump_false/print) account for the overwhelming majority of
+      // instructions in any real function body, while structural ops
+      // (function/closure/match/param/decode_json) each occur at most once
+      // per function, closure, match, or parameter - a large but bounded
+      // count, not one that scales with a function's own statement count.
+      // Since this is a plain if/else-if chain checked once per instruction,
+      // every instruction pays for one failed Text.eq per branch it isn't -
+      // so checking the rare structural ops first, as this used to, taxed
+      // every hot instruction to spare the rare ones. Reordering changes
+      // nothing about which branch ultimately matches (the conditions are
+      // mutually exclusive exact-string checks on a compiler-generated,
+      // never user-influenced op field), only how many wasted comparisons
+      // it costs to get there.
+      if Text.eq(item.op, "load") then {
+        if let Some(bindingType) = closureParamLookup(closureParamNames, closureParamTypes, item.text) { stack = List.push(stack, bindingType) }
+        else if let Some(bindingType) = bindingBucketGet(bindingBuckets, item.text) { stack = List.push(stack, bindingType) }
+        else if let Some(bindingType) = getBinding(bindings, item.text) { stack = List.push(stack, bindingType) }
+        else { problem = "E0610 line " ++ intToText(item.line) ++ ": type unavailable for `" ++ item.text ++ "`" }
+      } else if Text.eq(item.op, "store") then {
+        val valueType = pop(stack)
+        stack = valueType.stack
+        if let Some(existingType) = bindingBucketGet(bindingBuckets, item.text) {
+          if not typesCompatible(existingType, valueType.value) then { problem = "E0611 line " ++ intToText(item.line) ++ ": cannot assign " ++ valueType.value ++ " to " ++ existingType }
+        } else if let Some(existingType) = getBinding(bindings, item.text) {
+          if not typesCompatible(existingType, valueType.value) then { problem = "E0611 line " ++ intToText(item.line) ++ ": cannot assign " ++ valueType.value ++ " to " ++ existingType }
+        } else { val discardStoreInsert = insertBindingBucket(bindingBuckets, item.text, valueType.value) }
+      } else if Text.eq(item.op, "const_int") then { stack = List.push(stack, "int") }
+      else if Text.eq(item.op, "const_str") then { stack = List.push(stack, "str") }
+      else if Text.eq(item.op, "const_bool") then { stack = List.push(stack, "bool") }
+      else if Text.eq(item.op, "call") then {
+        val checked = checkCallTypes(code, item, stack, protocolBuckets, protocolImplBuckets)
+        stack = checked.stack
+        problem = checked.problem
+        if Text.eq(problem, "") then { stack = List.push(stack, checked.resultType) }
+      } else if Text.eq(item.op, "add") or Text.eq(item.op, "sub") or Text.eq(item.op, "mul") or Text.eq(item.op, "div") or Text.eq(item.op, "mod") then {
+        val right = pop(stack)
+        val left = pop(right.stack)
+        stack = left.stack
+        if Text.eq(item.op, "add") and Text.eq(left.value, "str") and Text.eq(right.value, "str") then { stack = List.push(stack, "str") }
+        else if Text.eq(left.value, "int") and Text.eq(right.value, "int") then { stack = List.push(stack, "int") }
+        else { problem = "E0613 line " ++ intToText(item.line) ++ ": incompatible operand types " ++ left.value ++ " and " ++ right.value }
+      } else if Text.eq(item.op, "compare") then {
+        val right = pop(stack)
+        val left = pop(right.stack)
+        stack = List.push(left.stack, "bool")
+        if not Text.eq(left.value, right.value) then { problem = "E0614 line " ++ intToText(item.line) ++ ": comparison operands must have the same type" }
+        else if not Text.eq(item.text, "==") and not Text.eq(item.text, "!=") and not Text.eq(left.value, "int") then { problem = "E0615 line " ++ intToText(item.line) ++ ": ordered comparison requires int" }
+      } else if Text.eq(item.op, "return") then {
+        val actual = pop(stack)
+        stack = actual.stack
+        if not typesCompatible(returnType, actual.value) then { problem = "E0618 line " ++ intToText(item.line) ++ ": return type mismatch; expected " ++ returnType ++ ", got " ++ actual.value }
+      } else if Text.eq(item.op, "jump_false") then {
+        val conditionType = pop(stack)
+        stack = conditionType.stack
+        if not Text.eq(conditionType.value, "bool") then { problem = "E0617 line " ++ intToText(item.line) ++ ": condition must be bool, got " ++ conditionType.value }
+      } else if Text.eq(item.op, "print") or Text.eq(item.op, "eprint") then {
+        val valueType = pop(stack)
+        stack = valueType.stack
+      } else if Text.eq(item.op, "generic_call") then {
+        val checked = checkGenericProtocolCall(code, item, stack, currentGenericConstraints)
+        stack = checked.stack
+        problem = checked.problem
+        if Text.eq(problem, "") then { stack = List.push(stack, checked.resultType) }
+      } else if Text.eq(item.op, "fn_ref") then { stack = List.push(stack, "fn:" ++ item.text) }
+      else if Text.eq(item.op, "make_record") then {
+        val checked = checkRecordTypes(code, item, stack)
+        stack = checked.stack
+        problem = checked.problem
+        if Text.eq(problem, "") then { stack = List.push(stack, checked.resultType) }
+      } else if Text.eq(item.op, "get_field") then {
+        val valueType = pop(stack)
+        stack = valueType.stack
+        if let Some(schema) = findRecordSchema(code, valueType.value) {
+          if let Some(fieldType) = fieldTypeInSchema(schema, item.text) { stack = List.push(stack, fieldType) }
+          else { problem = "E0635 line " ++ intToText(item.line) ++ ": record `" ++ valueType.value ++ "` has no field `" ++ item.text ++ "`" }
+        } else { problem = "E0636 line " ++ intToText(item.line) ++ ": field access requires a record, got " ++ valueType.value }
+      } else if Text.eq(item.op, "update_record") then {
+        val checked = checkRecordUpdateTypes(code, item, stack)
+        stack = checked.stack
+        problem = checked.problem
+        if Text.eq(problem, "") then { stack = List.push(stack, checked.resultType) }
+      } else if Text.eq(item.op, "make_variant") then {
+        val checked = checkVariantTypes(code, item, stack)
+        stack = checked.stack
+        problem = checked.problem
+        if Text.eq(problem, "") then { stack = List.push(stack, checked.resultType) }
+      } else if Text.eq(item.op, "unwrap") or Text.eq(item.op, "propagate") then {
+        val wrapped = pop(stack)
+        stack = wrapped.stack
+        val operator = if Text.eq(item.op, "propagate") then "?" else "!"
+        if not Text.startsWith(wrapped.value, "result<") and not Text.startsWith(wrapped.value, "Result<") then { problem = "E0623 line " ++ intToText(item.line) ++ ": `" ++ operator ++ "` requires a result value" }
+        else if not Text.startsWith(returnType, "result<") and not Text.startsWith(returnType, "Result<") then { problem = "E0624 line " ++ intToText(item.line) ++ ": `" ++ operator ++ "` requires an enclosing result-returning function" }
+        else if not typesCompatible(resultErrorType(returnType), resultErrorType(wrapped.value)) then { problem = "E0625 line " ++ intToText(item.line) ++ ": propagated error type mismatch; expected " ++ resultErrorType(returnType) ++ ", got " ++ resultErrorType(wrapped.value) }
+        else { stack = List.push(stack, resultValueType(wrapped.value)) }
+      } else if Text.eq(item.op, "make_list") then {
+        var elementType = "any"
+        var index = 0
+        while index < item.number and Text.eq(problem, "") {
+          val valueType = pop(stack)
+          stack = valueType.stack
+          if Text.eq(elementType, "any") then { elementType = valueType.value }
+          else if not Text.eq(elementType, valueType.value) then { problem = "E0616 line " ++ intToText(item.line) ++ ": list elements must have one type" }
+          index = index + 1
+        }
+        stack = List.push(stack, "list<" ++ elementType ++ ">")
+      } else if Text.eq(item.op, "param") or Text.eq(item.op, "main_param") then {
+        if List.len(closureParamBoundaries) > 0 then {
+          closureParamNames = List.pushMut(closureParamNames, beforePipe(item.text))
+          closureParamTypes = List.pushMut(closureParamTypes, afterPipe(item.text))
+        } else {
+          val discardParamInsert = insertBindingBucket(bindingBuckets, beforePipe(item.text), afterPipe(item.text))
+        }
+      } else if Text.eq(item.op, "function") then {
         stack = []
         matches = []
         closures = []
@@ -2643,103 +2757,6 @@ fn verifyTypes(code: List<Instruction>): Text = {
           stack = List.push(popped.value.stack, closureType(item.text))
           bindings = popped.value.bindings
           returnType = popped.value.returnType
-        }
-      } else if Text.eq(item.op, "param") or Text.eq(item.op, "main_param") then {
-        if List.len(closureParamBoundaries) > 0 then {
-          closureParamNames = List.pushMut(closureParamNames, beforePipe(item.text))
-          closureParamTypes = List.pushMut(closureParamTypes, afterPipe(item.text))
-        } else {
-          val discardParamInsert = insertBindingBucket(bindingBuckets, beforePipe(item.text), afterPipe(item.text))
-        }
-      } else if Text.eq(item.op, "const_int") then { stack = List.push(stack, "int") }
-      else if Text.eq(item.op, "const_str") then { stack = List.push(stack, "str") }
-      else if Text.eq(item.op, "const_bool") then { stack = List.push(stack, "bool") }
-      else if Text.eq(item.op, "fn_ref") then { stack = List.push(stack, "fn:" ++ item.text) }
-      else if Text.eq(item.op, "load") then {
-        if let Some(bindingType) = closureParamLookup(closureParamNames, closureParamTypes, item.text) { stack = List.push(stack, bindingType) }
-        else if let Some(bindingType) = bindingBucketGet(bindingBuckets, item.text) { stack = List.push(stack, bindingType) }
-        else if let Some(bindingType) = getBinding(bindings, item.text) { stack = List.push(stack, bindingType) }
-        else { problem = "E0610 line " ++ intToText(item.line) ++ ": type unavailable for `" ++ item.text ++ "`" }
-      } else if Text.eq(item.op, "store") then {
-        val valueType = pop(stack)
-        stack = valueType.stack
-        if let Some(existingType) = bindingBucketGet(bindingBuckets, item.text) {
-          if not typesCompatible(existingType, valueType.value) then { problem = "E0611 line " ++ intToText(item.line) ++ ": cannot assign " ++ valueType.value ++ " to " ++ existingType }
-        } else if let Some(existingType) = getBinding(bindings, item.text) {
-          if not typesCompatible(existingType, valueType.value) then { problem = "E0611 line " ++ intToText(item.line) ++ ": cannot assign " ++ valueType.value ++ " to " ++ existingType }
-        } else { val discardStoreInsert = insertBindingBucket(bindingBuckets, item.text, valueType.value) }
-      } else if Text.eq(item.op, "test_expect") then {
-        val valueType = pop(stack)
-        stack = valueType.stack
-        if not Text.eq(valueType.value, "bool") then { problem = "E0685 line " ++ intToText(item.line) ++ ": expectation must produce bool" }
-      } else if Text.eq(item.op, "neg") then {
-        val valueType = pop(stack)
-        stack = List.push(valueType.stack, "int")
-        if not Text.eq(valueType.value, "int") then { problem = "E0612 line " ++ intToText(item.line) ++ ": unary minus requires int" }
-      } else if Text.eq(item.op, "add") or Text.eq(item.op, "sub") or Text.eq(item.op, "mul") or Text.eq(item.op, "div") or Text.eq(item.op, "mod") then {
-        val right = pop(stack)
-        val left = pop(right.stack)
-        stack = left.stack
-        if Text.eq(item.op, "add") and Text.eq(left.value, "str") and Text.eq(right.value, "str") then { stack = List.push(stack, "str") }
-        else if Text.eq(left.value, "int") and Text.eq(right.value, "int") then { stack = List.push(stack, "int") }
-        else { problem = "E0613 line " ++ intToText(item.line) ++ ": incompatible operand types " ++ left.value ++ " and " ++ right.value }
-      } else if Text.eq(item.op, "compare") then {
-        val right = pop(stack)
-        val left = pop(right.stack)
-        stack = List.push(left.stack, "bool")
-        if not Text.eq(left.value, right.value) then { problem = "E0614 line " ++ intToText(item.line) ++ ": comparison operands must have the same type" }
-        else if not Text.eq(item.text, "==") and not Text.eq(item.text, "!=") and not Text.eq(left.value, "int") then { problem = "E0615 line " ++ intToText(item.line) ++ ": ordered comparison requires int" }
-      } else if Text.eq(item.op, "make_list") then {
-        var elementType = "any"
-        var index = 0
-        while index < item.number and Text.eq(problem, "") {
-          val valueType = pop(stack)
-          stack = valueType.stack
-          if Text.eq(elementType, "any") then { elementType = valueType.value }
-          else if not Text.eq(elementType, valueType.value) then { problem = "E0616 line " ++ intToText(item.line) ++ ": list elements must have one type" }
-          index = index + 1
-        }
-        stack = List.push(stack, "list<" ++ elementType ++ ">")
-      } else if Text.eq(item.op, "call") then {
-        val checked = checkCallTypes(code, item, stack, protocolBuckets, protocolImplBuckets)
-        stack = checked.stack
-        problem = checked.problem
-        if Text.eq(problem, "") then { stack = List.push(stack, checked.resultType) }
-      } else if Text.eq(item.op, "generic_call") then {
-        val checked = checkGenericProtocolCall(code, item, stack, currentGenericConstraints)
-        stack = checked.stack
-        problem = checked.problem
-        if Text.eq(problem, "") then { stack = List.push(stack, checked.resultType) }
-      } else if Text.eq(item.op, "make_record") then {
-        val checked = checkRecordTypes(code, item, stack)
-        stack = checked.stack
-        problem = checked.problem
-        if Text.eq(problem, "") then { stack = List.push(stack, checked.resultType) }
-      } else if Text.eq(item.op, "update_record") then {
-        val checked = checkRecordUpdateTypes(code, item, stack)
-        stack = checked.stack
-        problem = checked.problem
-        if Text.eq(problem, "") then { stack = List.push(stack, checked.resultType) }
-      } else if Text.eq(item.op, "make_variant") then {
-        val checked = checkVariantTypes(code, item, stack)
-        stack = checked.stack
-        problem = checked.problem
-        if Text.eq(problem, "") then { stack = List.push(stack, checked.resultType) }
-      } else if Text.eq(item.op, "get_field") then {
-        val valueType = pop(stack)
-        stack = valueType.stack
-        if let Some(schema) = findRecordSchema(code, valueType.value) {
-          if let Some(fieldType) = fieldTypeInSchema(schema, item.text) { stack = List.push(stack, fieldType) }
-          else { problem = "E0635 line " ++ intToText(item.line) ++ ": record `" ++ valueType.value ++ "` has no field `" ++ item.text ++ "`" }
-        } else { problem = "E0636 line " ++ intToText(item.line) ++ ": field access requires a record, got " ++ valueType.value }
-      } else if Text.eq(item.op, "decode_json") then {
-        if item.number != 1 then { problem = "E0637 line " ++ intToText(item.line) ++ ": `" ++ item.text ++ ".from_json` expects 1 argument" }
-        else {
-          val inputType = pop(stack)
-          stack = inputType.stack
-          if not Text.eq(inputType.value, "str") then { problem = "E0638 line " ++ intToText(item.line) ++ ": `" ++ item.text ++ ".from_json` requires str, got " ++ inputType.value }
-          else if let Some(schema) = findRecordSchema(code, item.text) { stack = List.push(stack, "result<" ++ item.text ++ ",str>") }
-          else { problem = "E0639 line " ++ intToText(item.line) ++ ": unknown record `" ++ item.text ++ "`" }
         }
       } else if Text.eq(item.op, "match_start") then {
         val subject = pop(stack)
@@ -2807,25 +2824,23 @@ fn verifyTypes(code: List<Instruction>): Text = {
           if Text.eq(problem, "") then { stack = List.push(matchState.baseStack, matchState.resultType) }
           bindings = matchState.baseBindings
         }
-      } else if Text.eq(item.op, "unwrap") or Text.eq(item.op, "propagate") then {
-        val wrapped = pop(stack)
-        stack = wrapped.stack
-        val operator = if Text.eq(item.op, "propagate") then "?" else "!"
-        if not Text.startsWith(wrapped.value, "result<") and not Text.startsWith(wrapped.value, "Result<") then { problem = "E0623 line " ++ intToText(item.line) ++ ": `" ++ operator ++ "` requires a result value" }
-        else if not Text.startsWith(returnType, "result<") and not Text.startsWith(returnType, "Result<") then { problem = "E0624 line " ++ intToText(item.line) ++ ": `" ++ operator ++ "` requires an enclosing result-returning function" }
-        else if not typesCompatible(resultErrorType(returnType), resultErrorType(wrapped.value)) then { problem = "E0625 line " ++ intToText(item.line) ++ ": propagated error type mismatch; expected " ++ resultErrorType(returnType) ++ ", got " ++ resultErrorType(wrapped.value) }
-        else { stack = List.push(stack, resultValueType(wrapped.value)) }
-      } else if Text.eq(item.op, "print") or Text.eq(item.op, "eprint") then {
+      } else if Text.eq(item.op, "decode_json") then {
+        if item.number != 1 then { problem = "E0637 line " ++ intToText(item.line) ++ ": `" ++ item.text ++ ".from_json` expects 1 argument" }
+        else {
+          val inputType = pop(stack)
+          stack = inputType.stack
+          if not Text.eq(inputType.value, "str") then { problem = "E0638 line " ++ intToText(item.line) ++ ": `" ++ item.text ++ ".from_json` requires str, got " ++ inputType.value }
+          else if let Some(schema) = findRecordSchema(code, item.text) { stack = List.push(stack, "result<" ++ item.text ++ ",str>") }
+          else { problem = "E0639 line " ++ intToText(item.line) ++ ": unknown record `" ++ item.text ++ "`" }
+        }
+      } else if Text.eq(item.op, "neg") then {
+        val valueType = pop(stack)
+        stack = List.push(valueType.stack, "int")
+        if not Text.eq(valueType.value, "int") then { problem = "E0612 line " ++ intToText(item.line) ++ ": unary minus requires int" }
+      } else if Text.eq(item.op, "test_expect") then {
         val valueType = pop(stack)
         stack = valueType.stack
-      } else if Text.eq(item.op, "jump_false") then {
-        val conditionType = pop(stack)
-        stack = conditionType.stack
-        if not Text.eq(conditionType.value, "bool") then { problem = "E0617 line " ++ intToText(item.line) ++ ": condition must be bool, got " ++ conditionType.value }
-      } else if Text.eq(item.op, "return") then {
-        val actual = pop(stack)
-        stack = actual.stack
-        if not typesCompatible(returnType, actual.value) then { problem = "E0618 line " ++ intToText(item.line) ++ ": return type mismatch; expected " ++ returnType ++ ", got " ++ actual.value }
+        if not Text.eq(valueType.value, "bool") then { problem = "E0685 line " ++ intToText(item.line) ++ ": expectation must produce bool" }
       }
     }
   }
