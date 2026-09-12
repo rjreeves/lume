@@ -76,7 +76,7 @@ Assert-Equal 'constrained generic functions' "true`nlume`n42`nfast" ($constraine
 
 $protocols = & $Lume run (Join-Path $PSScriptRoot 'examples\protocols.lume')
 if ($LASTEXITCODE -ne 0) { throw "protocols exited $LASTEXITCODE" }
-Assert-Equal 'protocol-constrained generics' 'Ada' ($protocols -join "`n")
+Assert-Equal 'protocol-constrained generics' "Ada`nAda" ($protocols -join "`n")
 
 $genericData = & $Lume run (Join-Path $PSScriptRoot 'examples\generic_data.lume')
 if ($LASTEXITCODE -ne 0) { throw "generic data exited $LASTEXITCODE" }
@@ -296,6 +296,18 @@ Assert-Equal 'protocol method signature' 'E0263 method `User.name` does not matc
 $protocolExtraMethod = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_protocol_extra_method.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "extra protocol method should exit 1" }
 Assert-Equal 'extra protocol method' 'E0264 method `code` is not declared by protocol `Named`' ($protocolExtraMethod -join "`n")
+
+$genericDispatchUnknownMethod = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_generic_dispatch_unknown_method.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "generic dispatch unknown method should exit 1" }
+Assert-Equal 'generic dispatch unknown method' 'E0689 line 16: protocol `Named` declares no method `missing`' ($genericDispatchUnknownMethod -join "`n")
+
+$genericDispatchBuiltinConstraint = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_generic_dispatch_builtin_constraint.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "generic dispatch builtin constraint should exit 1" }
+Assert-Equal 'generic dispatch builtin constraint' 'E0687 line 2: built-in constraint `Number` has no callable methods' ($genericDispatchBuiltinConstraint -join "`n")
+
+$genericDispatchNonSelfMethod = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_generic_dispatch_non_self_method.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "generic dispatch non-Self method should exit 1" }
+Assert-Equal 'generic dispatch non-Self method' 'E0691 line 16: `Comparer.compare` is not yet supported for generic dispatch; only a single `Self` parameter is supported' ($genericDispatchNonSelfMethod -join "`n")
 
 $listCallback = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_list_callback.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "list callback validation should exit 1" }

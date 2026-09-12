@@ -13,12 +13,11 @@ impl Named for User {
 }
 
 fn keep_named<T: Named>(value: T) -> T {
-  print(T.name(value))
+  print(T.missing(value))
   return value
 }
 
 fn main(args: [str]) -> int {
   let user = keep_named(User(name: "Ada"))
-  print(User.name(user))
   return 0
 }

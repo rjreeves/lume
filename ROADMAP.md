@@ -185,10 +185,16 @@ false.**
   compiler once and has already needed follow-up correction as other work
   landed underneath it; that is expected of a document tracking a moving
   target, but it means "reconciled" is not yet a stable, closed state.
-- *Finish generic protocol-method dispatch* — not done; this file's own
-  "Now" section above says so, and the benchmark data independently
-  confirms it: a generic function constrained by a user protocol gets no
-  compile-time benefit over an unconstrained one today.
+- *Finish generic protocol-method dispatch* — partially done, not complete.
+  Single-constraint dispatch to a single-`Self`-parameter protocol method
+  shipped (see "Shipped in the bootstrap" and "Now" above); multi-constraint
+  syntax and protocol methods with additional parameters remain. (This
+  bullet used to cite a benchmark finding — "a generic function constrained
+  by a user protocol gets no compile-time benefit over an unconstrained
+  one" — as evidence the feature was entirely missing; that finding was
+  about *compile-time cost*, not the presence of this feature, and it no
+  longer holds in either direction after this file's own performance fixes
+  — see the "protocol-scan fix" section.)
 - *Stabilize diagnostics and bytecode serialization* — not assessed by this
   investigation.
 - *Keep the complete smoke, test-runner, LSP, benchmark, and AI suites
@@ -251,7 +257,18 @@ non-trivial benchmark in this file has met its own bar.**
 - generic list functions: `map`, `filter`, `find`, and `fold`;
 - protocol declarations and explicit implementations;
 - protocol methods compiled as concrete functions with static dispatch;
-- no trait objects, virtual calls, or runtime protocol lookup.
+- a function constrained by a single `T: Protocol` may call that protocol's
+  method on `T` from inside its own body (`T.method(value)`), resolved by a
+  direct runtime type-tag check against every known implementer, not a
+  vtable or an indirect dispatch table — the same closed-world mechanism
+  `match` already uses for enum variants. Scoped to a protocol method with
+  exactly one parameter, typed `Self` — every protocol method that exists in
+  this codebase's own examples is already this shape. `T: Eq + Named`
+  multi-constraint syntax and protocol methods with additional non-`Self`
+  parameters are the next steps (see "Now" below);
+- no trait objects or an indirect dispatch table for calls whose receiver
+  type is statically known — those still compile straight to a concrete
+  function name with zero runtime branching, exactly as before.
 
 ### Scripting and tooling
 
@@ -266,21 +283,34 @@ non-trivial benchmark in this file has met its own bar.**
 - a machine-readable API manifest, compact AI generation contract, and fixed
   AI evaluation tasks.
 
-## Now: complete static protocol dispatch
+## Now: multi-constraint generic protocol dispatch
 
-Protocol methods exist for concrete types. The next milestone is to make them
-fully useful inside generic code while retaining compile-time resolution.
+Single-constraint generic dispatch is shipped (see above): a function
+constrained by one `T: Protocol` can call that protocol's single-`Self`-
+parameter method on `T`, resolved at runtime by a direct type-tag check
+against a compile-time-enumerable set of implementers, with precise
+diagnostics for every failure mode found while building it (unconstrained
+`T`, a built-in-marker constraint with no methods, a protocol lacking the
+called method, and a protocol method shaped beyond what generic dispatch
+supports yet). What's left is the two items that pass explicitly deferred:
 
-- allow a function constrained by `T: Protocol` to invoke protocol methods on
-  values of `T`;
-- resolve each call after generic type inference without dynamic dispatch;
-- support multiple constraints such as `T: Eq + Named`;
-- produce precise diagnostics for missing implementations, ambiguous method
-  names, and incorrect receiver or payload types;
-- add generic protocol-call tests, AI examples, and a 10,000-line benchmark.
+- support multiple constraints on one type parameter, `T: Eq + Named`, and
+  search all of them for the called method — including diagnosing ambiguity
+  if more than one constraint declares a method with that name. The parser
+  doesn't accept `+` in constraint position at all today (`genericConstraints`
+  reads a single `name: constraint` pair, not a list);
+- extend generic dispatch to protocol methods with parameters beyond the
+  single `Self` receiver (today: a clear "not yet supported" diagnostic,
+  E0691, rather than an attempt to guess the receiver's stack position among
+  several arguments);
+- add a 10,000-line benchmark specifically exercising many generic-dispatch
+  call sites, to confirm this mechanism's own linear-vs-quadratic scaling the
+  way this file's other performance investigations have for every other
+  compiler mechanism.
 
-Completion means constrained generic algorithms can call required methods and
-all dispatch is visible to the compiler before bytecode execution.
+Completion means any constrained generic algorithm can call any protocol
+method its constraints guarantee exist, regardless of shape, with all
+dispatch still visible to the compiler before bytecode execution.
 
 ## Next: production scripting foundation
 

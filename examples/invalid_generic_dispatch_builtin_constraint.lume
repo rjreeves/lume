@@ -1,0 +1,9 @@
+fn keep_number<T: Number>(value: T) -> T {
+  print(T.something(value))
+  return value
+}
+
+fn main(args: [str]) -> int {
+  print(keep_number(5))
+  return 0
+}
