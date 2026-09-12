@@ -344,6 +344,15 @@ non-trivial benchmark in this file has met its own bar.**
   after the call returns; working directory and timeout remain deferred
   (see "Now" above) since no output-capturing Certo primitive accepts
   either;
+- `http.get(url) -> Result<http, str>` with `http.status/body/
+  content_type/ok(response)` accessors — a hard 10 MiB response-size cap
+  is enforced after the (already-complete) download, since Certo's HTTP
+  client has no streaming or early-abort mode; Windows only, since
+  Certo's non-Windows `Http.get` is a stub that aborts the process
+  rather than returning an error; `post`/`put`/`delete`, custom headers,
+  and binary bodies remain deferred (see "Now" above) — all already
+  exist as registered Certo primitives, so this is purely a scoping
+  choice for the next slice;
 - human-readable and structured compiler errors;
 - native test declarations, assertions, filters, and direct-child
   `*_test.lume` discovery;
@@ -428,7 +437,13 @@ into every compilation.
   fire-and-forget with no output capture, and no timeout/cancellation
   primitive exists anywhere in Certo's process stdlib, so both need new
   C-level work in Certo itself, not just a Lume-side wrapper;
-- HTTP requests with typed results and bounded response handling;
+- ~~HTTP requests with typed results and bounded response handling~~ —
+  partially shipped: `http.get` is done (see "Shipped in the bootstrap"
+  above); `post`/`put`/`delete`, custom headers, binary bodies, and true
+  request-time (rather than post-download) response bounding remain
+  deferred — the first four are a scoping choice (Certo already
+  registers all of them), the last needs a streaming primitive that
+  doesn't exist in Certo yet;
 - ~~JSON encoding to complement typed decoding~~ — shipped as
   `json.encode(value) -> Result<str, str>` (see "Shipped in the
   bootstrap" above); supports the same shapes decoding does

@@ -1,0 +1,4 @@
+fn main(args: [str]) -> int {
+  let outcome = http.get(5)
+  return 0
+}

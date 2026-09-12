@@ -1,0 +1,12 @@
+fn main(args: [str]) -> int {
+  let outcome = http.get("http://example.com")
+  if result.is_ok(outcome) {
+    let response = result.value(outcome)
+    print(http.status(response))
+    print(http.ok(response))
+    print(str.contains(http.body(response), "Example Domain"))
+  } else {
+    print(result.error(outcome))
+  }
+  return 0
+}
