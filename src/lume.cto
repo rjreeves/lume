@@ -286,6 +286,29 @@ fn appendCode(left: List<Instruction>, right: List<Instruction>): List<Instructi
   output
 }
 
+// Retags a "call" instruction to "generic_call" whenever its dotted prefix
+// names one of the enclosing function's own generic type parameters (e.g.
+// `T.name` inside `fn f<T: Named>`), so the runtime interpreters know to
+// resolve it via the receiver's actual runtime type rather than treating it
+// as an ordinary named-function call. Uses the identical predicate
+// validateExpression already used to admit this same instruction without an
+// E0216 "unknown function" error, so the two can never drift apart. Applied
+// once, over a whole function body's flattened instruction list, after
+// compileBlock returns - nested if/while blocks and inline closure bodies are
+// already flattened into that single list by then, so no recursion is
+// needed here.
+fn rewriteGenericCalls(code: List<Instruction>, genericNames: List<Text>): List<Instruction> = {
+  var output: List<Instruction> = []
+  for item in code {
+    if Text.eq(item.op, "call") and Text.contains(item.text, ".") and containsName(genericNames, beforeDot(item.text)) then {
+      output = List.pushMut(output, makeInstruction("generic_call", item.text, item.number, item.line))
+    } else {
+      output = List.pushMut(output, item)
+    }
+  }
+  output
+}
+
 fn expressionError(index: Int, message: Text): ExprResult =
   ExprResult { next: index, code: [], problem: message }
 
@@ -893,7 +916,7 @@ fn builtinCounts(): List<Int> = [
 // opened, so exiting a scope means slicing localNames back to that recorded
 // length - correct as long as closures and match arms open and close in
 // strict LIFO order, which the instruction stream already guarantees.
-fn validateExpression(code: List<Instruction>, nameBuckets: List<List<Text>>, mutableBuckets: List<List<Text>>, functionNames: List<Text>, functionCounts: List<Int>): Text = {
+fn validateExpression(code: List<Instruction>, nameBuckets: List<List<Text>>, mutableBuckets: List<List<Text>>, functionNames: List<Text>, functionCounts: List<Int>, genericNames: List<Text>): Text = {
   var problem = ""
   var localNames: List<Text> = []
   var closureBoundaries: List<Int> = []
@@ -931,6 +954,17 @@ fn validateExpression(code: List<Instruction>, nameBuckets: List<List<Text>>, mu
       problem = "E0678 line " ++ intToText(item.line) ++ ": closure cannot capture mutable binding `" ++ item.text ++ "`"
     } else if Text.eq(problem, "") and Text.eq(item.op, "load") and not containsName(localNames, item.text) and not bucketsContains(nameBuckets, item.text) then {
       problem = "E0210 line " ++ intToText(item.line) ++ ": undefined binding `" ++ item.text ++ "`"
+    } else if Text.eq(problem, "") and Text.eq(item.op, "call") and Text.contains(item.text, ".") and containsName(genericNames, beforeDot(item.text)) then {
+      // A call whose dotted prefix names one of the enclosing function's own
+      // generic type parameters (e.g. `T.name(value)` inside `fn f<T: Named>`)
+      // can never be registered in functionNames - only concrete impls like
+      // `Dog.name`/`Cat.name` ever are. Full validation (does the constraint
+      // even have a protocol, does that protocol declare this method, does
+      // the argument's type match) is deferred to verifyTypes's
+      // checkGenericProtocolCall, exactly like ordinary generic-constraint
+      // checks already defer past this pass. rewriteGenericCalls (in
+      // compile()) retags this same instruction to "generic_call" afterward,
+      // using the identical predicate, so the two can't drift apart.
     } else if Text.eq(problem, "") and Text.eq(item.op, "call") then {
       val functionIndex = nameIndex(functionNames, item.text)
       if functionIndex < 0 then {
@@ -946,7 +980,7 @@ fn validateExpression(code: List<Instruction>, nameBuckets: List<List<Text>>, mu
   problem
 }
 
-fn compileBlock(tokens: List<Token>, start: Int, initialNames: List<Text>, initialMutables: List<Text>, functionNames: List<Text>, functionCounts: List<Int>): BlockResult = {
+fn compileBlock(tokens: List<Token>, start: Int, initialNames: List<Text>, initialMutables: List<Text>, functionNames: List<Text>, functionCounts: List<Int>, genericNames: List<Text>): BlockResult = {
   var code: List<Instruction> = []
   // Explicit copy, not an alias: this call may recurse for a nested if/while
   // block, passing the current names/mutables down as initialNames/
@@ -987,7 +1021,7 @@ fn compileBlock(tokens: List<Token>, start: Int, initialNames: List<Text>, initi
         val value = parseComparison(tokens, index + 3)
         if not Text.eq(value.problem, "") then { problem = value.problem }
         else {
-          val expressionProblem = validateExpression(value.code, nameBuckets, mutableBuckets, functionNames, functionCounts)
+          val expressionProblem = validateExpression(value.code, nameBuckets, mutableBuckets, functionNames, functionCounts, genericNames)
           if not Text.eq(expressionProblem, "") then { problem = expressionProblem }
           else {
             code = List.pushMut(appendCode(code, value.code), makeInstruction("store", name.text, 0, name.line))
@@ -1008,7 +1042,7 @@ fn compileBlock(tokens: List<Token>, start: Int, initialNames: List<Text>, initi
         if not Text.eq(value.problem, "") then { problem = value.problem }
         else if not Text.eq(at(tokens, value.next).text, ")") then { problem = "E0206 expected `)`" }
         else {
-          val expressionProblem = validateExpression(value.code, nameBuckets, mutableBuckets, functionNames, functionCounts)
+          val expressionProblem = validateExpression(value.code, nameBuckets, mutableBuckets, functionNames, functionCounts, genericNames)
           if not Text.eq(expressionProblem, "") then { problem = expressionProblem }
           else {
             val op = if Text.eq(current.text, "print") then "print" else "eprint"
@@ -1021,7 +1055,7 @@ fn compileBlock(tokens: List<Token>, start: Int, initialNames: List<Text>, initi
       val value = parseComparison(tokens, index + 1)
       if not Text.eq(value.problem, "") then { problem = value.problem }
       else {
-        val expressionProblem = validateExpression(value.code, nameBuckets, mutableBuckets, functionNames, functionCounts)
+        val expressionProblem = validateExpression(value.code, nameBuckets, mutableBuckets, functionNames, functionCounts, genericNames)
         if not Text.eq(expressionProblem, "") then { problem = expressionProblem }
         else {
           code = List.pushMut(appendCode(code, value.code), makeInstruction("return", "", 0, current.line))
@@ -1030,19 +1064,19 @@ fn compileBlock(tokens: List<Token>, start: Int, initialNames: List<Text>, initi
       }
     } else if Text.eq(current.text, "if") then {
       val condition = parseComparison(tokens, index + 1)
-      val expressionProblem = validateExpression(condition.code, nameBuckets, mutableBuckets, functionNames, functionCounts)
+      val expressionProblem = validateExpression(condition.code, nameBuckets, mutableBuckets, functionNames, functionCounts, genericNames)
       if not Text.eq(condition.problem, "") then { problem = condition.problem }
       else if not Text.eq(expressionProblem, "") then { problem = expressionProblem }
       else if not Text.eq(at(tokens, condition.next).text, "{") then { problem = "E0212 expected `{` after if condition" }
       else {
-        val thenBlock = compileBlock(tokens, condition.next + 1, names, mutables, functionNames, functionCounts)
+        val thenBlock = compileBlock(tokens, condition.next + 1, names, mutables, functionNames, functionCounts, genericNames)
         if not Text.eq(thenBlock.problem, "") then { problem = thenBlock.problem }
         else {
           val afterThen = skipNewlines(tokens, thenBlock.next)
           if Text.eq(at(tokens, afterThen).text, "else") then {
             if not Text.eq(at(tokens, afterThen + 1).text, "{") then { problem = "E0213 expected `{` after else" }
             else {
-              val elseBlock = compileBlock(tokens, afterThen + 2, names, mutables, functionNames, functionCounts)
+              val elseBlock = compileBlock(tokens, afterThen + 2, names, mutables, functionNames, functionCounts, genericNames)
               if not Text.eq(elseBlock.problem, "") then { problem = elseBlock.problem }
               else {
                 code = appendCode(code, condition.code)
@@ -1063,12 +1097,12 @@ fn compileBlock(tokens: List<Token>, start: Int, initialNames: List<Text>, initi
       }
     } else if Text.eq(current.text, "while") then {
       val condition = parseComparison(tokens, index + 1)
-      val expressionProblem = validateExpression(condition.code, nameBuckets, mutableBuckets, functionNames, functionCounts)
+      val expressionProblem = validateExpression(condition.code, nameBuckets, mutableBuckets, functionNames, functionCounts, genericNames)
       if not Text.eq(condition.problem, "") then { problem = condition.problem }
       else if not Text.eq(expressionProblem, "") then { problem = expressionProblem }
       else if not Text.eq(at(tokens, condition.next).text, "{") then { problem = "E0214 expected `{` after while condition" }
       else {
-        val body = compileBlock(tokens, condition.next + 1, names, mutables, functionNames, functionCounts)
+        val body = compileBlock(tokens, condition.next + 1, names, mutables, functionNames, functionCounts, genericNames)
         if not Text.eq(body.problem, "") then { problem = body.problem }
         else {
           code = appendCode(code, condition.code)
@@ -1082,7 +1116,7 @@ fn compileBlock(tokens: List<Token>, start: Int, initialNames: List<Text>, initi
       val value = parseComparison(tokens, index)
       if not Text.eq(value.problem, "") then { problem = value.problem }
       else {
-        val expressionProblem = validateExpression(value.code, nameBuckets, mutableBuckets, functionNames, functionCounts)
+        val expressionProblem = validateExpression(value.code, nameBuckets, mutableBuckets, functionNames, functionCounts, genericNames)
         if not Text.eq(expressionProblem, "") then { problem = expressionProblem }
         else {
           code = List.pushMut(appendCode(code, value.code), makeInstruction("test_expect", current.text, 0, current.line))
@@ -1095,7 +1129,7 @@ fn compileBlock(tokens: List<Token>, start: Int, initialNames: List<Text>, initi
       else if not bucketsContains(mutableBuckets, current.text) then { problem = "E0215 line " ++ intToText(current.line) ++ ": cannot assign to immutable `" ++ current.text ++ "`" }
       else if not Text.eq(value.problem, "") then { problem = value.problem }
       else {
-        val expressionProblem = validateExpression(value.code, nameBuckets, mutableBuckets, functionNames, functionCounts)
+        val expressionProblem = validateExpression(value.code, nameBuckets, mutableBuckets, functionNames, functionCounts, genericNames)
         if not Text.eq(expressionProblem, "") then { problem = expressionProblem }
         else {
           code = List.pushMut(appendCode(code, value.code), makeInstruction("store", current.text, 0, current.line))
@@ -1632,10 +1666,11 @@ fn compile(tokens: List<Token>): CompileResult = {
     val parameters = if isTest then [] else parameterNames(tokens, header)
     val parameterTypeList = if isTest then [] else parameterTypes(tokens, header)
     val returnType = if isTest then "bool" else functionReturnType(tokens, header)
-    val result = compileBlock(tokens, body, parameters, [], allNames, allCounts)
+    val genericText = if isTest then "" else genericParameters(tokens, header + 1)
+    val genericNames = if Text.eq(genericText, "") then [] else Text.split(genericText, ",")
+    val result = compileBlock(tokens, body, parameters, [], allNames, allCounts, genericNames)
     if not Text.eq(result.problem, "") then { problem = result.problem }
     else {
-      val genericText = if isTest then "" else genericParameters(tokens, header + 1)
       val constraintText = if isTest then "" else genericConstraints(tokens, header + 1)
       val testName = if isTest then at(tokens, header + 1).text else ""
       code = List.pushMut(code, makeInstruction("function", name ++ "|" ++ returnType ++ "|" ++ genericText ++ "|" ++ constraintText ++ "|" ++ testName, List.len(parameters), at(tokens, header).line))
@@ -1654,7 +1689,7 @@ fn compile(tokens: List<Token>): CompileResult = {
           parameterIndex = parameterIndex - 1
         }
       }
-      code = appendCode(code, result.code)
+      code = appendCode(code, rewriteGenericCalls(result.code, genericNames))
       if List.len(result.code) == 0 or not Text.eq(List.getOrPanic(result.code, List.len(result.code) - 1).op, "return") then {
         code = List.pushMut(code, makeInstruction(if isTest then "const_bool" else "const_int", "", if isTest then 1 else 0, at(tokens, header).line))
         code = List.pushMut(code, makeInstruction("return", "", 0, at(tokens, header).line))
@@ -1837,6 +1872,40 @@ fn findEnumSchema(code: List<Instruction>, name: Text): Text? = {
     else { index = index + 1 }
   }
   if Text.eq(found, "") then None else Some(found)
+}
+
+// Protocols aren't generic, so unlike findRecordSchema/findEnumSchema this
+// needs no specializeSchema step - a straight lookup of the protocol_type
+// instruction's own schema text ("method1=T1,T2@R1;method2=T3@R2").
+fn findProtocolSchema(code: List<Instruction>, name: Text): Text? = {
+  var index = 0
+  var found = ""
+  while index < List.len(code) and Text.eq(found, "") {
+    val item = List.getOrPanic(code, index)
+    if Text.eq(item.op, "protocol_type") and Text.eq(beforePipe(item.text), name) then { found = afterPipe(item.text) }
+    else { index = index + 1 }
+  }
+  if Text.eq(found, "") then None else Some(found)
+}
+
+// Same shape as variantPayloadSchema: a protocol's schema is ";"-joined
+// "methodName=paramTypesCsv@returnType" entries; find the one matching
+// methodName and return its "paramTypesCsv@returnType" half unparsed (the
+// caller splits on "@" itself, since unlike a variant payload this schema
+// still has two parts to it).
+fn protocolMethodSignature(schema: Text, methodName: Text): Text? = {
+  val methods = if Text.eq(schema, "") then [] else Text.split(schema, ";")
+  var index = 0
+  var found = false
+  var signature = ""
+  while index < List.len(methods) and not found {
+    val method = List.getOrPanic(methods, index)
+    if Text.eq(schemaFieldName(method), methodName) then {
+      signature = schemaFieldType(method)
+      found = true
+    } else { index = index + 1 }
+  }
+  if found then Some(signature) else None
 }
 
 fn genericBase(value: Text): Text = {
@@ -2349,6 +2418,53 @@ fn checkCallTypes(code: List<Instruction>, call: Instruction, stackInput: List<T
   }
 }
 
+// Type-checks a "generic_call" instruction (e.g. `T.name(value)` inside
+// `fn f<T: Named>(value: T)`), produced by rewriteGenericCalls from an
+// ordinary "call" instruction whose dotted prefix names one of the enclosing
+// function's own generic type parameters. Unlike checkCallTypes, there is no
+// concrete function to look up here - T is still the literal opaque string
+// "T" inside its own function's single self-check pass (type-erased generics
+// without monomorphization: this function's body is checked exactly once,
+// not once per instantiation), so the only thing checkable at this point is
+// that the constraint declares a matching method with a shape this bootstrap
+// can dispatch: exactly one parameter, typed literally `Self`. Which concrete
+// implementation actually runs is resolved later, at runtime, from the
+// argument's real value (see runtimeTypeName and the "generic_call" branches
+// in execute()/callPure()).
+fn checkGenericProtocolCall(code: List<Instruction>, call: Instruction, stackInput: List<Text>, constraints: Text): TypeStackResult = {
+  val paramName = beforeDot(call.text)
+  val methodName = afterDot(call.text)
+  val requirement = genericConstraintFor(constraints, paramName)
+  if Text.eq(requirement, "") then {
+    TypeStackResult { stack: stackInput, resultType: "unknown", problem: "E0686 line " ++ intToText(call.line) ++ ": `" ++ paramName ++ "` has no constraint to resolve `" ++ call.text ++ "`" }
+  } else if Text.eq(requirement, "Eq") or Text.eq(requirement, "Ord") or Text.eq(requirement, "Number") or Text.eq(requirement, "Text") then {
+    TypeStackResult { stack: stackInput, resultType: "unknown", problem: "E0687 line " ++ intToText(call.line) ++ ": built-in constraint `" ++ requirement ++ "` has no callable methods" }
+  } else if let Some(schema) = findProtocolSchema(code, requirement) {
+    if let Some(signature) = protocolMethodSignature(schema, methodName) {
+      val separator = Text.indexOf(signature, "@") ?? -1
+      val parameterText = if separator < 0 then "" else Text.slice(signature, 0, separator)
+      val returnText = if separator < 0 then "unknown" else Text.slice(signature, separator + 1, Text.len(signature))
+      val expectedParameters = if Text.eq(parameterText, "") then [] else Text.split(parameterText, ",")
+      if call.number != 1 then {
+        TypeStackResult { stack: stackInput, resultType: "unknown", problem: "E0690 line " ++ intToText(call.line) ++ ": generic dispatch of `" ++ call.text ++ "` requires exactly 1 argument, got " ++ intToText(call.number) }
+      } else if List.len(expectedParameters) != 1 or not Text.eq(List.getOrPanic(expectedParameters, 0), "Self") then {
+        TypeStackResult { stack: stackInput, resultType: "unknown", problem: "E0691 line " ++ intToText(call.line) ++ ": `" ++ requirement ++ "." ++ methodName ++ "` is not yet supported for generic dispatch; only a single `Self` parameter is supported" }
+      } else {
+        val popped = pop(stackInput)
+        if not typesCompatible(paramName, popped.value) then {
+          TypeStackResult { stack: popped.stack, resultType: "unknown", problem: "E0692 line " ++ intToText(call.line) ++ ": argument type mismatch calling `" ++ call.text ++ "`; expected " ++ paramName ++ ", got " ++ popped.value }
+        } else {
+          TypeStackResult { stack: popped.stack, resultType: Text.replace(returnText, "Self", paramName), problem: "" }
+        }
+      }
+    } else {
+      TypeStackResult { stack: stackInput, resultType: "unknown", problem: "E0689 line " ++ intToText(call.line) ++ ": protocol `" ++ requirement ++ "` declares no method `" ++ methodName ++ "`" }
+    }
+  } else {
+    TypeStackResult { stack: stackInput, resultType: "unknown", problem: "E0688 line " ++ intToText(call.line) ++ ": unknown protocol `" ++ requirement ++ "` constraining `" ++ paramName ++ "`" }
+  }
+}
+
 fn checkRecordTypes(code: List<Instruction>, instruction: Instruction, stackInput: List<Text>): TypeStackResult = {
   var stack = stackInput
   var problem = ""
@@ -2478,6 +2594,7 @@ fn verifyTypes(code: List<Instruction>): Text = {
   var closureParamBoundaries: List<Int> = []
   var returnType = "unit"
   var problem = ""
+  var currentGenericConstraints = ""
   // Seeded once here, not reset per "function" below: protocol declarations
   // and implementations are program-wide, so one O(program-size) pass up
   // front replaces what used to be a fresh O(program-size) scan inside
@@ -2497,6 +2614,7 @@ fn verifyTypes(code: List<Instruction>): Text = {
         closureParamBoundaries = []
         returnType = markerReturnType(item.text)
         val requirements = markerGenericConstraints(item.text)
+        currentGenericConstraints = requirements
         if not Text.eq(requirements, "") then {
           for entry in Text.split(requirements, ",") {
             val requirement = schemaFieldType(entry)
@@ -2584,6 +2702,11 @@ fn verifyTypes(code: List<Instruction>): Text = {
         stack = List.push(stack, "list<" ++ elementType ++ ">")
       } else if Text.eq(item.op, "call") then {
         val checked = checkCallTypes(code, item, stack, protocolBuckets, protocolImplBuckets)
+        stack = checked.stack
+        problem = checked.problem
+        if Text.eq(problem, "") then { stack = List.push(stack, checked.resultType) }
+      } else if Text.eq(item.op, "generic_call") then {
+        val checked = checkGenericProtocolCall(code, item, stack, currentGenericConstraints)
         stack = checked.stack
         problem = checked.problem
         if Text.eq(problem, "") then { stack = List.push(stack, checked.resultType) }
@@ -2882,6 +3005,22 @@ fn runtimeEnumName(value: Text): Text = {
   else { JsonValue.asText(JsonValue.get(Json.parse(valueBody(value)), "$enum")) }
 }
 
+// The runtime counterpart of a "generic_call"'s compile-time resolution: given
+// an actual argument value, name its concrete type the same way impl blocks
+// are compiled (buildRecord already writes a "$type" key on every record
+// value, at construction time, but nothing has read it back until now).
+// Combined with runtimeEnumName (enums already have one) and the three
+// primitive tags, this covers every type E0259 allows an `impl` to target.
+fn runtimeTypeName(value: Text): Text = {
+  val kind = valueKind(value)
+  if Text.eq(kind, "i:") then "int"
+  else if Text.eq(kind, "s:") then "str"
+  else if Text.eq(kind, "b:") then "bool"
+  else if Text.eq(kind, "o:") then { JsonValue.asText(JsonValue.get(Json.parse(valueBody(value)), "$type")) }
+  else if Text.eq(kind, "v:") then runtimeEnumName(value)
+  else ""
+}
+
 fn bindVariantPayload(code: List<Instruction>, variables: Bindings, depth: Int, value: Text, descriptor: Text): Bindings = {
   var output = variables
   val bindingText = afterPipe(descriptor)
@@ -3110,6 +3249,26 @@ fn callPure(code: List<Instruction>, callable: Text, arguments: List<Text>): Dec
         }
       } else {
         val called = callPure(code, "f:" ++ current.text, callArguments)
+        if not Text.eq(called.problem, "") then { problem = called.problem }
+        else { stack = List.push(stack, called.value) }
+      }
+    } else if Text.eq(current.op, "generic_call") then {
+      // callPure has its own local stack and its own calling convention
+      // (pop arguments, then recurse), distinct from execute()'s ip-jump
+      // convention below - this branch mirrors callPure's own "call" branch
+      // above, not execute()'s "generic_call" branch. Scope is fixed to
+      // exactly one Self parameter (checkGenericProtocolCall enforces this
+      // at compile time), so there is always exactly one argument to pop.
+      val methodName = afterDot(current.text)
+      val item = pop(stack)
+      stack = item.stack
+      val receiver = item.value
+      val concreteName = runtimeTypeName(receiver) ++ "." ++ methodName
+      val target = findFunction(code, concreteName)
+      if target < 0 then {
+        problem = "E0693 line " ++ intToText(current.line) ++ ": no implementation of `" ++ methodName ++ "` for `" ++ runtimeTypeName(receiver) ++ "`"
+      } else {
+        val called = callPure(code, "f:" ++ concreteName, [receiver])
         if not Text.eq(called.problem, "") then { problem = called.problem }
         else { stack = List.push(stack, called.value) }
       }
@@ -3416,6 +3575,26 @@ fn execute(code: List<Instruction>): RunResult [io] = {
         problem = builtin.problem
       }
       else {
+        returnAddresses = List.push(returnAddresses, ip + 1)
+        depth = depth + 1
+        ip = target + 1
+        advance = false
+      }
+    } else if Text.eq(current.op, "generic_call") then {
+      // execute()'s own "call" branch above never pops arguments itself -
+      // it jumps and lets the callee's own "param" instructions pop them
+      // from this same shared stack in due course. This mirrors that: peek
+      // the receiver (same pattern match_arm uses to inspect a value's
+      // runtime tag without consuming it) and, once resolved, jump exactly
+      // like an ordinary successful call - the callee's own "param" will
+      // still find the same argument sitting on top of the stack.
+      val methodName = afterDot(current.text)
+      val receiver = List.getOrPanic(stack, List.len(stack) - 1)
+      val concreteName = runtimeTypeName(receiver) ++ "." ++ methodName
+      val target = findFunction(code, concreteName)
+      if target < 0 then {
+        problem = "E0693 line " ++ intToText(current.line) ++ ": no implementation of `" ++ methodName ++ "` for `" ++ runtimeTypeName(receiver) ++ "`"
+      } else {
         returnAddresses = List.push(returnAddresses, ip + 1)
         depth = depth + 1
         ip = target + 1

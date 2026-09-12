@@ -414,6 +414,12 @@
     "stdout": "Box"
   },
   {
+    "id": "protocol_generic_dispatch",
+    "prompt": "Call a protocol method generically on a constrained type parameter, inside the generic function's own body.",
+    "args": [],
+    "stdout": "Hello, Ada"
+  },
+  {
     "id": "closure_capture_immutable",
     "prompt": "Map a list with a closure capturing an outer immutable value, then fold it.",
     "args": [],

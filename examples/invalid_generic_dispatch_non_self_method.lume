@@ -1,0 +1,22 @@
+protocol Comparer {
+  fn compare(value: Self, other: int) -> bool
+}
+
+type Box {
+  amount: int
+}
+
+impl Comparer for Box {
+  fn compare(value: Box, other: int) -> bool {
+    return value.amount == other
+  }
+}
+
+fn matches<T: Comparer>(value: T) -> bool {
+  return T.compare(value)
+}
+
+fn main(args: [str]) -> int {
+  print(matches(Box(amount: 5)))
+  return 0
+}
