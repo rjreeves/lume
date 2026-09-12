@@ -415,6 +415,9 @@ process.code(result)           process.stdout(result)
 process.stderr(result)
 process.run_with_input(exe, args, input)
 process.run_with_env(exe, args, envMap)
+http.get(url)                     http.status(response)
+http.body(response)               http.content_type(response)
+http.ok(response)
 str.len(text)                  str.trim(text)
 str.upper(text)                str.lower(text)
 str.contains(text, part)       str.starts_with(text, prefix)
@@ -438,8 +441,6 @@ result.error(result)
 expect.equal/true/ok/err/some(...)   (inside `test { ... }` blocks only, §13)
 ```
 
-**`http.*` does not exist yet**, despite appearing as an illustrative
-naming-convention example in earlier drafts of this document.
 `map.map`/`map.filter`/`map.fold` mirror the `list.*` transforms exactly,
 except the callback takes the value only (`(V) -> ...`) — keys pass
 through unchanged for `map.map`/`map.filter`. There is no `(key, value)`
@@ -473,6 +474,19 @@ variable is restored to its prior value (or unset, if it wasn't set
 before) once the call returns. Neither a working directory nor a timeout
 is supported yet — Lume's underlying process primitives have no
 output-capturing call that accepts either.
+
+`http.get(url) -> Result<http, str>` makes a GET request; read the
+result with `http.status(response) -> int`, `http.body(response) ->
+str`, `http.content_type(response) -> str`, or `http.ok(response) ->
+bool` (true when `status` is in `[200, 300)`). `Err` covers both a
+failed request (DNS/connect failure) and a response whose body exceeds
+a fixed 10 MiB cap — the cap is checked only after the full response has
+already been downloaded, since the underlying client has no streaming
+or early-abort mode; it bounds what `http.get` will hand back, not the
+network transfer itself. `http.get` is Windows-only: the underlying
+client is a stub on other platforms that aborts the process rather than
+returning an error. There is no `post`/`put`/`delete`, no custom
+headers, and no binary body support yet.
 
 ## 12. Generic list transformations
 
