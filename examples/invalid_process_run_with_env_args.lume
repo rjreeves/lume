@@ -1,0 +1,4 @@
+fn main(args: [str]) -> int {
+  let command = process.run_with_env("cmd.exe", [1, 2], map.set(map.new(), "a", 1))
+  return process.code(command)
+}

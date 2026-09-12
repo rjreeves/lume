@@ -337,6 +337,13 @@ non-trivial benchmark in this file has met its own bar.**
   arithmetic, calendar-component access, custom formatting, and
   timezones remain deferred (see "Now" above);
 - process exit-code, standard-output, and standard-error inspection;
+- process configuration for stdin and environment overrides
+  (`process.run_with_input(exe, args, input)`, `process.run_with_env(exe,
+  args, envMap)`) — both return the same `process` result as
+  `process.run`; environment overrides are restored to their prior value
+  after the call returns; working directory and timeout remain deferred
+  (see "Now" above) since no output-capturing Certo primitive accepts
+  either;
 - human-readable and structured compiler errors;
 - native test declarations, assertions, filters, and direct-child
   `*_test.lume` discovery;
@@ -413,8 +420,14 @@ into every compilation.
   Certo's stdlib already has all of it (a full `DateTime`/`Duration`/
   `Timezone`/`Date` API), so this is purely a scoping choice, not a
   feasibility gap;
-- richer process configuration: working directory, environment overrides,
-  stdin, and timeout;
+- ~~richer process configuration~~ — partially shipped: stdin
+  (`process.run_with_input`) and environment overrides
+  (`process.run_with_env`) are done (see "Shipped in the bootstrap"
+  above); working directory and timeout remain deferred — Certo's only
+  working-directory-aware process call (`Process.spawnDetached`) is
+  fire-and-forget with no output capture, and no timeout/cancellation
+  primitive exists anywhere in Certo's process stdlib, so both need new
+  C-level work in Certo itself, not just a Lume-side wrapper;
 - HTTP requests with typed results and bounded response handling;
 - ~~JSON encoding to complement typed decoding~~ — shipped as
   `json.encode(value) -> Result<str, str>` (see "Shipped in the

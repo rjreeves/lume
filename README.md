@@ -156,6 +156,8 @@ env.get(name)                env.has(name)
 process.run(executable, args) process.ok(result)
 process.code(result)          process.stdout(result)
 process.stderr(result)
+process.run_with_input(executable, args, input)
+process.run_with_env(executable, args, envMap)
 str.len(text)                str.trim(text)
 str.upper(text)              str.lower(text)
 str.contains(text, part)     str.starts_with(text, prefix)
@@ -557,6 +559,27 @@ There is no `Duration` type, calendar-component access (year/month/day),
 custom format strings, or timezone support yet — plain `int` arithmetic
 on epoch seconds covers offsets (`time.now() + 300` for five minutes
 from now).
+
+### Process configuration
+
+`process.run_with_input(executable, args, input)` runs a command like
+`process.run`, but writes `input` to its stdin first; `process.run_with_env
+(executable, args, envMap)` runs a command with the given `Map<str, str>`
+overriding those variables for that one call only — each variable is
+restored to its prior value (or unset) once the call returns. Both return
+the same `process` result as `process.run`:
+
+```lume
+let piped = process.run_with_input("powershell.exe", ["-NoProfile", "-Command", "($input | Out-String).Trim().ToUpper()"], "hello lume")
+print(str.trim(process.stdout(piped)))
+
+let envMap = map.set(map.new(), "GREETING", "hi")
+let withEnv = process.run_with_env("powershell.exe", ["-NoProfile", "-Command", "$env:GREETING"], envMap)
+print(str.trim(process.stdout(withEnv)))
+```
+
+There is no working-directory or timeout support yet — Lume's underlying
+process primitives have no output-capturing call that accepts either.
 
 ## Example: a multi-module task board
 

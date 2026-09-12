@@ -155,6 +155,10 @@ $processResult = & $Lume run (Join-Path $PSScriptRoot 'examples\process.lume')
 if ($LASTEXITCODE -ne 0) { throw "process example exited $LASTEXITCODE" }
 Assert-Equal 'structured process result' "true`n0`nhello from process" ($processResult -join "`n")
 
+$processConfig = & $Lume run (Join-Path $PSScriptRoot 'examples\process_config.lume')
+if ($LASTEXITCODE -ne 0) { throw "process config example exited $LASTEXITCODE" }
+Assert-Equal 'richer process configuration' "HELLO LUME`nhello_from_lume`nfalse" ($processConfig -join "`n")
+
 $structured = & $Lume run (Join-Path $PSScriptRoot 'examples\structured_errors.lume') (Join-Path $PSScriptRoot 'examples\data.json')
 if ($LASTEXITCODE -ne 0) { throw "structured success exited $LASTEXITCODE" }
 Assert-Equal 'structured error success' '{"NAME":"LUME","VERSION":1}' ($structured -join "`n")
@@ -300,6 +304,14 @@ Assert-Equal 'record update source validation' 'E0660 line 3: `with` requires a 
 $processArgs = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_process_args.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "process argument validation should exit 1" }
 Assert-Equal 'process argument validation' 'E0619 process.run requires (str, [str])' ($processArgs -join "`n")
+
+$processInputArgs = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_process_run_with_input_args.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "process run_with_input argument validation should exit 1" }
+Assert-Equal 'process run_with_input argument validation' 'E0700 process.run_with_input requires (str, [str], str)' ($processInputArgs -join "`n")
+
+$processEnvArgs = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_process_run_with_env_args.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "process run_with_env argument validation should exit 1" }
+Assert-Equal 'process run_with_env argument validation' 'E0700 process.run_with_env requires (str, [str], Map<str,str>)' ($processEnvArgs -join "`n")
 
 $unwrap = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_unwrap.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "unwrap validation should exit 1" }

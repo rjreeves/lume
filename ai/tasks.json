@@ -600,6 +600,12 @@
     "stdout": "true\n0\nhello from process"
   },
   {
+    "id": "process_run_with_input",
+    "prompt": "Run `powershell.exe -NoProfile -Command \"($input | Out-String).Trim().ToUpper()\"` with process.run_with_input, piping in the string \"hello lume\" as stdin, and print the trimmed stdout.",
+    "args": [],
+    "stdout": "HELLO LUME"
+  },
+  {
     "id": "env_has_path",
     "prompt": "Check whether the PATH environment variable is set.",
     "args": [],
