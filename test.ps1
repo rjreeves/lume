@@ -54,6 +54,14 @@ $invalidTypedJson = & $Lume run (Join-Path $PSScriptRoot 'examples\invalid_typed
 if ($LASTEXITCODE -ne 0) { throw "invalid typed JSON example exited $LASTEXITCODE" }
 Assert-Equal 'typed JSON path error' 'User.age must be int' ($invalidTypedJson -join "`n")
 
+$jsonEncode = & $Lume run (Join-Path $PSScriptRoot 'examples\json_encode.lume')
+if ($LASTEXITCODE -ne 0) { throw "json encode exited $LASTEXITCODE" }
+Assert-Equal 'json encode' "{`"name`":`"Ada`",`"age`":30,`"active`":true,`"tags`":[`"admin`",`"eng`"],`"address`":{`"city`":`"London`"}}`ntrue`ntrue`ntrue`ntrue`ntrue" ($jsonEncode -join "`n")
+
+$invalidJsonEncodeEnum = & $Lume run (Join-Path $PSScriptRoot 'examples\invalid_json_encode_enum.lume')
+if ($LASTEXITCODE -ne 0) { throw "invalid json encode enum exited $LASTEXITCODE" }
+Assert-Equal 'json encode enum rejected' "false`njson.encode does not support this value's type" ($invalidJsonEncodeEnum -join "`n")
+
 $enums = & $Lume run (Join-Path $PSScriptRoot 'examples\enums.lume')
 if ($LASTEXITCODE -ne 0) { throw "enums exited $LASTEXITCODE" }
 Assert-Equal 'enum construction' ('{"$enum":"JobState","$variant":"pending"}' + "`n" + '{"$enum":"JobState","$variant":"completed","code":"i:0"}') ($enums -join "`n")

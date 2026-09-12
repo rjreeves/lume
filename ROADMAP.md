@@ -245,7 +245,12 @@ non-trivial benchmark in this file has met its own bar.**
 ### Typed data
 
 - records, nested records, field access, and record update/copy syntax;
-- typed JSON decoding into records;
+- typed JSON decoding into records, and `json.encode(value)` for the
+  reverse direction — schema-free (every value already carries its own
+  runtime type tag), supporting `str`/`int`/`bool`/records/lists
+  recursively; enum values (including `Option<T>`/`Result<T,E>`) are not
+  supported, symmetric with decoding's own enum-field limitation, and
+  return `Err` rather than crashing;
 - enums, variant construction, and statically checked variant payloads;
 - exhaustive matching, duplicate-arm validation, and payload destructuring;
 - built-in `Option<T>` and `Result<T, E>`.
@@ -374,7 +379,10 @@ into every compilation.
 - richer process configuration: working directory, environment overrides,
   stdin, and timeout;
 - HTTP requests with typed results and bounded response handling;
-- JSON encoding to complement typed decoding.
+- ~~JSON encoding to complement typed decoding~~ — shipped as
+  `json.encode(value) -> Result<str, str>` (see "Shipped in the
+  bootstrap" above); supports the same shapes decoding does
+  (`str`/`int`/`bool`/records/lists, recursively), not enums.
 
 Each API should keep the `noun.verb` naming convention and return explicit
 `Option` or `Result` values rather than throwing exceptions.
