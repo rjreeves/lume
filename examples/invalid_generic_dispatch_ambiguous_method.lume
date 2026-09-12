@@ -1,0 +1,16 @@
+protocol Named {
+  fn describe(value: Self) -> str
+}
+
+protocol Labeled {
+  fn describe(value: Self) -> str
+}
+
+fn announce<T: Named + Labeled>(value: T) -> str {
+  return T.describe(value)
+}
+
+fn main(args: [str]) -> int {
+  print("ok")
+  return 0
+}

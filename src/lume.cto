@@ -1195,6 +1195,11 @@ fn typeAt(tokens: List<Token>, start: Int): Text = {
   output
 }
 
+// A constraint list is written `T: Eq + Named` - one or more `+`-joined
+// names after the `:`. genericParameters and genericConstraints both scan
+// the same <...> header independently (one collecting just parameter
+// names, the other collecting name=constraint pairs), so both need to skip
+// the same variable-length run of tokens after `:`, not just one.
 fn genericParameters(tokens: List<Token>, nameIndex: Int): Text = {
   if not Text.eq(at(tokens, nameIndex + 1).text, "<") then ""
   else {
@@ -1203,13 +1208,21 @@ fn genericParameters(tokens: List<Token>, nameIndex: Int): Text = {
     while not Text.eq(at(tokens, index).text, ">") {
       names = List.push(names, at(tokens, index).text)
       index = index + 1
-      if Text.eq(at(tokens, index).text, ":") then { index = index + 2 }
+      if Text.eq(at(tokens, index).text, ":") then {
+        index = index + 2
+        while Text.eq(at(tokens, index).text, "+") { index = index + 2 }
+      }
       if Text.eq(at(tokens, index).text, ",") then { index = index + 1 }
     }
     Text.join(names, ",")
   }
 }
 
+// Encodes a parameter's whole constraint list as one `+`-joined string
+// (e.g. "T=Eq+Named"), keeping the existing "T=Named" shape unchanged for
+// the single-constraint case so every other reader of this encoding stays
+// backward compatible unless it specifically splits on "+" - see
+// constraintNames below, which every such reader now uses.
 fn genericConstraints(tokens: List<Token>, nameIndex: Int): Text = {
   if not Text.eq(at(tokens, nameIndex + 1).text, "<") then ""
   else {
@@ -1219,8 +1232,16 @@ fn genericConstraints(tokens: List<Token>, nameIndex: Int): Text = {
       val name = at(tokens, index).text
       index = index + 1
       if Text.eq(at(tokens, index).text, ":") then {
-        constraints = List.push(constraints, name ++ "=" ++ at(tokens, index + 1).text)
-        index = index + 2
+        index = index + 1
+        var parts: List<Text> = []
+        parts = List.push(parts, at(tokens, index).text)
+        index = index + 1
+        while Text.eq(at(tokens, index).text, "+") {
+          index = index + 1
+          parts = List.push(parts, at(tokens, index).text)
+          index = index + 1
+        }
+        constraints = List.push(constraints, name ++ "=" ++ Text.join(parts, "+"))
       }
       if Text.eq(at(tokens, index).text, ",") then { index = index + 1 }
     }
@@ -2026,6 +2047,22 @@ fn genericConstraintFor(constraints: Text, name: Text): Text = {
   found
 }
 
+// genericConstraintFor returns one parameter's whole constraint list
+// unsplit (e.g. "Eq+Named" for `T: Eq + Named`, or plain "Named" for a
+// single constraint) - this splits it into individual constraint names.
+// Every caller that used to treat genericConstraintFor's result as one
+// constraint name now loops over this instead.
+fn constraintNames(requirement: Text): List<Text> =
+  if Text.eq(requirement, "") then [] else Text.split(requirement, "+")
+
+// The four built-in marker constraints have no protocol_type declaration
+// and no callable methods - checked in three places (knownGenericConstraint,
+// satisfiesGenericConstraint, and checkGenericProtocolCall's search over a
+// parameter's whole constraint list), pulled into one predicate so the list
+// of four names lives in exactly one place.
+fn isBuiltinConstraint(name: Text): Bool =
+  Text.eq(name, "Eq") or Text.eq(name, "Ord") or Text.eq(name, "Number") or Text.eq(name, "Text")
+
 // hasProtocol/hasProtocolImplementation used to scan the whole program's
 // instruction list on every call, looking for a matching protocol_type/
 // protocol_impl declaration - fine in isolation, but protocol declarations
@@ -2405,10 +2442,19 @@ fn checkCallTypes(code: List<Instruction>, call: Instruction, stackInput: List<T
         // `and` to skip the expensive call - fixes it regardless of Certo's
         // short-circuit behavior; filed as a Certo bug report separately.
         if not Text.eq(requirement, "") then {
-          if not knownGenericConstraint(protocolBuckets, requirement) then {
-            problem = "E0679 line " ++ intToText(call.line) ++ ": unknown generic constraint `" ++ requirement ++ "`"
-          } else if not satisfiesGenericConstraint(protocolImplBuckets, List.getOrPanic(genericTypes, genericIndex), requirement) then {
-            problem = "E0680 line " ++ intToText(call.line) ++ ": type `" ++ List.getOrPanic(genericTypes, genericIndex) ++ "` does not satisfy `" ++ requirement ++ "` for `" ++ genericName ++ "` calling `" ++ call.text ++ "`"
+          // `T: Eq + Named` requires every one of a parameter's constraints
+          // to hold, not just one - stops at the first failure like every
+          // other problem-accumulating loop in this file.
+          val requirementList = constraintNames(requirement)
+          var constraintIndex = 0
+          while constraintIndex < List.len(requirementList) and Text.eq(problem, "") {
+            val oneRequirement = List.getOrPanic(requirementList, constraintIndex)
+            if not knownGenericConstraint(protocolBuckets, oneRequirement) then {
+              problem = "E0679 line " ++ intToText(call.line) ++ ": unknown generic constraint `" ++ oneRequirement ++ "`"
+            } else if not satisfiesGenericConstraint(protocolImplBuckets, List.getOrPanic(genericTypes, genericIndex), oneRequirement) then {
+              problem = "E0680 line " ++ intToText(call.line) ++ ": type `" ++ List.getOrPanic(genericTypes, genericIndex) ++ "` does not satisfy `" ++ oneRequirement ++ "` for `" ++ genericName ++ "` calling `" ++ call.text ++ "`"
+            }
+            constraintIndex = constraintIndex + 1
           }
         }
       }
@@ -2437,10 +2483,35 @@ fn checkGenericProtocolCall(code: List<Instruction>, call: Instruction, stackInp
   val requirement = genericConstraintFor(constraints, paramName)
   if Text.eq(requirement, "") then {
     TypeStackResult { stack: stackInput, resultType: "unknown", problem: "E0686 line " ++ intToText(call.line) ++ ": `" ++ paramName ++ "` has no constraint to resolve `" ++ call.text ++ "`" }
-  } else if Text.eq(requirement, "Eq") or Text.eq(requirement, "Ord") or Text.eq(requirement, "Number") or Text.eq(requirement, "Text") then {
-    TypeStackResult { stack: stackInput, resultType: "unknown", problem: "E0687 line " ++ intToText(call.line) ++ ": built-in constraint `" ++ requirement ++ "` has no callable methods" }
-  } else if let Some(schema) = findProtocolSchema(code, requirement) {
-    if let Some(signature) = protocolMethodSignature(schema, methodName) {
+  } else {
+    // T: Eq + Named can name several constraints; search all of them for a
+    // protocol declaring methodName. Built-in markers (Eq/Ord/Number/Text)
+    // have no protocol_type/methods at all, so they're skipped rather than
+    // looked up. Exactly one match is required: zero means no constraint on
+    // T gets this method (E0687/E0689 below); more than one is ambiguous
+    // (E0694) - which concrete protocol's schema to type-check the call
+    // against would otherwise be an arbitrary choice.
+    val requirementList = constraintNames(requirement)
+    var matchingProtocols: List<Text> = []
+    var matchingSignatures: List<Text> = []
+    var index = 0
+    while index < List.len(requirementList) {
+      val oneRequirement = List.getOrPanic(requirementList, index)
+      if not isBuiltinConstraint(oneRequirement) then {
+        if let Some(schema) = findProtocolSchema(code, oneRequirement) {
+          if let Some(signature) = protocolMethodSignature(schema, methodName) {
+            matchingProtocols = List.push(matchingProtocols, oneRequirement)
+            matchingSignatures = List.push(matchingSignatures, signature)
+          }
+        }
+      }
+      index = index + 1
+    }
+    if List.len(matchingProtocols) > 1 then {
+      TypeStackResult { stack: stackInput, resultType: "unknown", problem: "E0694 line " ++ intToText(call.line) ++ ": call to `" ++ call.text ++ "` is ambiguous - " ++ Text.join(matchingProtocols, ", ") ++ " all declare method `" ++ methodName ++ "`" }
+    } else if List.len(matchingProtocols) == 1 then {
+      val matched = List.getOrPanic(matchingProtocols, 0)
+      val signature = List.getOrPanic(matchingSignatures, 0)
       val separator = Text.indexOf(signature, "@") ?? -1
       val parameterText = if separator < 0 then "" else Text.slice(signature, 0, separator)
       val returnText = if separator < 0 then "unknown" else Text.slice(signature, separator + 1, Text.len(signature))
@@ -2448,7 +2519,7 @@ fn checkGenericProtocolCall(code: List<Instruction>, call: Instruction, stackInp
       if call.number != 1 then {
         TypeStackResult { stack: stackInput, resultType: "unknown", problem: "E0690 line " ++ intToText(call.line) ++ ": generic dispatch of `" ++ call.text ++ "` requires exactly 1 argument, got " ++ intToText(call.number) }
       } else if List.len(expectedParameters) != 1 or not Text.eq(List.getOrPanic(expectedParameters, 0), "Self") then {
-        TypeStackResult { stack: stackInput, resultType: "unknown", problem: "E0691 line " ++ intToText(call.line) ++ ": `" ++ requirement ++ "." ++ methodName ++ "` is not yet supported for generic dispatch; only a single `Self` parameter is supported" }
+        TypeStackResult { stack: stackInput, resultType: "unknown", problem: "E0691 line " ++ intToText(call.line) ++ ": `" ++ matched ++ "." ++ methodName ++ "` is not yet supported for generic dispatch; only a single `Self` parameter is supported" }
       } else {
         val popped = pop(stackInput)
         if not typesCompatible(paramName, popped.value) then {
@@ -2457,11 +2528,17 @@ fn checkGenericProtocolCall(code: List<Instruction>, call: Instruction, stackInp
           TypeStackResult { stack: popped.stack, resultType: Text.replace(returnText, "Self", paramName), problem: "" }
         }
       }
-    } else {
+    } else if List.len(requirementList) == 1 and isBuiltinConstraint(requirement) then {
+      // Single built-in constraint: keep the exact original single-
+      // constraint message rather than the generalized multi-constraint one.
+      TypeStackResult { stack: stackInput, resultType: "unknown", problem: "E0687 line " ++ intToText(call.line) ++ ": built-in constraint `" ++ requirement ++ "` has no callable methods" }
+    } else if List.len(requirementList) == 1 then {
+      // Single user-protocol constraint: same, keep the exact original
+      // single-constraint "declares no method" message.
       TypeStackResult { stack: stackInput, resultType: "unknown", problem: "E0689 line " ++ intToText(call.line) ++ ": protocol `" ++ requirement ++ "` declares no method `" ++ methodName ++ "`" }
+    } else {
+      TypeStackResult { stack: stackInput, resultType: "unknown", problem: "E0689 line " ++ intToText(call.line) ++ ": none of `" ++ paramName ++ "`'s constraints (" ++ Text.join(requirementList, ", ") ++ ") declare method `" ++ methodName ++ "`" }
     }
-  } else {
-    TypeStackResult { stack: stackInput, resultType: "unknown", problem: "E0688 line " ++ intToText(call.line) ++ ": unknown protocol `" ++ requirement ++ "` constraining `" ++ paramName ++ "`" }
   }
 }
 
@@ -2731,10 +2808,11 @@ fn verifyTypes(code: List<Instruction>): Text = {
         currentGenericConstraints = requirements
         if not Text.eq(requirements, "") then {
           for entry in Text.split(requirements, ",") {
-            val requirement = schemaFieldType(entry)
-            if Text.eq(problem, "") then {
-              if not knownGenericConstraint(protocolBuckets, requirement) then {
-                problem = "E0679 line " ++ intToText(item.line) ++ ": unknown generic constraint `" ++ requirement ++ "`"
+            for oneRequirement in constraintNames(schemaFieldType(entry)) {
+              if Text.eq(problem, "") then {
+                if not knownGenericConstraint(protocolBuckets, oneRequirement) then {
+                  problem = "E0679 line " ++ intToText(item.line) ++ ": unknown generic constraint `" ++ oneRequirement ++ "`"
+                }
               }
             }
           }

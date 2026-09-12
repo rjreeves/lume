@@ -1,0 +1,23 @@
+protocol Named {
+  fn name(value: Self) -> str
+}
+
+type User {
+  label: str
+}
+
+impl Named for User {
+  fn name(value: User) -> str {
+    return value.label
+  }
+}
+
+fn keep<T: Named + Number>(value: T) -> T {
+  return value
+}
+
+fn main(args: [str]) -> int {
+  let user = keep(User(label: "Ada"))
+  print(user.label)
+  return 0
+}
