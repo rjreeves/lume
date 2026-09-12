@@ -283,17 +283,19 @@ non-trivial benchmark in this file has met its own bar.**
 
 ### Collections
 
-- a built-in `Map<K, V>` — construction and lookup only
-  (`map.new/len/get/set/has/remove/keys/values`), architecturally closer to
-  `List<T>` (its own runtime value tag, no schema) than to the
-  enum-backed `Option`/`Result`; no map literal syntax, construction is
-  via `map.new()` only. Key type is restricted to `int`/`str`/`bool` — the
-  same set the built-in `Eq` constraint already recognizes — deferred
-  extension to records/lists/enums is a separate, later item alongside
-  the general "equality and ordering through constraints" work.
-  Iterator-style transforms (`map.map`/`filter`/`fold`) are not
-  implemented yet — `map.keys`/`map.values` return plain lists that can be
-  passed to the existing `list.*` transforms meanwhile.
+- a built-in `Map<K, V>` — construction, lookup, and the iterator-style
+  transforms `map.map`/`filter`/`fold`
+  (`map.new/len/get/set/has/remove/keys/values/map/filter/fold`),
+  architecturally closer to `List<T>` (its own runtime value tag, no
+  schema) than to the enum-backed `Option`/`Result`; no map literal
+  syntax, construction is via `map.new()` only. Key type is restricted to
+  `int`/`str`/`bool` — the same set the built-in `Eq` constraint already
+  recognizes — deferred extension to records/lists/enums is a separate,
+  later item alongside the general "equality and ordering through
+  constraints" work. `map.map`/`filter`/`fold` mirror the `list.*`
+  transforms exactly, except the callback takes the value only
+  (`(V) -> ...`) — keys pass through unchanged for `map.map`/`filter`; a
+  `(key, value)` two-parameter callback shape is a separate, later item.
 
 ### Scripting and tooling
 
@@ -323,8 +325,9 @@ foundation — is next.
 
 - ~~add a typed `Map<K, V>` with a deliberately small API~~ — shipped (see
   "Shipped in the bootstrap" above);
-- add canonical iterator-style map transforms (`map.map`/`filter`/`fold`),
-  mirroring the existing `list.*` transforms;
+- ~~add canonical iterator-style map transforms (`map.map`/`filter`/
+  `fold`), mirroring the existing `list.*` transforms~~ — shipped (see
+  "Shipped in the bootstrap" above);
 - define equality and ordering support through constraints, extending
   `Map<K, V>`'s key type beyond `int`/`str`/`bool`;
 - keep collection operations deterministic and easy for AI to select.

@@ -889,7 +889,7 @@ fn builtinNames(): List<Text> = [
   "str.contains", "str.starts_with", "str.ends_with",
   "json.valid", "json.get",
   "list.len", "list.get", "list.push", "list.map", "list.filter", "list.find", "list.fold",
-  "map.new", "map.len", "map.get", "map.has", "map.set", "map.remove", "map.keys", "map.values",
+  "map.new", "map.len", "map.get", "map.has", "map.set", "map.remove", "map.keys", "map.values", "map.map", "map.filter", "map.fold",
   "result.ok", "result.err", "result.is_ok", "result.value", "result.error",
   "expect.equal", "expect.true", "expect.ok", "expect.err", "expect.some"
 ]
@@ -903,7 +903,7 @@ fn builtinCounts(): List<Int> = [
   2, 2, 2,
   1, 2,
   1, 2, 2, 2, 2, 2, 3,
-  0, 1, 2, 2, 3, 2, 1, 1,
+  0, 1, 2, 2, 3, 2, 1, 1, 2, 2, 3,
   1, 1, 1, 1, 1,
   2, 1, 1, 1, 1
 ]
@@ -2415,6 +2415,76 @@ fn checkBuiltinTypes(code: List<Instruction>, name: Text, stackInput: List<Text>
       else if not Text.eq(currentValueType, "any") and not Text.eq(currentValueType, itemType.value) then { problem = "E0698 map.set value type does not match map value type" }
     }
     resultType = "Map<" ++ keyType.value ++ "," ++ itemType.value ++ ">"
+  } else if Text.eq(name, "map.map") or Text.eq(name, "map.filter") then {
+    val callbackType = pop(stack)
+    val mapType = pop(callbackType.stack)
+    stack = mapType.stack
+    val callbackName = if Text.startsWith(callbackType.value, "fn:") then Text.slice(callbackType.value, 3, Text.len(callbackType.value)) else ""
+    val isClosure = Text.startsWith(callbackType.value, "closure:")
+    if not Text.startsWith(mapType.value, "Map<") then { problem = "E0695 `" ++ name ++ "` requires a Map" }
+    else if isClosure then {
+      val signature = Text.slice(callbackType.value, 8, Text.len(callbackType.value))
+      val parameterText = beforePipe(signature)
+      val closureParameters = if Text.eq(parameterText, "") then [] else Text.split(parameterText, ",")
+      val closureReturn = afterPipe(signature)
+      if List.len(closureParameters) != 1 then { problem = "E0677 " ++ name ++ " callback requires one parameter" }
+      else if not typesCompatible(List.getOrPanic(closureParameters, 0), mapValueType(mapType.value)) then { problem = "E0673 callback parameter type does not match map value type" }
+      else if Text.eq(name, "map.filter") and not Text.eq(closureReturn, "bool") then { problem = "E0674 map.filter callback must return bool" }
+      resultType = if Text.eq(name, "map.map") then "Map<" ++ mapKeyType(mapType.value) ++ "," ++ closureReturn ++ ">" else mapType.value
+    } else {
+      val target = findFunction(code, callbackName)
+      if target < 0 then { problem = "E0672 " ++ name ++ " requires a function value" }
+      else {
+        val callbackMarker = List.getOrPanic(code, target)
+        val callbackGenericText = markerGenericParameters(callbackMarker.text)
+        val callbackGenerics = if Text.eq(callbackGenericText, "") then [] else Text.split(callbackGenericText, ",")
+        var callbackTypes: List<Text> = []
+        for callbackGeneric in callbackGenerics { callbackTypes = List.push(callbackTypes, "") }
+        val rawInputType = afterPipe(List.getOrPanic(code, target + 1).text)
+        callbackTypes = inferGeneric(rawInputType, mapValueType(mapType.value), callbackGenerics, callbackTypes)
+        val inputType = substituteType(rawInputType, callbackGenerics, callbackTypes)
+        val outputType = substituteType(markerReturnType(callbackMarker.text), callbackGenerics, callbackTypes)
+        if not typesCompatible(inputType, mapValueType(mapType.value)) then { problem = "E0673 callback parameter type does not match map value type" }
+        else if Text.eq(name, "map.filter") and not Text.eq(outputType, "bool") then { problem = "E0674 map.filter callback must return bool" }
+        resultType = if Text.eq(name, "map.map") then "Map<" ++ mapKeyType(mapType.value) ++ "," ++ outputType ++ ">" else mapType.value
+      }
+    }
+  } else if Text.eq(name, "map.fold") then {
+    val callbackType = pop(stack)
+    val initialType = pop(callbackType.stack)
+    val mapType = pop(initialType.stack)
+    stack = mapType.stack
+    val callbackName = if Text.startsWith(callbackType.value, "fn:") then Text.slice(callbackType.value, 3, Text.len(callbackType.value)) else ""
+    val isClosure = Text.startsWith(callbackType.value, "closure:")
+    if not Text.startsWith(mapType.value, "Map<") then { problem = "E0695 `map.fold` requires a Map" }
+    else if isClosure then {
+      val signature = Text.slice(callbackType.value, 8, Text.len(callbackType.value))
+      val parameterText = beforePipe(signature)
+      val closureParameters = if Text.eq(parameterText, "") then [] else Text.split(parameterText, ",")
+      val closureReturn = afterPipe(signature)
+      if List.len(closureParameters) != 2 then { problem = "E0677 map.fold callback requires two parameters" }
+      else if not typesCompatible(List.getOrPanic(closureParameters, 0), initialType.value) or not typesCompatible(List.getOrPanic(closureParameters, 1), mapValueType(mapType.value)) or not typesCompatible(closureReturn, initialType.value) then { problem = "E0675 map.fold callback must be (accumulator, value) -> accumulator" }
+      resultType = initialType.value
+    } else {
+      val target = findFunction(code, callbackName)
+      if target < 0 then { problem = "E0672 map.fold requires a function value" }
+      else {
+        val callbackMarker = List.getOrPanic(code, target)
+        val callbackGenericText = markerGenericParameters(callbackMarker.text)
+        val callbackGenerics = if Text.eq(callbackGenericText, "") then [] else Text.split(callbackGenericText, ",")
+        var callbackTypes: List<Text> = []
+        for callbackGeneric in callbackGenerics { callbackTypes = List.push(callbackTypes, "") }
+        val rawItemType = afterPipe(List.getOrPanic(code, target + 1).text)
+        val rawAccumulatorType = afterPipe(List.getOrPanic(code, target + 2).text)
+        callbackTypes = inferGeneric(rawItemType, mapValueType(mapType.value), callbackGenerics, callbackTypes)
+        callbackTypes = inferGeneric(rawAccumulatorType, initialType.value, callbackGenerics, callbackTypes)
+        val itemType = substituteType(rawItemType, callbackGenerics, callbackTypes)
+        val accumulatorType = substituteType(rawAccumulatorType, callbackGenerics, callbackTypes)
+        val outputType = substituteType(markerReturnType(callbackMarker.text), callbackGenerics, callbackTypes)
+        if not typesCompatible(itemType, mapValueType(mapType.value)) or not typesCompatible(accumulatorType, initialType.value) or not typesCompatible(outputType, initialType.value) then { problem = "E0675 map.fold callback must be (accumulator, value) -> accumulator" }
+        resultType = initialType.value
+      }
+    }
   } else if Text.eq(name, "process.run") then {
     val arguments = pop(stack)
     val executable = pop(arguments.stack)
@@ -3821,6 +3891,48 @@ fn callBuiltin(code: List<Instruction>, name: Text, input: List<Text>): BuiltinR
     stack = first.stack
     if not Text.eq(valueKind(first.value), "m:") then { problem = "E0695 builtin `map.set` expected Map" }
     else { result = mapSetValue(first.value, second.value, third.value) }
+  } else if Text.eq(name, "map.map") or Text.eq(name, "map.filter") then {
+    val callback = pop(stack)
+    val source = pop(callback.stack)
+    stack = source.stack
+    if not Text.eq(valueKind(source.value), "m:") or (not Text.eq(valueKind(callback.value), "f:") and not Text.eq(valueKind(callback.value), "c:")) then { problem = "E0325 " ++ name ++ " requires (Map, function value)" }
+    else {
+      val keys = mapKeysList(source.value)
+      val values = mapValuesList(source.value)
+      var outKeys: List<Text> = []
+      var outValues: List<Text> = []
+      var index = 0
+      while index < List.len(values) and Text.eq(problem, "") {
+        val called = callPure(code, callback.value, [List.getOrPanic(values, index)])
+        if not Text.eq(called.problem, "") then { problem = called.problem }
+        else if Text.eq(name, "map.map") then {
+          outKeys = List.push(outKeys, List.getOrPanic(keys, index))
+          outValues = List.push(outValues, called.value)
+        } else if Text.eq(valueKind(called.value), "b:") and Text.eq(valueBody(called.value), "true") then {
+          outKeys = List.push(outKeys, List.getOrPanic(keys, index))
+          outValues = List.push(outValues, List.getOrPanic(values, index))
+        }
+        index = index + 1
+      }
+      if Text.eq(problem, "") then { result = encodeMap(outKeys, outValues) }
+    }
+  } else if Text.eq(name, "map.fold") then {
+    val callback = pop(stack)
+    val initial = pop(callback.stack)
+    val source = pop(initial.stack)
+    stack = source.stack
+    if not Text.eq(valueKind(source.value), "m:") or (not Text.eq(valueKind(callback.value), "f:") and not Text.eq(valueKind(callback.value), "c:")) then { problem = "E0325 map.fold requires (Map, initial, function value)" }
+    else {
+      var accumulator = initial.value
+      val values = mapValuesList(source.value)
+      var index = 0
+      while index < List.len(values) and Text.eq(problem, "") {
+        val called = callPure(code, callback.value, [accumulator, List.getOrPanic(values, index)])
+        if not Text.eq(called.problem, "") then { problem = called.problem } else { accumulator = called.value }
+        index = index + 1
+      }
+      result = accumulator
+    }
   } else if Text.eq(name, "fs.exists") or Text.eq(name, "fs.read_text") or Text.eq(name, "fs.try_read_text") or Text.eq(name, "env.get") or Text.eq(name, "env.has") or Text.eq(name, "str.len") or Text.eq(name, "str.trim") or Text.eq(name, "str.upper") or Text.eq(name, "str.lower") or Text.eq(name, "json.valid") then {
     val one = pop(stack)
     stack = one.stack
@@ -4305,7 +4417,7 @@ fn apiManifest(): Text = {
   JsonValue.set(root, "language", Json.string("Lume"))
   JsonValue.set(root, "version", Json.string("0.1.0-bootstrap"))
   val features = Json.array()
-  for feature in ["bindings", "static_types", "homogeneous_lists", "generics", "generic_constraints", "protocols", "protocol_methods", "static_protocol_dispatch", "explicit_protocol_implementations", "generic_records", "generic_enums", "option", "result", "list_map", "list_filter", "list_find", "list_fold", "maps", "function_values", "closures", "immutable_capture", "native_test_runner", "test_directory_discovery", "result_propagation", "records", "nested_records", "field_access", "record_updates", "typed_json_decoding", "enums", "variant_payloads", "match_expressions", "exhaustive_matching", "payload_destructuring", "if_else", "while", "functions", "recursion", "bytecode_cache"] {
+  for feature in ["bindings", "static_types", "homogeneous_lists", "generics", "generic_constraints", "protocols", "protocol_methods", "static_protocol_dispatch", "explicit_protocol_implementations", "generic_records", "generic_enums", "option", "result", "list_map", "list_filter", "list_find", "list_fold", "maps", "map_map", "map_filter", "map_fold", "function_values", "closures", "immutable_capture", "native_test_runner", "test_directory_discovery", "result_propagation", "records", "nested_records", "field_access", "record_updates", "typed_json_decoding", "enums", "variant_payloads", "match_expressions", "exhaustive_matching", "payload_destructuring", "if_else", "while", "functions", "recursion", "bytecode_cache"] {
     JsonValue.push(features, Json.string(feature))
   }
   JsonValue.set(root, "features", features)
@@ -4334,6 +4446,7 @@ fn aiReference(): Text = {
   "Generics use `fn identity<T>(value: T) -> T`; constrain functions with Eq, Ord, Number, or Text. Option<T> and Result<T,E> are built in. " ++
   "Use list.map/filter/find/fold with `&double` or immutable-capture closures; use `?` to propagate Result errors. " ++
   "Map<K,V> via map.new/len/get/set/has/remove/keys/values; map.get returns Option<V>; keys must be int, str, or bool. " ++
+  "Transform maps with map.map/filter/fold, same callback convention as list.*, operating on values only (keys pass through unchanged). " ++
   "Match every variant with `match state { waiting => \"wait\", done(code) => \"done\" }`; payload bindings are typed and arm-local. " ++
   "Record construction requires every field exactly once and is statically checked. Operators: + - * / % == != < <= > >=. " ++
   "Builtins and arities are returned by `lume api`. main signature: fn main(args: [str]) -> int. " ++

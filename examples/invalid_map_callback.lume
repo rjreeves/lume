@@ -1,0 +1,9 @@
+fn stringify(value: str) -> str {
+  return value
+}
+
+fn main(args: [str]) -> int {
+  let scores = map.set(map.new(), "a", 1)
+  let values = map.map(scores, &stringify)
+  return 0
+}

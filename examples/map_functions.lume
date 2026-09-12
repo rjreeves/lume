@@ -1,0 +1,35 @@
+fn double(value: int) -> int {
+  return value * 2
+}
+
+fn add(total: int, value: int) -> int {
+  return total + value
+}
+
+fn keep<T>(value: T) -> T {
+  return value
+}
+
+fn main(args: [str]) -> int {
+  let one = map.set(map.new(), "a", 1)
+  let two = map.set(one, "b", 2)
+  let scores = map.set(two, "c", 3)
+
+  let doubled = map.map(scores, &double)
+  print(match map.get(doubled, "b") {
+    Some(value) => value
+    None => -1
+  })
+
+  let above_one = map.filter(scores, fn(value: int) -> bool => value > 1)
+  print(map.len(above_one))
+
+  let unchanged = map.map(scores, &keep)
+  print(match map.get(unchanged, "a") {
+    Some(value) => value
+    None => -1
+  })
+
+  print(map.fold(scores, 0, &add))
+  return 0
+}

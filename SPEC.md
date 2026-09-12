@@ -410,6 +410,7 @@ map.new()                        map.len(m)
 map.get(m, key)                  map.has(m, key)
 map.set(m, key, value)           map.remove(m, key)
 map.keys(m)                      map.values(m)
+map.map/filter/fold(...)
 result.ok(value)                result.err(message)
 result.is_ok(result)            result.value(result)
 result.error(result)
@@ -418,8 +419,10 @@ expect.equal/true/ok/err/some(...)   (inside `test { ... }` blocks only, §13)
 
 **`http.*` and `time.*` do not exist yet**, despite appearing as
 illustrative naming-convention examples in earlier drafts of this document.
-`map.*` covers construction and lookup only — iterator-style transforms
-(`map.map`/`map.filter`/`map.fold`) are a separate, later item.
+`map.map`/`map.filter`/`map.fold` mirror the `list.*` transforms exactly,
+except the callback takes the value only (`(V) -> ...`) — keys pass
+through unchanged for `map.map`/`map.filter`. There is no `(key, value)`
+two-parameter callback shape yet.
 
 ## 12. Generic list transformations
 
@@ -602,7 +605,8 @@ simply not built yet and carries no such argument against it.
 - `int`↔`str` conversion of any kind
 - a JSON encoder (decode-only today, §8)
 - `use ... as` import aliasing
-- `map.map`/`map.filter`/`map.fold` and other iterator-style map transforms
+- a `(key, value)`-style two-parameter callback for `map.*` transforms
+  (today's `map.map`/`map.filter`/`map.fold` take the value only)
 - closures/`&name` references as general first-class values (§6) — usable
   today only as the direct argument to the four `list.*` higher-order
   builtins
