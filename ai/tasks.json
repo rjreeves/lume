@@ -558,6 +558,12 @@
     "stdout": "3\n4"
   },
   {
+    "id": "json_encode_record",
+    "prompt": "Encode a Point record to a JSON string with json.encode, then decode it back and print the decoded x field.",
+    "args": [],
+    "stdout": "3"
+  },
+  {
     "id": "file_write_read_roundtrip",
     "prompt": "Write a file then read it back and print its contents.",
     "args": [],

@@ -267,10 +267,14 @@ fn classify(raw: RawTask) -> Status {
 }
 ```
 
-There is currently **no JSON encoder** — decoding is one-directional. A
-program that needs to persist structured data back out has to hand-build
-the text itself with string concatenation, or write plain text with
-`fs.write_text`/`fs.try_write_text`.
+`json.encode(value) -> Result<str, str>` encodes back the other direction,
+supporting the same shapes decoding does — `str`, `int`, `bool`, nested
+records, and lists, recursively. It does not support enum values either
+(including `Option<T>`/`Result<T,E>`, which are enums under the hood) —
+attempting to encode one returns `Err`, not a crash. There is no schema
+or expected-type argument: every value already carries its own runtime
+type tag, so encoding a valid, already-typechecked value cannot itself
+fail except when it contains an unsupported enum somewhere inside it.
 
 Records are updated immutably with `with`:
 
@@ -414,6 +418,7 @@ str.upper(text)                str.lower(text)
 str.contains(text, part)       str.starts_with(text, prefix)
 str.ends_with(text, suffix)
 json.valid(text)                json.get(text, key)
+json.encode(value)
 list.len(values)                list.get(values, index)
 list.push(values, item)         list.map/filter/find/fold(...)
 map.new()                        map.len(m)
@@ -613,7 +618,7 @@ simply not built yet and carries no such argument against it.
 - `for`/`in` loops, `break`, `continue`
 - `&&`, `||`, `not` boolean operators
 - `int`↔`str` conversion of any kind
-- a JSON encoder (decode-only today, §8)
+- JSON encoding of enum values (`json.encode`, §8)
 - `use ... as` import aliasing
 - a `(key, value)`-style two-parameter callback for `map.*` transforms
   (today's `map.map`/`map.filter`/`map.fold` take the value only)

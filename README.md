@@ -161,6 +161,7 @@ str.upper(text)              str.lower(text)
 str.contains(text, part)     str.starts_with(text, prefix)
 str.ends_with(text, suffix)
 json.valid(text)             json.get(text, key)
+json.encode(value)
 list.len(values)             list.get(values, index)
 list.push(values, item)
 map.new()                    map.len(m)
@@ -295,6 +296,22 @@ print(user.name)
 Nested records and lists of records are decoded recursively. Missing fields,
 unknown fields, and incorrect value types produce errors containing the exact
 field path, such as `User.address.city must be str`.
+
+`json.encode` encodes the other direction, supporting the same shapes —
+`str`/`int`/`bool`, nested records, and lists, recursively:
+
+```lume
+let encoded = json.encode(user)
+let text = result.value(encoded)
+let roundtripped = result.value(User.from_json(text))
+print(roundtripped.name == user.name)
+```
+
+It takes no schema or expected type — every value already carries its own
+runtime type tag, so it works on any record or list without declaring
+anything extra. It does not support enum values (including `Option<T>`/
+`Result<T, E>`, which are enums under the hood) — encoding one returns
+`Err`, not a crash.
 
 ### Enums
 

@@ -1,0 +1,11 @@
+enum State {
+  waiting
+  done(code: int)
+}
+
+fn main(args: [str]) -> int {
+  let encoded = json.encode(State.waiting())
+  print(result.is_ok(encoded))
+  print(result.error(encoded))
+  return 0
+}

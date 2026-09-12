@@ -1,0 +1,25 @@
+type Address {
+  city: str
+}
+
+type User {
+  name: str
+  age: int
+  active: bool
+  tags: [str]
+  address: Address
+}
+
+fn main(args: [str]) -> int {
+  let user = User(name: "Ada", age: 30, active: true, tags: ["admin", "eng"], address: Address(city: "London"))
+  let encoded = result.value(json.encode(user))
+  print(encoded)
+
+  let decoded = result.value(User.from_json(encoded))
+  print(decoded.name == user.name)
+  print(decoded.age == user.age)
+  print(decoded.active == user.active)
+  print(decoded.address.city == user.address.city)
+  print(list.len(decoded.tags) == list.len(user.tags))
+  return 0
+}
