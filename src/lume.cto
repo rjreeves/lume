@@ -889,6 +889,7 @@ fn builtinNames(): List<Text> = [
   "str.contains", "str.starts_with", "str.ends_with",
   "json.valid", "json.get",
   "list.len", "list.get", "list.push", "list.map", "list.filter", "list.find", "list.fold",
+  "map.new", "map.len", "map.get", "map.has", "map.set", "map.remove", "map.keys", "map.values",
   "result.ok", "result.err", "result.is_ok", "result.value", "result.error",
   "expect.equal", "expect.true", "expect.ok", "expect.err", "expect.some"
 ]
@@ -902,6 +903,7 @@ fn builtinCounts(): List<Int> = [
   2, 2, 2,
   1, 2,
   1, 2, 2, 2, 2, 2, 3,
+  0, 1, 2, 2, 3, 2, 1, 1,
   1, 1, 1, 1, 1,
   2, 1, 1, 1, 1
 ]
@@ -2036,6 +2038,37 @@ fn listElementType(listType: Text): Text = {
   else { "unknown" }
 }
 
+// Map<K,V> has two type parameters, unlike list<T>'s one, so extracting K/V
+// needs genericArguments' bracket-depth-aware comma split rather than a
+// plain slice - Text.split(",") alone would mis-split a nested generic
+// like "Map<str,list<int>>"'s value type. Falls back to "unknown" on
+// malformed input rather than panicking (List.getOrPanic on an empty/
+// wrong-length split), mirroring listElementType's own safe-fallback
+// behavior - required because checkBuiltinTypes calls these unconditionally,
+// even before confirming the popped type actually starts with "Map<".
+fn mapKeyType(mapType: Text): Text = {
+  val arguments = genericArguments(mapType)
+  if List.len(arguments) == 2 then List.getOrPanic(arguments, 0) else "unknown"
+}
+
+fn mapValueType(mapType: Text): Text = {
+  val arguments = genericArguments(mapType)
+  if List.len(arguments) == 2 then List.getOrPanic(arguments, 1) else "unknown"
+}
+
+// The only types satisfiesGenericConstraint's Eq branch already recognizes
+// (src/lume.cto satisfiesGenericConstraint) - Map keys are restricted to
+// these for now, deferred extension to records/lists/enums is a separate,
+// later "equality and ordering through constraints" roadmap item.
+fn isMapKeyEligible(valueType: Text): Bool =
+  Text.eq(valueType, "int") or Text.eq(valueType, "str") or Text.eq(valueType, "bool")
+
+fn mapKeyProblem(currentKeyType: Text, keyType: Text, name: Text): Text = {
+  if not isMapKeyEligible(keyType) then { "E0697 map key type must be int, str, or bool" }
+  else if not Text.eq(currentKeyType, "any") and not Text.eq(currentKeyType, keyType) then { "E0696 `" ++ name ++ "` key type does not match map key type" }
+  else { "" }
+}
+
 fn resultValueType(resultType: Text): Text = {
   val comma = Text.indexOf(resultType, ",") ?? -1
   if (not Text.startsWith(resultType, "result<") and not Text.startsWith(resultType, "Result<")) or comma < 0 then "unknown"
@@ -2347,6 +2380,41 @@ fn checkBuiltinTypes(code: List<Instruction>, name: Text, stackInput: List<Text>
       resultType = initialType.value
       }
     }
+  } else if Text.eq(name, "map.new") then {
+    resultType = "Map<any,any>"
+  } else if Text.eq(name, "map.len") then {
+    val mapType = pop(stack)
+    stack = mapType.stack
+    if not Text.startsWith(mapType.value, "Map<") then { problem = "E0695 `map.len` requires a Map" }
+    resultType = "int"
+  } else if Text.eq(name, "map.keys") or Text.eq(name, "map.values") then {
+    val mapType = pop(stack)
+    stack = mapType.stack
+    if not Text.startsWith(mapType.value, "Map<") then { problem = "E0695 `" ++ name ++ "` requires a Map" }
+    resultType = "list<" ++ (if Text.eq(name, "map.keys") then mapKeyType(mapType.value) else mapValueType(mapType.value)) ++ ">"
+  } else if Text.eq(name, "map.get") or Text.eq(name, "map.has") or Text.eq(name, "map.remove") then {
+    val keyType = pop(stack)
+    val mapType = pop(keyType.stack)
+    stack = mapType.stack
+    if not Text.startsWith(mapType.value, "Map<") then { problem = "E0695 `" ++ name ++ "` requires a Map" }
+    else {
+      val keyProblem = mapKeyProblem(mapKeyType(mapType.value), keyType.value, name)
+      if not Text.eq(keyProblem, "") then { problem = keyProblem }
+    }
+    resultType = if Text.eq(name, "map.get") then "Option<" ++ mapValueType(mapType.value) ++ ">" else if Text.eq(name, "map.has") then "bool" else mapType.value
+  } else if Text.eq(name, "map.set") then {
+    val itemType = pop(stack)
+    val keyType = pop(itemType.stack)
+    val mapType = pop(keyType.stack)
+    stack = mapType.stack
+    if not Text.startsWith(mapType.value, "Map<") then { problem = "E0695 `map.set` requires a Map" }
+    else {
+      val keyProblem = mapKeyProblem(mapKeyType(mapType.value), keyType.value, name)
+      val currentValueType = mapValueType(mapType.value)
+      if not Text.eq(keyProblem, "") then { problem = keyProblem }
+      else if not Text.eq(currentValueType, "any") and not Text.eq(currentValueType, itemType.value) then { problem = "E0698 map.set value type does not match map value type" }
+    }
+    resultType = "Map<" ++ keyType.value ++ "," ++ itemType.value ++ ">"
   } else if Text.eq(name, "process.run") then {
     val arguments = pop(stack)
     val executable = pop(arguments.stack)
@@ -3077,6 +3145,111 @@ fn listValues(value: Text): List<Text> = {
   output
 }
 
+// Map<K,V>'s runtime encoding mirrors encodeList's shape (a JSON object
+// with a "count" field plus index-keyed entries) but needs a key AND a
+// value per entry, so each index gets a "k"+i/"v"+i pair of keys instead
+// of one bare index. Both key and value are stored as their full tagged-
+// string form (e.g. "i:5"), so plain Text.eq on the raw tagged key is a
+// correct equality check - keys are homogeneous per map instance, so
+// there's no cross-kind ambiguity. Lookup is a linear scan, same
+// big-O trade-off list.get/list.push already have (copy-on-write, no
+// hash index) - Certo's own Map<K,V> hashes by pointer identity, not
+// content, so it cannot be delegated to here (see the bucketCount comment
+// above), and the compiler's own fixed-bucket hash-set pattern is sized
+// and biased for its own bounded internal tables, not a general-purpose,
+// unboundedly-growing user-facing value.
+fn encodeMap(keys: List<Text>, values: List<Text>): Text = {
+  val root = Json.object()
+  JsonValue.set(root, "count", Json.int(List.len(keys)))
+  var index = 0
+  while index < List.len(keys) {
+    JsonValue.set(root, "k" ++ intToText(index), Json.string(List.getOrPanic(keys, index)))
+    JsonValue.set(root, "v" ++ intToText(index), Json.string(List.getOrPanic(values, index)))
+    index = index + 1
+  }
+  "m:" ++ Json.stringify(root)
+}
+
+fn mapLength(value: Text): Int = {
+  val root = Json.parse(valueBody(value))
+  JsonValue.asInt(JsonValue.get(root, "count"))
+}
+
+fn mapFindIndex(value: Text, key: Text): Int = {
+  val root = Json.parse(valueBody(value))
+  val count = JsonValue.asInt(JsonValue.get(root, "count"))
+  var index = 0
+  var found = -1
+  while index < count and found < 0 {
+    if Text.eq(JsonValue.asText(JsonValue.get(root, "k" ++ intToText(index))), key) then { found = index }
+    index = index + 1
+  }
+  found
+}
+
+fn mapGetValue(value: Text, key: Text): Text? = {
+  val root = Json.parse(valueBody(value))
+  val index = mapFindIndex(value, key)
+  if index < 0 then None
+  else Some(JsonValue.asText(JsonValue.get(root, "v" ++ intToText(index))))
+}
+
+fn mapHasKey(value: Text, key: Text): Bool = mapFindIndex(value, key) >= 0
+
+fn mapSetValue(value: Text, key: Text, item: Text): Text = {
+  val root = Json.parse(valueBody(value))
+  val count = JsonValue.asInt(JsonValue.get(root, "count"))
+  val index = mapFindIndex(value, key)
+  if index >= 0 then { JsonValue.set(root, "v" ++ intToText(index), Json.string(item)) }
+  else {
+    JsonValue.set(root, "k" ++ intToText(count), Json.string(key))
+    JsonValue.set(root, "v" ++ intToText(count), Json.string(item))
+    JsonValue.set(root, "count", Json.int(count + 1))
+  }
+  "m:" ++ Json.stringify(root)
+}
+
+fn mapRemoveValue(value: Text, key: Text): Text = {
+  val root = Json.parse(valueBody(value))
+  val count = JsonValue.asInt(JsonValue.get(root, "count"))
+  var outKeys: List<Text> = []
+  var outValues: List<Text> = []
+  var index = 0
+  while index < count {
+    val k = JsonValue.asText(JsonValue.get(root, "k" ++ intToText(index)))
+    if not Text.eq(k, key) then {
+      outKeys = List.push(outKeys, k)
+      outValues = List.push(outValues, JsonValue.asText(JsonValue.get(root, "v" ++ intToText(index))))
+    }
+    index = index + 1
+  }
+  encodeMap(outKeys, outValues)
+}
+
+fn mapKeysList(value: Text): List<Text> = {
+  val root = Json.parse(valueBody(value))
+  val count = JsonValue.asInt(JsonValue.get(root, "count"))
+  var output: List<Text> = []
+  var index = 0
+  while index < count {
+    output = List.push(output, JsonValue.asText(JsonValue.get(root, "k" ++ intToText(index))))
+    index = index + 1
+  }
+  output
+}
+
+fn mapValuesList(value: Text): List<Text> = {
+  val root = Json.parse(valueBody(value))
+  val count = JsonValue.asInt(JsonValue.get(root, "count"))
+  var output: List<Text> = []
+  var index = 0
+  while index < count {
+    output = List.push(output, JsonValue.asText(JsonValue.get(root, "v" ++ intToText(index))))
+    index = index + 1
+  }
+  output
+}
+
 fn processValue(result: ProcessResult): Text = {
   val root = Json.object()
   JsonValue.set(root, "code", Json.int(ProcessResult.exitCode(result)))
@@ -3614,6 +3787,40 @@ fn callBuiltin(code: List<Instruction>, name: Text, input: List<Text>): BuiltinR
         else { problem = "E0316 list index out of range" }
       } else if let Err(message) = requireInt(right.value, name) { problem = message }
     } else { result = listPushValue(left.value, right.value) }
+  } else if Text.eq(name, "map.new") then {
+    result = encodeMap([], [])
+  } else if Text.eq(name, "map.len") then {
+    val one = pop(stack)
+    stack = one.stack
+    if Text.eq(valueKind(one.value), "m:") then { result = intValue(mapLength(one.value)) }
+    else { problem = "E0695 builtin `map.len` expected Map" }
+  } else if Text.eq(name, "map.keys") or Text.eq(name, "map.values") then {
+    val one = pop(stack)
+    stack = one.stack
+    if not Text.eq(valueKind(one.value), "m:") then { problem = "E0695 builtin `" ++ name ++ "` expected Map" }
+    else { result = encodeList(if Text.eq(name, "map.keys") then mapKeysList(one.value) else mapValuesList(one.value)) }
+  } else if Text.eq(name, "map.get") or Text.eq(name, "map.has") then {
+    val right = pop(stack)
+    val left = pop(right.stack)
+    stack = left.stack
+    if not Text.eq(valueKind(left.value), "m:") then { problem = "E0695 builtin `" ++ name ++ "` expected Map" }
+    else if Text.eq(name, "map.get") then {
+      if let Some(value) = mapGetValue(left.value, right.value) { result = buildVariant([value], "Option.Some|value", 1).value }
+      else { result = buildVariant([], "Option.None|", 0).value }
+    } else { result = boolValue(mapHasKey(left.value, right.value)) }
+  } else if Text.eq(name, "map.remove") then {
+    val right = pop(stack)
+    val left = pop(right.stack)
+    stack = left.stack
+    if not Text.eq(valueKind(left.value), "m:") then { problem = "E0695 builtin `map.remove` expected Map" }
+    else { result = mapRemoveValue(left.value, right.value) }
+  } else if Text.eq(name, "map.set") then {
+    val third = pop(stack)
+    val second = pop(third.stack)
+    val first = pop(second.stack)
+    stack = first.stack
+    if not Text.eq(valueKind(first.value), "m:") then { problem = "E0695 builtin `map.set` expected Map" }
+    else { result = mapSetValue(first.value, second.value, third.value) }
   } else if Text.eq(name, "fs.exists") or Text.eq(name, "fs.read_text") or Text.eq(name, "fs.try_read_text") or Text.eq(name, "env.get") or Text.eq(name, "env.has") or Text.eq(name, "str.len") or Text.eq(name, "str.trim") or Text.eq(name, "str.upper") or Text.eq(name, "str.lower") or Text.eq(name, "json.valid") then {
     val one = pop(stack)
     stack = one.stack
@@ -4098,7 +4305,7 @@ fn apiManifest(): Text = {
   JsonValue.set(root, "language", Json.string("Lume"))
   JsonValue.set(root, "version", Json.string("0.1.0-bootstrap"))
   val features = Json.array()
-  for feature in ["bindings", "static_types", "homogeneous_lists", "generics", "generic_constraints", "protocols", "protocol_methods", "static_protocol_dispatch", "explicit_protocol_implementations", "generic_records", "generic_enums", "option", "result", "list_map", "list_filter", "list_find", "list_fold", "function_values", "closures", "immutable_capture", "native_test_runner", "test_directory_discovery", "result_propagation", "records", "nested_records", "field_access", "record_updates", "typed_json_decoding", "enums", "variant_payloads", "match_expressions", "exhaustive_matching", "payload_destructuring", "if_else", "while", "functions", "recursion", "bytecode_cache"] {
+  for feature in ["bindings", "static_types", "homogeneous_lists", "generics", "generic_constraints", "protocols", "protocol_methods", "static_protocol_dispatch", "explicit_protocol_implementations", "generic_records", "generic_enums", "option", "result", "list_map", "list_filter", "list_find", "list_fold", "maps", "function_values", "closures", "immutable_capture", "native_test_runner", "test_directory_discovery", "result_propagation", "records", "nested_records", "field_access", "record_updates", "typed_json_decoding", "enums", "variant_payloads", "match_expressions", "exhaustive_matching", "payload_destructuring", "if_else", "while", "functions", "recursion", "bytecode_cache"] {
     JsonValue.push(features, Json.string(feature))
   }
   JsonValue.set(root, "features", features)
@@ -4126,6 +4333,7 @@ fn aiReference(): Text = {
   "Declare enums with `enum State { waiting, done(code: int) }`; construct `State.waiting()` or `State.done(code: 0)`. " ++
   "Generics use `fn identity<T>(value: T) -> T`; constrain functions with Eq, Ord, Number, or Text. Option<T> and Result<T,E> are built in. " ++
   "Use list.map/filter/find/fold with `&double` or immutable-capture closures; use `?` to propagate Result errors. " ++
+  "Map<K,V> via map.new/len/get/set/has/remove/keys/values; map.get returns Option<V>; keys must be int, str, or bool. " ++
   "Match every variant with `match state { waiting => \"wait\", done(code) => \"done\" }`; payload bindings are typed and arm-local. " ++
   "Record construction requires every field exactly once and is statically checked. Operators: + - * / % == != < <= > >=. " ++
   "Builtins and arities are returned by `lume api`. main signature: fn main(args: [str]) -> int. " ++

@@ -163,6 +163,10 @@ str.ends_with(text, suffix)
 json.valid(text)             json.get(text, key)
 list.len(values)             list.get(values, index)
 list.push(values, item)
+map.new()                    map.len(m)
+map.get(m, key)              map.has(m, key)
+map.set(m, key, value)       map.remove(m, key)
+map.keys(m)                  map.values(m)
 result.ok(value)              result.err(message)
 result.is_ok(result)          result.value(result)
 result.error(result)
@@ -423,6 +427,37 @@ an ordinary `while`-loop function called directly instead. Neither a
 `&name` reference nor a closure is a general first-class value yet — both
 are usable only as the direct, inline argument to `list.map`/`filter`/
 `find`/`fold`; a closure bound to a `let` cannot be called later.
+
+### Typed maps
+
+`Map<K, V>` is a built-in key/value collection, constructed and read
+through `map.*` builtins rather than literal syntax:
+
+```lume
+let empty = map.new()
+let scores = map.set(map.set(empty, "Ada", 92), "Grace", 98)
+print(map.has(scores, "Ada"))
+print(map.len(scores))
+
+print(match map.get(scores, "Ada") {
+  Some(score) => score
+  None => -1
+})
+
+print(list.len(map.keys(scores)))
+let cleared = map.remove(scores, "Ada")
+print(map.len(cleared))
+```
+
+Like `list.push`, every `map.*` mutation returns a new map rather than
+changing the original in place. Keys are restricted to `int`, `str`, or
+`bool` for now — the same three types the built-in `Eq` constraint already
+recognizes; broader key types (records, enums, lists) are a separate,
+later extension. `map.get` returns `Option<V>`, matched the same way as
+any other `Option`. There is no map literal syntax and no
+`map.map`/`filter`/`fold` yet — those iterator-style transforms are a
+separate, later addition; `map.keys`/`map.values` return plain lists that
+can be passed to the existing `list.*` transforms in the meantime.
 
 ## Example: a multi-module task board
 

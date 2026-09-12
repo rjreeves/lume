@@ -281,6 +281,20 @@ non-trivial benchmark in this file has met its own bar.**
   type is statically known — those still compile straight to a concrete
   function name with zero runtime branching, exactly as before.
 
+### Collections
+
+- a built-in `Map<K, V>` — construction and lookup only
+  (`map.new/len/get/set/has/remove/keys/values`), architecturally closer to
+  `List<T>` (its own runtime value tag, no schema) than to the
+  enum-backed `Option`/`Result`; no map literal syntax, construction is
+  via `map.new()` only. Key type is restricted to `int`/`str`/`bool` — the
+  same set the built-in `Eq` constraint already recognizes — deferred
+  extension to records/lists/enums is a separate, later item alongside
+  the general "equality and ordering through constraints" work.
+  Iterator-style transforms (`map.map`/`filter`/`fold`) are not
+  implemented yet — `map.keys`/`map.values` return plain lists that can be
+  passed to the existing `list.*` transforms meanwhile.
+
 ### Scripting and tooling
 
 - filesystem, environment, argument, string, JSON, list, result, and process
@@ -294,7 +308,7 @@ non-trivial benchmark in this file has met its own bar.**
 - a machine-readable API manifest, compact AI generation contract, and fixed
   AI evaluation tasks.
 
-## Now: choosing the next milestone
+## Now: production scripting foundation
 
 Full-shape generic protocol dispatch is complete (see "Shipped in the
 bootstrap" above): a function constrained by `T: Protocol` or `T: A + B +
@@ -302,18 +316,17 @@ bootstrap" above): a function constrained by `T: Protocol` or `T: A + B +
 exactly one `Self` parameter), resolved at runtime by a direct type-tag
 check, with precise diagnostics for every failure mode found while
 building it, and a dedicated benchmark confirming the mechanism scales
-linearly. This closes out the milestone that has driven recent work; the
-next one to pick up is **production scripting foundation** (below), unless
-benchmark evidence or a real automation workload surfaces something more
-urgent first.
-
-## Next: production scripting foundation
+linearly. That milestone is closed; this one — production scripting
+foundation — is next.
 
 ### 1. Complete collections
 
-- add a typed `Map<K, V>` with a deliberately small API;
-- add canonical iterator-free transformations where they reduce boilerplate;
-- define equality and ordering support through constraints;
+- ~~add a typed `Map<K, V>` with a deliberately small API~~ — shipped (see
+  "Shipped in the bootstrap" above);
+- add canonical iterator-style map transforms (`map.map`/`filter`/`fold`),
+  mirroring the existing `list.*` transforms;
+- define equality and ordering support through constraints, extending
+  `Map<K, V>`'s key type beyond `int`/`str`/`bool`;
 - keep collection operations deterministic and easy for AI to select.
 
 ### 2. Packages and dependency resolution

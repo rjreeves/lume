@@ -1,0 +1,5 @@
+fn main(args: [str]) -> int {
+  let scores = map.set(map.new(), "Ada", 92)
+  print(map.get(scores, 5))
+  return 0
+}

@@ -1,0 +1,8 @@
+type Box {
+  amount: int
+}
+
+fn main(args: [str]) -> int {
+  print(map.set(map.new(), Box(amount: 1), 92))
+  return 0
+}

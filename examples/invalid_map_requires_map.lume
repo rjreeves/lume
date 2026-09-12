@@ -1,0 +1,4 @@
+fn main(args: [str]) -> int {
+  print(map.len(5))
+  return 0
+}
