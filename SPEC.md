@@ -413,6 +413,8 @@ env.get(name)                  env.has(name)
 process.run(exe, args)         process.ok(result)
 process.code(result)           process.stdout(result)
 process.stderr(result)
+process.run_with_input(exe, args, input)
+process.run_with_env(exe, args, envMap)
 str.len(text)                  str.trim(text)
 str.upper(text)                str.lower(text)
 str.contains(text, part)       str.starts_with(text, prefix)
@@ -436,8 +438,8 @@ result.error(result)
 expect.equal/true/ok/err/some(...)   (inside `test { ... }` blocks only, §13)
 ```
 
-**`http.*` and `time.*` do not exist yet**, despite appearing as
-illustrative naming-convention examples in earlier drafts of this document.
+**`http.*` does not exist yet**, despite appearing as an illustrative
+naming-convention example in earlier drafts of this document.
 `map.map`/`map.filter`/`map.fold` mirror the `list.*` transforms exactly,
 except the callback takes the value only (`(V) -> ...`) — keys pass
 through unchanged for `map.map`/`map.filter`. There is no `(key, value)`
@@ -460,6 +462,17 @@ Recursive traversal is not implemented yet.
 calendar-component access (year/month/day, etc.), no custom format
 strings, and no timezone support yet — plain `int` arithmetic on epoch
 seconds covers offsets (`time.now() + 300` for five minutes from now).
+
+`process.run_with_input(exe, args, input) -> process` runs a command like
+`process.run`, but writes `input` to its stdin before capturing
+`stdout`/`stderr` — use the same `process.code`/`.stdout`/`.stderr`/`.ok`
+accessors on the result. `process.run_with_env(exe, args, envMap) ->
+process`, where `envMap: Map<str, str>`, runs a command with the given
+variables overridden for the duration of that one call; each overridden
+variable is restored to its prior value (or unset, if it wasn't set
+before) once the call returns. Neither a working directory nor a timeout
+is supported yet — Lume's underlying process primitives have no
+output-capturing call that accepts either.
 
 ## 12. Generic list transformations
 

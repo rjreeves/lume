@@ -1,0 +1,10 @@
+fn main(args: [str]) -> int {
+  let piped = process.run_with_input("powershell.exe", ["-NoProfile", "-Command", "($input | Out-String).Trim().ToUpper()"], "hello lume")
+  print(str.trim(process.stdout(piped)))
+
+  let envMap = map.set(map.new(), "LUME_EXAMPLE_VAR", "hello_from_lume")
+  let withEnv = process.run_with_env("powershell.exe", ["-NoProfile", "-Command", "$env:LUME_EXAMPLE_VAR"], envMap)
+  print(str.trim(process.stdout(withEnv)))
+  print(env.has("LUME_EXAMPLE_VAR"))
+  return 0
+}

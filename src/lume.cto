@@ -889,7 +889,7 @@ fn builtinNames(): List<Text> = [
   "args.count", "args.get",
   "fs.exists", "fs.read_text", "fs.write_text", "fs.try_read_text", "fs.try_write_text",
   "env.get", "env.has",
-  "process.run", "process.code", "process.stdout", "process.stderr", "process.ok",
+  "process.run", "process.run_with_input", "process.run_with_env", "process.code", "process.stdout", "process.stderr", "process.ok",
   "str.len", "str.trim", "str.upper", "str.lower",
   "str.contains", "str.starts_with", "str.ends_with",
   "json.valid", "json.get", "json.encode",
@@ -906,7 +906,7 @@ fn builtinCounts(): List<Int> = [
   0, 1,
   1, 1, 2, 1, 2,
   1, 1,
-  2, 1, 1, 1, 1,
+  2, 3, 3, 1, 1, 1, 1,
   1, 1, 1, 1,
   2, 2, 2,
   1, 2, 1,
@@ -2503,6 +2503,20 @@ fn checkBuiltinTypes(code: List<Instruction>, name: Text, stackInput: List<Text>
     stack = executable.stack
     if not Text.eq(executable.value, "str") or (not Text.eq(arguments.value, "list<str>") and not Text.eq(arguments.value, "list<any>")) then { problem = "E0619 process.run requires (str, [str])" }
     resultType = "process"
+  } else if Text.eq(name, "process.run_with_input") then {
+    val input = pop(stack)
+    val arguments = pop(input.stack)
+    val executable = pop(arguments.stack)
+    stack = executable.stack
+    if not Text.eq(executable.value, "str") or (not Text.eq(arguments.value, "list<str>") and not Text.eq(arguments.value, "list<any>")) or not Text.eq(input.value, "str") then { problem = "E0700 process.run_with_input requires (str, [str], str)" }
+    resultType = "process"
+  } else if Text.eq(name, "process.run_with_env") then {
+    val envType = pop(stack)
+    val arguments = pop(envType.stack)
+    val executable = pop(arguments.stack)
+    stack = executable.stack
+    if not Text.eq(executable.value, "str") or (not Text.eq(arguments.value, "list<str>") and not Text.eq(arguments.value, "list<any>")) or not Text.startsWith(envType.value, "Map<") or not Text.eq(mapKeyType(envType.value), "str") or not Text.eq(mapValueType(envType.value), "str") then { problem = "E0700 process.run_with_env requires (str, [str], Map<str,str>)" }
+    resultType = "process"
   } else if Text.eq(name, "process.code") or Text.eq(name, "process.stdout") or Text.eq(name, "process.stderr") or Text.eq(name, "process.ok") then {
     val valueType = pop(stack)
     stack = valueType.stack
@@ -3897,6 +3911,44 @@ fn callBuiltin(code: List<Instruction>, name: Text, input: List<Text>): BuiltinR
       val processResult = Process.exec(valueBody(executable.value), listTextValues(arguments.value))
       result = processValue(processResult)
     }
+  } else if Text.eq(name, "process.run_with_input") then {
+    val input = pop(stack)
+    val arguments = pop(input.stack)
+    val executable = pop(arguments.stack)
+    stack = executable.stack
+    if not Text.eq(valueKind(executable.value), "s:") then { problem = "E0322 process.run executable must be str" }
+    else if not Text.eq(valueKind(arguments.value), "l:") then { problem = "E0323 process.run arguments must be [str]" }
+    else {
+      val processResult = Process.execWithInput(valueBody(executable.value), listTextValues(arguments.value), valueBody(input.value))
+      result = processValue(processResult)
+    }
+  } else if Text.eq(name, "process.run_with_env") then {
+    val envArg = pop(stack)
+    val arguments = pop(envArg.stack)
+    val executable = pop(arguments.stack)
+    stack = executable.stack
+    if not Text.eq(valueKind(executable.value), "s:") then { problem = "E0322 process.run executable must be str" }
+    else if not Text.eq(valueKind(arguments.value), "l:") then { problem = "E0323 process.run arguments must be [str]" }
+    else {
+      val keys = mapKeysList(envArg.value)
+      var previous: List<Text?> = []
+      var index = 0
+      while index < List.len(keys) {
+        val key = valueBody(List.getOrPanic(keys, index))
+        previous = List.push(previous, getEnv(key))
+        if let Some(newValue) = mapGetValue(envArg.value, List.getOrPanic(keys, index)) { setEnv(key, valueBody(newValue)) }
+        index = index + 1
+      }
+      val processResult = Process.exec(valueBody(executable.value), listTextValues(arguments.value))
+      result = processValue(processResult)
+      index = 0
+      while index < List.len(keys) {
+        val key = valueBody(List.getOrPanic(keys, index))
+        if let Some(oldValue) = List.getOrPanic(previous, index) { setEnv(key, oldValue) }
+        else { unsetEnv(key) }
+        index = index + 1
+      }
+    }
   } else if Text.eq(name, "list.map") or Text.eq(name, "list.filter") or Text.eq(name, "list.find") then {
     val callback = pop(stack)
     val source = pop(callback.stack)
@@ -4555,7 +4607,7 @@ fn apiManifest(): Text = {
   JsonValue.set(root, "language", Json.string("Lume"))
   JsonValue.set(root, "version", Json.string("0.1.0-bootstrap"))
   val features = Json.array()
-  for feature in ["bindings", "static_types", "homogeneous_lists", "generics", "generic_constraints", "protocols", "protocol_methods", "static_protocol_dispatch", "explicit_protocol_implementations", "generic_records", "generic_enums", "option", "result", "list_map", "list_filter", "list_find", "list_fold", "maps", "map_map", "map_filter", "map_fold", "function_values", "closures", "immutable_capture", "native_test_runner", "test_directory_discovery", "result_propagation", "records", "nested_records", "field_access", "record_updates", "typed_json_decoding", "json_encode", "path_manipulation", "directory_enumeration", "time_now", "enums", "variant_payloads", "match_expressions", "exhaustive_matching", "payload_destructuring", "if_else", "while", "functions", "recursion", "bytecode_cache"] {
+  for feature in ["bindings", "static_types", "homogeneous_lists", "generics", "generic_constraints", "protocols", "protocol_methods", "static_protocol_dispatch", "explicit_protocol_implementations", "generic_records", "generic_enums", "option", "result", "list_map", "list_filter", "list_find", "list_fold", "maps", "map_map", "map_filter", "map_fold", "function_values", "closures", "immutable_capture", "native_test_runner", "test_directory_discovery", "result_propagation", "records", "nested_records", "field_access", "record_updates", "typed_json_decoding", "json_encode", "path_manipulation", "directory_enumeration", "time_now", "process_config", "enums", "variant_payloads", "match_expressions", "exhaustive_matching", "payload_destructuring", "if_else", "while", "functions", "recursion", "bytecode_cache"] {
     JsonValue.push(features, Json.string(feature))
   }
   JsonValue.set(root, "features", features)
@@ -4584,6 +4636,8 @@ fn aiReference(): Text = {
   "Path helpers: path.join/basename/dirname/stem(text) -> str, path.extension(text) -> Option<str>. " ++
   "List a directory with dir.list(path) -> result<[str],str>; entries are names only, unsorted. " ++
   "time.now() -> int gives the current Unix epoch seconds; time.to_iso(seconds) -> str formats it as UTC ISO-8601. " ++
+  "Run a process with stdin piped in: process.run_with_input(exe, args, input) -> process, same accessors as process.run. " ++
+  "Run a process with environment overrides: process.run_with_env(exe, args, envMap: Map<str,str>) -> process; variables are restored to their prior value after the call returns. " ++
   "Declare enums with `enum State { waiting, done(code: int) }`; construct `State.waiting()` or `State.done(code: 0)`. " ++
   "Generics use `fn identity<T>(value: T) -> T`; constrain functions with Eq, Ord, Number, or Text. Option<T> and Result<T,E> are built in. " ++
   "Use list.map/filter/find/fold with `&double` or immutable-capture closures; use `?` to propagate Result errors. " ++
