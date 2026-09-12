@@ -1,0 +1,22 @@
+protocol Factory {
+  fn create(count: int) -> int
+}
+
+type Box {
+  amount: int
+}
+
+impl Factory for Box {
+  fn create(count: int) -> int {
+    return count
+  }
+}
+
+fn build<T: Factory>(value: T, count: int) -> int {
+  return T.create(count)
+}
+
+fn main(args: [str]) -> int {
+  print(build(Box(amount: 5), 3))
+  return 0
+}

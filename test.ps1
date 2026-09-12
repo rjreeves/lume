@@ -305,9 +305,21 @@ $genericDispatchBuiltinConstraint = & $Lume check (Join-Path $PSScriptRoot 'exam
 if ($LASTEXITCODE -ne 1) { throw "generic dispatch builtin constraint should exit 1" }
 Assert-Equal 'generic dispatch builtin constraint' 'E0687 line 2: built-in constraint `Number` has no callable methods' ($genericDispatchBuiltinConstraint -join "`n")
 
-$genericDispatchNonSelfMethod = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_generic_dispatch_non_self_method.lume') 2>&1
-if ($LASTEXITCODE -ne 1) { throw "generic dispatch non-Self method should exit 1" }
-Assert-Equal 'generic dispatch non-Self method' 'E0691 line 16: `Comparer.compare` is not yet supported for generic dispatch; only a single `Self` parameter is supported' ($genericDispatchNonSelfMethod -join "`n")
+$genericDispatchWrongArgumentCount = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_generic_dispatch_non_self_method.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "generic dispatch wrong argument count should exit 1" }
+Assert-Equal 'generic dispatch wrong argument count' 'E0690 line 16: generic dispatch of `T.compare` requires exactly 2 argument(s), got 1' ($genericDispatchWrongArgumentCount -join "`n")
+
+$genericDispatchNoSelfParameter = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_generic_dispatch_no_self_parameter.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "generic dispatch no Self parameter should exit 1" }
+Assert-Equal 'generic dispatch no Self parameter' 'E0691 line 16: `Factory.create` is not yet supported for generic dispatch; exactly one `Self` parameter is required' ($genericDispatchNoSelfParameter -join "`n")
+
+$genericDispatchNonSelfArgumentType = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_generic_dispatch_non_self_argument_type.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "generic dispatch non-Self argument type should exit 1" }
+Assert-Equal 'generic dispatch non-Self argument type' 'E0692 line 16: argument type mismatch calling `T.compare`; expected int, got str' ($genericDispatchNonSelfArgumentType -join "`n")
+
+$genericDispatchMultiParam = & $Lume run (Join-Path $PSScriptRoot 'examples\generic_dispatch_multi_param.lume')
+if ($LASTEXITCODE -ne 0) { throw "generic dispatch multi-parameter exited $LASTEXITCODE" }
+Assert-Equal 'generic dispatch multi-parameter' "true`nfalse" ($genericDispatchMultiParam -join "`n")
 
 $multiConstraint = & $Lume run (Join-Path $PSScriptRoot 'examples\multi_constraint.lume')
 if ($LASTEXITCODE -ne 0) { throw "multi-constraint generics exited $LASTEXITCODE" }

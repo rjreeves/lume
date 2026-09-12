@@ -426,6 +426,12 @@
     "stdout": "Hello, Ada"
   },
   {
+    "id": "protocol_generic_dispatch_non_self_params",
+    "prompt": "Declare a protocol method that takes Self plus another concrete parameter, then call it generically on a constrained type parameter with both arguments.",
+    "args": [],
+    "stdout": "true"
+  },
+  {
     "id": "closure_capture_immutable",
     "prompt": "Map a list with a closure capturing an outer immutable value, then fold it.",
     "args": [],

@@ -185,11 +185,12 @@ false.**
   compiler once and has already needed follow-up correction as other work
   landed underneath it; that is expected of a document tracking a moving
   target, but it means "reconciled" is not yet a stable, closed state.
-- *Finish generic protocol-method dispatch* — partially done, not complete.
-  Single-constraint dispatch to a single-`Self`-parameter protocol method
-  shipped (see "Shipped in the bootstrap" and "Now" above); multi-constraint
-  syntax and protocol methods with additional parameters remain. (This
-  bullet used to cite a benchmark finding — "a generic function constrained
+- *Finish generic protocol-method dispatch* — functionally complete.
+  Single- and multi-constraint dispatch to protocol methods of any shape
+  (any number of parameters, exactly one typed `Self`) has shipped (see
+  "Shipped in the bootstrap" above); only the dedicated generic-dispatch
+  scaling benchmark remains (see "Now" above). (This bullet used to cite
+  a benchmark finding — "a generic function constrained
   by a user protocol gets no compile-time benefit over an unconstrained
   one" — as evidence the feature was entirely missing; that finding was
   about *compile-time cost*, not the presence of this feature, and it no
@@ -264,11 +265,15 @@ non-trivial benchmark in this file has met its own bar.**
   vtable or an indirect dispatch table — the same closed-world mechanism
   `match` already uses for enum variants. Exactly one constraint in the
   list may declare the called method — an "ambiguous call" diagnostic fires
-  if more than one does, naming every protocol that matched. Scoped to a
-  protocol method with exactly one parameter, typed `Self` — every protocol
-  method that exists in this codebase's own examples is already this shape;
-  protocol methods with additional non-`Self` parameters are the next step
-  (see "Now" below);
+  if more than one does, naming every protocol that matched. The called
+  method may take any number of parameters as long as exactly one is typed
+  `Self` (at any position) — e.g. `fn compare(value: Self, other: int) ->
+  bool`, called as `T.compare(value, 5)`. Which argument position is `Self`
+  is resolved once, right after type-checking succeeds, and packed into the
+  instruction so the runtime can locate the receiver among several
+  arguments without disturbing the rest — a zero- or multiple-`Self`
+  method still gets a clear "not yet supported" diagnostic (E0691) rather
+  than an attempt to guess;
 - no trait objects or an indirect dispatch table for calls whose receiver
   type is statically known — those still compile straight to a concrete
   function name with zero runtime branching, exactly as before.
@@ -288,20 +293,18 @@ non-trivial benchmark in this file has met its own bar.**
 
 ## Now: full-shape generic protocol dispatch
 
-Single- and multi-constraint generic dispatch are both shipped (see
+Single- and multi-constraint generic dispatch, including protocol methods
+with parameters beyond the single `Self` receiver, are all shipped (see
 above): a function constrained by `T: Protocol` or `T: A + B + ...` can
-call any of those protocols' single-`Self`-parameter methods on `T`,
-resolved at runtime by a direct type-tag check, with precise diagnostics
-for every failure mode found while building it (unconstrained `T`, a
-built-in-marker constraint with no methods, a protocol lacking the called
-method, ambiguity across multiple matching constraints, and a protocol
-method shaped beyond what generic dispatch supports yet). What's left is
-the two items that pass explicitly deferred:
+call any of those protocols' methods on `T` (any shape with exactly one
+`Self` parameter), resolved at runtime by a direct type-tag check, with
+precise diagnostics for every failure mode found while building it
+(unconstrained `T`, a built-in-marker constraint with no methods, a
+protocol lacking the called method, ambiguity across multiple matching
+constraints, wrong argument count, a zero-or-multiple-`Self` method shape,
+and a non-`Self` argument type mismatch). What's left is the one item that
+passed explicitly deferred:
 
-- extend generic dispatch to protocol methods with parameters beyond the
-  single `Self` receiver (today: a clear "not yet supported" diagnostic,
-  E0691, rather than an attempt to guess the receiver's stack position among
-  several arguments);
 - add a 10,000-line benchmark specifically exercising many generic-dispatch
   call sites, to confirm this mechanism's own linear-vs-quadratic scaling the
   way this file's other performance investigations have for every other

@@ -116,6 +116,16 @@ type TypeStackResult = {
   problem: Text
 }
 
+// Result of searching a generic parameter's whole constraint list for the
+// one protocol that declares a given method - shared by checkGenericProtocolCall
+// (compile-time validation) and patchGenericDispatch (the post-verifyTypes
+// pass that records which argument position is `Self`), so the two can
+// never disagree about which protocol matched.
+type GenericDispatchMatch = {
+  matchedProtocols: List<Text>
+  matchedSignatures: List<Text>
+}
+
 type FunctionScan = {
   names: List<Text>
   counts: List<Int>
@@ -862,6 +872,12 @@ fn nameIndex(names: List<Text>, name: Text): Int = {
     else { index = index + 1 }
   }
   found
+}
+
+fn countName(names: List<Text>, name: Text): Int = {
+  var count = 0
+  for item in names { if Text.eq(item, name) then { count = count + 1 } }
+  count
 }
 
 fn builtinNames(): List<Text> = [
@@ -1764,7 +1780,8 @@ fn compile(tokens: List<Token>): CompileResult = {
     }
   }
   val typeProblem = if Text.eq(problem, "") then verifyTypes(code) else problem
-  CompileResult { code: code, problem: typeProblem }
+  val finalCode = if Text.eq(typeProblem, "") then patchGenericDispatch(code) else code
+  CompileResult { code: finalCode, problem: typeProblem }
 }
 
 fn pop(stack: List<Text>): StackResult = {
@@ -2473,10 +2490,41 @@ fn checkCallTypes(code: List<Instruction>, call: Instruction, stackInput: List<T
 // without monomorphization: this function's body is checked exactly once,
 // not once per instantiation), so the only thing checkable at this point is
 // that the constraint declares a matching method with a shape this bootstrap
-// can dispatch: exactly one parameter, typed literally `Self`. Which concrete
-// implementation actually runs is resolved later, at runtime, from the
-// argument's real value (see runtimeTypeName and the "generic_call" branches
-// in execute()/callPure()).
+// can dispatch: exactly one parameter typed literally `Self` (at any
+// position), plus zero or more other, already-concrete-typed parameters.
+// Which concrete implementation actually runs is resolved later, at
+// runtime, from the `Self` argument's real value (see runtimeTypeName and
+// the "generic_call" branches in execute()/callPure()) - the runtime needs
+// to know which argument position is `Self` to find it among several, which
+// is why patchGenericDispatch re-resolves the same match after verifyTypes
+// succeeds and packs that position into the instruction (see there).
+
+// T: Eq + Named can name several constraints; search all of them for a
+// protocol declaring methodName. Built-in markers (Eq/Ord/Number/Text)
+// have no protocol_type/methods at all, so they're skipped rather than
+// looked up. Exactly one match is expected by callers: zero means no
+// constraint on the parameter gets this method; more than one is
+// ambiguous - which concrete protocol's schema to use would otherwise be
+// an arbitrary choice.
+fn resolveGenericDispatchMatch(code: List<Instruction>, requirementList: List<Text>, methodName: Text): GenericDispatchMatch = {
+  var matchingProtocols: List<Text> = []
+  var matchingSignatures: List<Text> = []
+  var index = 0
+  while index < List.len(requirementList) {
+    val oneRequirement = List.getOrPanic(requirementList, index)
+    if not isBuiltinConstraint(oneRequirement) then {
+      if let Some(schema) = findProtocolSchema(code, oneRequirement) {
+        if let Some(signature) = protocolMethodSignature(schema, methodName) {
+          matchingProtocols = List.push(matchingProtocols, oneRequirement)
+          matchingSignatures = List.push(matchingSignatures, signature)
+        }
+      }
+    }
+    index = index + 1
+  }
+  GenericDispatchMatch { matchedProtocols: matchingProtocols, matchedSignatures: matchingSignatures }
+}
+
 fn checkGenericProtocolCall(code: List<Instruction>, call: Instruction, stackInput: List<Text>, constraints: Text): TypeStackResult = {
   val paramName = beforeDot(call.text)
   val methodName = afterDot(call.text)
@@ -2484,29 +2532,10 @@ fn checkGenericProtocolCall(code: List<Instruction>, call: Instruction, stackInp
   if Text.eq(requirement, "") then {
     TypeStackResult { stack: stackInput, resultType: "unknown", problem: "E0686 line " ++ intToText(call.line) ++ ": `" ++ paramName ++ "` has no constraint to resolve `" ++ call.text ++ "`" }
   } else {
-    // T: Eq + Named can name several constraints; search all of them for a
-    // protocol declaring methodName. Built-in markers (Eq/Ord/Number/Text)
-    // have no protocol_type/methods at all, so they're skipped rather than
-    // looked up. Exactly one match is required: zero means no constraint on
-    // T gets this method (E0687/E0689 below); more than one is ambiguous
-    // (E0694) - which concrete protocol's schema to type-check the call
-    // against would otherwise be an arbitrary choice.
     val requirementList = constraintNames(requirement)
-    var matchingProtocols: List<Text> = []
-    var matchingSignatures: List<Text> = []
-    var index = 0
-    while index < List.len(requirementList) {
-      val oneRequirement = List.getOrPanic(requirementList, index)
-      if not isBuiltinConstraint(oneRequirement) then {
-        if let Some(schema) = findProtocolSchema(code, oneRequirement) {
-          if let Some(signature) = protocolMethodSignature(schema, methodName) {
-            matchingProtocols = List.push(matchingProtocols, oneRequirement)
-            matchingSignatures = List.push(matchingSignatures, signature)
-          }
-        }
-      }
-      index = index + 1
-    }
+    val resolved = resolveGenericDispatchMatch(code, requirementList, methodName)
+    val matchingProtocols = resolved.matchedProtocols
+    val matchingSignatures = resolved.matchedSignatures
     if List.len(matchingProtocols) > 1 then {
       TypeStackResult { stack: stackInput, resultType: "unknown", problem: "E0694 line " ++ intToText(call.line) ++ ": call to `" ++ call.text ++ "` is ambiguous - " ++ Text.join(matchingProtocols, ", ") ++ " all declare method `" ++ methodName ++ "`" }
     } else if List.len(matchingProtocols) == 1 then {
@@ -2516,17 +2545,26 @@ fn checkGenericProtocolCall(code: List<Instruction>, call: Instruction, stackInp
       val parameterText = if separator < 0 then "" else Text.slice(signature, 0, separator)
       val returnText = if separator < 0 then "unknown" else Text.slice(signature, separator + 1, Text.len(signature))
       val expectedParameters = if Text.eq(parameterText, "") then [] else Text.split(parameterText, ",")
-      if call.number != 1 then {
-        TypeStackResult { stack: stackInput, resultType: "unknown", problem: "E0690 line " ++ intToText(call.line) ++ ": generic dispatch of `" ++ call.text ++ "` requires exactly 1 argument, got " ++ intToText(call.number) }
-      } else if List.len(expectedParameters) != 1 or not Text.eq(List.getOrPanic(expectedParameters, 0), "Self") then {
-        TypeStackResult { stack: stackInput, resultType: "unknown", problem: "E0691 line " ++ intToText(call.line) ++ ": `" ++ matched ++ "." ++ methodName ++ "` is not yet supported for generic dispatch; only a single `Self` parameter is supported" }
+      if call.number != List.len(expectedParameters) then {
+        TypeStackResult { stack: stackInput, resultType: "unknown", problem: "E0690 line " ++ intToText(call.line) ++ ": generic dispatch of `" ++ call.text ++ "` requires exactly " ++ intToText(List.len(expectedParameters)) ++ " argument(s), got " ++ intToText(call.number) }
+      } else if countName(expectedParameters, "Self") != 1 then {
+        TypeStackResult { stack: stackInput, resultType: "unknown", problem: "E0691 line " ++ intToText(call.line) ++ ": `" ++ matched ++ "." ++ methodName ++ "` is not yet supported for generic dispatch; exactly one `Self` parameter is required" }
       } else {
-        val popped = pop(stackInput)
-        if not typesCompatible(paramName, popped.value) then {
-          TypeStackResult { stack: popped.stack, resultType: "unknown", problem: "E0692 line " ++ intToText(call.line) ++ ": argument type mismatch calling `" ++ call.text ++ "`; expected " ++ paramName ++ ", got " ++ popped.value }
-        } else {
-          TypeStackResult { stack: popped.stack, resultType: Text.replace(returnText, "Self", paramName), problem: "" }
+        val selfIndex = nameIndex(expectedParameters, "Self")
+        var stack = stackInput
+        var problem = ""
+        var offset = 0
+        while offset < call.number and Text.eq(problem, "") {
+          val declarationIndex = call.number - 1 - offset
+          val popped = pop(stack)
+          stack = popped.stack
+          val expected = if declarationIndex == selfIndex then paramName else List.getOrPanic(expectedParameters, declarationIndex)
+          if not typesCompatible(expected, popped.value) then {
+            problem = "E0692 line " ++ intToText(call.line) ++ ": argument type mismatch calling `" ++ call.text ++ "`; expected " ++ expected ++ ", got " ++ popped.value
+          }
+          offset = offset + 1
         }
+        TypeStackResult { stack: stack, resultType: Text.replace(returnText, "Self", paramName), problem: problem }
       }
     } else if List.len(requirementList) == 1 and isBuiltinConstraint(requirement) then {
       // Single built-in constraint: keep the exact original single-
@@ -2540,6 +2578,46 @@ fn checkGenericProtocolCall(code: List<Instruction>, call: Instruction, stackInp
       TypeStackResult { stack: stackInput, resultType: "unknown", problem: "E0689 line " ++ intToText(call.line) ++ ": none of `" ++ paramName ++ "`'s constraints (" ++ Text.join(requirementList, ", ") ++ ") declare method `" ++ methodName ++ "`" }
     }
   }
+}
+
+// Runs once, after verifyTypes has accepted the whole program, to re-resolve
+// each "generic_call" instruction's matched protocol (safe to redo
+// unchecked now - checkGenericProtocolCall already proved exactly one
+// constraint matches) and pack which argument position is `Self` into the
+// instruction's number field alongside the plain argument count, since
+// execute()/callPure() need that position to find the receiver among
+// several arguments without disturbing the others. Packed as
+// `argCount * 1000 + selfIndex` (unpacked with `/1000` and `%1000`) - argument
+// counts and parameter positions are realistically single digits in any
+// real program, so 1000 leaves an enormous safety margin between the two
+// packed fields.
+fn patchGenericDispatch(code: List<Instruction>): List<Instruction> = {
+  var output: List<Instruction> = []
+  var currentConstraints = ""
+  for item in code {
+    if Text.eq(item.op, "function") then {
+      currentConstraints = markerGenericConstraints(item.text)
+      output = List.pushMut(output, item)
+    } else if Text.eq(item.op, "generic_call") then {
+      val paramName = beforeDot(item.text)
+      val methodName = afterDot(item.text)
+      val requirement = genericConstraintFor(currentConstraints, paramName)
+      val resolved = resolveGenericDispatchMatch(code, constraintNames(requirement), methodName)
+      var selfIndex = 0
+      if List.len(resolved.matchedProtocols) == 1 then {
+        val signature = List.getOrPanic(resolved.matchedSignatures, 0)
+        val separator = Text.indexOf(signature, "@") ?? -1
+        val parameterText = if separator < 0 then "" else Text.slice(signature, 0, separator)
+        val expectedParameters = if Text.eq(parameterText, "") then [] else Text.split(parameterText, ",")
+        val found = nameIndex(expectedParameters, "Self")
+        if found >= 0 then { selfIndex = found }
+      }
+      output = List.pushMut(output, makeInstruction("generic_call", item.text, item.number * 1000 + selfIndex, item.line))
+    } else {
+      output = List.pushMut(output, item)
+    }
+  }
+  output
 }
 
 fn checkRecordTypes(code: List<Instruction>, instruction: Instruction, stackInput: List<Text>): TypeStackResult = {
@@ -3349,19 +3427,29 @@ fn callPure(code: List<Instruction>, callable: Text, arguments: List<Text>): Dec
       // callPure has its own local stack and its own calling convention
       // (pop arguments, then recurse), distinct from execute()'s ip-jump
       // convention below - this branch mirrors callPure's own "call" branch
-      // above, not execute()'s "generic_call" branch. Scope is fixed to
-      // exactly one Self parameter (checkGenericProtocolCall enforces this
-      // at compile time), so there is always exactly one argument to pop.
+      // above, not execute()'s "generic_call" branch. current.number is
+      // packed by patchGenericDispatch as argCount*1000+selfIndex, so the
+      // receiver may be any one of several popped arguments, not always
+      // the only one.
       val methodName = afterDot(current.text)
-      val item = pop(stack)
-      stack = item.stack
-      val receiver = item.value
+      val argCount = current.number / 1000
+      val selfIndex = current.number % 1000
+      var callArguments: List<Text> = []
+      var count = 0
+      while count < argCount {
+        val item = pop(stack)
+        stack = item.stack
+        callArguments = List.push(callArguments, item.value)
+        count = count + 1
+      }
+      callArguments = List.reverse(callArguments)
+      val receiver = List.getOrPanic(callArguments, selfIndex)
       val concreteName = runtimeTypeName(receiver) ++ "." ++ methodName
       val target = findFunction(code, concreteName)
       if target < 0 then {
         problem = "E0693 line " ++ intToText(current.line) ++ ": no implementation of `" ++ methodName ++ "` for `" ++ runtimeTypeName(receiver) ++ "`"
       } else {
-        val called = callPure(code, "f:" ++ concreteName, [receiver])
+        val called = callPure(code, "f:" ++ concreteName, callArguments)
         if not Text.eq(called.problem, "") then { problem = called.problem }
         else { stack = List.push(stack, called.value) }
       }
@@ -3679,10 +3767,16 @@ fn execute(code: List<Instruction>): RunResult [io] = {
       // from this same shared stack in due course. This mirrors that: peek
       // the receiver (same pattern match_arm uses to inspect a value's
       // runtime tag without consuming it) and, once resolved, jump exactly
-      // like an ordinary successful call - the callee's own "param" will
-      // still find the same argument sitting on top of the stack.
+      // like an ordinary successful call - the callee's own "param"
+      // instructions will still find all arguments sitting exactly where the
+      // call site left them, since this branch never touches the stack.
+      // current.number is packed by patchGenericDispatch as
+      // argCount*1000+selfIndex; the receiver sits selfIndex slots up from
+      // the bottom of the argCount-sized argument window at the top of stack.
       val methodName = afterDot(current.text)
-      val receiver = List.getOrPanic(stack, List.len(stack) - 1)
+      val argCount = current.number / 1000
+      val selfIndex = current.number % 1000
+      val receiver = List.getOrPanic(stack, List.len(stack) - argCount + selfIndex)
       val concreteName = runtimeTypeName(receiver) ++ "." ++ methodName
       val target = findFunction(code, concreteName)
       if target < 0 then {
