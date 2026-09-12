@@ -419,6 +419,9 @@ str.contains(text, part)       str.starts_with(text, prefix)
 str.ends_with(text, suffix)
 json.valid(text)                json.get(text, key)
 json.encode(value)
+path.join(a, b)                  path.basename(text)
+path.dirname(text)               path.stem(text)
+path.extension(text)
 list.len(values)                list.get(values, index)
 list.push(values, item)         list.map/filter/find/fold(...)
 map.new()                        map.len(m)
@@ -438,6 +441,12 @@ illustrative naming-convention examples in earlier drafts of this document.
 except the callback takes the value only (`(V) -> ...`) — keys pass
 through unchanged for `map.map`/`map.filter`. There is no `(key, value)`
 two-parameter callback shape yet.
+
+`path.*` is pure string manipulation — no filesystem access, portable
+across `/` and `\` separators. `path.stem` returns the last path
+component with its extension removed (`path.stem("a/b/c.txt")` is `"c"`,
+not `"a/b/c"`); `path.extension` returns `None` for a path with no dot or
+a leading-dot name like `.gitignore` (no extension, not an empty one).
 
 ## 12. Generic list transformations
 

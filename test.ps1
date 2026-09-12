@@ -62,6 +62,10 @@ $invalidJsonEncodeEnum = & $Lume run (Join-Path $PSScriptRoot 'examples\invalid_
 if ($LASTEXITCODE -ne 0) { throw "invalid json encode enum exited $LASTEXITCODE" }
 Assert-Equal 'json encode enum rejected' "false`njson.encode does not support this value's type" ($invalidJsonEncodeEnum -join "`n")
 
+$pathFunctions = & $Lume run (Join-Path $PSScriptRoot 'examples\path_functions.lume')
+if ($LASTEXITCODE -ne 0) { throw "path functions exited $LASTEXITCODE" }
+Assert-Equal 'path functions' "reports/2026`nsummary.csv`nreports/2026`nsummary`ncsv`nnone" ($pathFunctions -join "`n")
+
 $enums = & $Lume run (Join-Path $PSScriptRoot 'examples\enums.lume')
 if ($LASTEXITCODE -ne 0) { throw "enums exited $LASTEXITCODE" }
 Assert-Equal 'enum construction' ('{"$enum":"JobState","$variant":"pending"}' + "`n" + '{"$enum":"JobState","$variant":"completed","code":"i:0"}') ($enums -join "`n")

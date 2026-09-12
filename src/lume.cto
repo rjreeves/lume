@@ -893,6 +893,7 @@ fn builtinNames(): List<Text> = [
   "str.len", "str.trim", "str.upper", "str.lower",
   "str.contains", "str.starts_with", "str.ends_with",
   "json.valid", "json.get", "json.encode",
+  "path.join", "path.basename", "path.dirname", "path.extension", "path.stem",
   "list.len", "list.get", "list.push", "list.map", "list.filter", "list.find", "list.fold",
   "map.new", "map.len", "map.get", "map.has", "map.set", "map.remove", "map.keys", "map.values", "map.map", "map.filter", "map.fold",
   "result.ok", "result.err", "result.is_ok", "result.value", "result.error",
@@ -907,6 +908,7 @@ fn builtinCounts(): List<Int> = [
   1, 1, 1, 1,
   2, 2, 2,
   1, 2, 1,
+  2, 1, 1, 1, 1,
   1, 2, 2, 2, 2, 2, 3,
   0, 1, 2, 2, 3, 2, 1, 1, 2, 2, 3,
   1, 1, 1, 1, 1,
@@ -2520,18 +2522,23 @@ fn checkBuiltinTypes(code: List<Instruction>, name: Text, stackInput: List<Text>
     if Text.eq(name, "result.is_ok") then { resultType = "bool" }
     else if Text.eq(name, "result.error") then { resultType = "str" }
     else { resultType = resultValueType(valueType.value) }
-  } else if Text.eq(name, "fs.write_text") or Text.eq(name, "fs.try_write_text") or Text.eq(name, "str.contains") or Text.eq(name, "str.starts_with") or Text.eq(name, "str.ends_with") or Text.eq(name, "json.get") then {
+  } else if Text.eq(name, "fs.write_text") or Text.eq(name, "fs.try_write_text") or Text.eq(name, "str.contains") or Text.eq(name, "str.starts_with") or Text.eq(name, "str.ends_with") or Text.eq(name, "json.get") or Text.eq(name, "path.join") then {
     val right = pop(stack)
     val left = pop(right.stack)
     stack = left.stack
     if not Text.eq(left.value, "str") or not Text.eq(right.value, "str") then { problem = "E0607 builtin `" ++ name ++ "` requires str arguments" }
-    if Text.eq(name, "json.get") then { resultType = "str" }
+    if Text.eq(name, "json.get") or Text.eq(name, "path.join") then { resultType = "str" }
     else if Text.eq(name, "fs.try_write_text") then { resultType = "result<bool,str>" }
     else { resultType = "bool" }
   } else if Text.eq(name, "json.encode") then {
     val valueType = pop(stack)
     stack = valueType.stack
     resultType = "result<str,str>"
+  } else if Text.eq(name, "path.extension") then {
+    val valueType = pop(stack)
+    stack = valueType.stack
+    if not Text.eq(valueType.value, "str") then { problem = "E0608 builtin `path.extension` requires str" }
+    resultType = "Option<str>"
   } else {
     val valueType = pop(stack)
     stack = valueType.stack
@@ -4010,7 +4017,7 @@ fn callBuiltin(code: List<Instruction>, name: Text, input: List<Text>): BuiltinR
     val one = pop(stack)
     stack = one.stack
     result = jsonEncodeResult(code, one.value)
-  } else if Text.eq(name, "fs.exists") or Text.eq(name, "fs.read_text") or Text.eq(name, "fs.try_read_text") or Text.eq(name, "env.get") or Text.eq(name, "env.has") or Text.eq(name, "str.len") or Text.eq(name, "str.trim") or Text.eq(name, "str.upper") or Text.eq(name, "str.lower") or Text.eq(name, "json.valid") then {
+  } else if Text.eq(name, "fs.exists") or Text.eq(name, "fs.read_text") or Text.eq(name, "fs.try_read_text") or Text.eq(name, "env.get") or Text.eq(name, "env.has") or Text.eq(name, "str.len") or Text.eq(name, "str.trim") or Text.eq(name, "str.upper") or Text.eq(name, "str.lower") or Text.eq(name, "json.valid") or Text.eq(name, "path.basename") or Text.eq(name, "path.dirname") or Text.eq(name, "path.stem") then {
     val one = pop(stack)
     stack = one.stack
     if let Ok(value) = requireText(one.value, name) {
@@ -4029,10 +4036,31 @@ fn callBuiltin(code: List<Instruction>, name: Text, input: List<Text>): BuiltinR
       else if Text.eq(name, "str.trim") then { result = textValue(Text.trim(value)) }
       else if Text.eq(name, "str.upper") then { result = textValue(Text.toUpper(value)) }
       else if Text.eq(name, "str.lower") then { result = textValue(Text.toLower(value)) }
+      else if Text.eq(name, "path.basename") then { result = textValue(Path.basename(value)) }
+      else if Text.eq(name, "path.dirname") then { result = textValue(Path.dirname(value)) }
+      else if Text.eq(name, "path.stem") then {
+        // Certo's own Path.stem keeps the directory component (it strips
+        // the extension from the whole path, not from the basename - its
+        // own C source is `memcpy(out, path, keep)`, not `base`), unlike
+        // every other language's file_stem/Path.stem convention (Rust,
+        // Python, Node - basename only). Composing from Path.basename +
+        // Path.extension (both verified correct) instead of calling
+        // Path.stem directly gives Lume users the conventional behavior.
+        val base = Path.basename(value)
+        if let Some(ext) = Path.extension(value) { result = textValue(Text.slice(base, 0, Text.len(base) - Text.len(ext) - 1)) }
+        else { result = textValue(base) }
+      }
       else {
         val parsed = Json.parse(value)
         result = boolValue(not JsonValue.isNull(parsed) or Text.eq(Text.trim(value), "null"))
       }
+    } else if let Err(message) = requireText(one.value, name) { problem = message }
+  } else if Text.eq(name, "path.extension") then {
+    val one = pop(stack)
+    stack = one.stack
+    if let Ok(value) = requireText(one.value, name) {
+      if let Some(ext) = Path.extension(value) { result = buildVariant([textValue(ext)], "Option.Some|value", 1).value }
+      else { result = buildVariant([], "Option.None|", 0).value }
     } else if let Err(message) = requireText(one.value, name) { problem = message }
   } else {
     val right = pop(stack)
@@ -4052,7 +4080,8 @@ fn callBuiltin(code: List<Instruction>, name: Text, input: List<Text>): BuiltinR
           val parsed = Json.parse(first)
           if not JsonValue.isObject(parsed) then { problem = "E0313 json.get expected an object" }
           else { result = textValue(jsonScalar(JsonValue.get(parsed, second))) }
-        } else { problem = "E0314 unknown builtin `" ++ name ++ "`" }
+        } else if Text.eq(name, "path.join") then { result = textValue(Path.join(first, second)) }
+        else { problem = "E0314 unknown builtin `" ++ name ++ "`" }
       } else if let Err(message) = requireText(right.value, name) { problem = message }
     } else if let Err(message) = requireText(left.value, name) { problem = message }
   }
@@ -4494,7 +4523,7 @@ fn apiManifest(): Text = {
   JsonValue.set(root, "language", Json.string("Lume"))
   JsonValue.set(root, "version", Json.string("0.1.0-bootstrap"))
   val features = Json.array()
-  for feature in ["bindings", "static_types", "homogeneous_lists", "generics", "generic_constraints", "protocols", "protocol_methods", "static_protocol_dispatch", "explicit_protocol_implementations", "generic_records", "generic_enums", "option", "result", "list_map", "list_filter", "list_find", "list_fold", "maps", "map_map", "map_filter", "map_fold", "function_values", "closures", "immutable_capture", "native_test_runner", "test_directory_discovery", "result_propagation", "records", "nested_records", "field_access", "record_updates", "typed_json_decoding", "json_encode", "enums", "variant_payloads", "match_expressions", "exhaustive_matching", "payload_destructuring", "if_else", "while", "functions", "recursion", "bytecode_cache"] {
+  for feature in ["bindings", "static_types", "homogeneous_lists", "generics", "generic_constraints", "protocols", "protocol_methods", "static_protocol_dispatch", "explicit_protocol_implementations", "generic_records", "generic_enums", "option", "result", "list_map", "list_filter", "list_find", "list_fold", "maps", "map_map", "map_filter", "map_fold", "function_values", "closures", "immutable_capture", "native_test_runner", "test_directory_discovery", "result_propagation", "records", "nested_records", "field_access", "record_updates", "typed_json_decoding", "json_encode", "path_manipulation", "enums", "variant_payloads", "match_expressions", "exhaustive_matching", "payload_destructuring", "if_else", "while", "functions", "recursion", "bytecode_cache"] {
     JsonValue.push(features, Json.string(feature))
   }
   JsonValue.set(root, "features", features)
@@ -4520,6 +4549,7 @@ fn aiReference(): Text = {
   "Copy a record with checked changes using `user with { active: true }`; the original remains unchanged. " ++
   "Decode JSON with `User.from_json(text)`, which returns `result<User,str>` and reports field paths. " ++
   "Encode with `json.encode(value)`, which returns `result<str,str>`; supports int/str/bool/lists/records recursively, not enums. " ++
+  "Path helpers: path.join/basename/dirname/stem(text) -> str, path.extension(text) -> Option<str>. " ++
   "Declare enums with `enum State { waiting, done(code: int) }`; construct `State.waiting()` or `State.done(code: 0)`. " ++
   "Generics use `fn identity<T>(value: T) -> T`; constrain functions with Eq, Ord, Number, or Text. Option<T> and Result<T,E> are built in. " ++
   "Use list.map/filter/find/fold with `&double` or immutable-capture closures; use `?` to propagate Result errors. " ++
