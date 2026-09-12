@@ -331,6 +331,11 @@ non-trivial benchmark in this file has met its own bar.**
   `listDir` call site, which was never sorted either); recursive
   traversal remains deferred (see "Now" above) since no `isDirectory`
   primitive exists in Certo's stdlib to build one safely on top of;
+- minimal typed time (`time.now() -> int`, `time.to_iso(seconds) ->
+  str`) — deliberately the smallest useful slice of Certo's much larger
+  `DateTime`/`Duration`/`Timezone`/`Date` stdlib API; `Duration`
+  arithmetic, calendar-component access, custom formatting, and
+  timezones remain deferred (see "Now" above);
 - process exit-code, standard-output, and standard-error inspection;
 - human-readable and structured compiler errors;
 - native test declarations, assertions, filters, and direct-child
@@ -400,7 +405,14 @@ into every compilation.
   workaround, and no inode-based cycle detection is possible without one
   either, so "controlled" (a real depth or cycle bound) needs more design
   than a thin wrapper;
-- typed time and duration values;
+- ~~typed time and duration values~~ — partially shipped: `time.now() ->
+  int` (Unix epoch seconds) and `time.to_iso(seconds) -> str` (fixed
+  UTC ISO-8601) cover "get the current time, show it to a human" (see
+  "Shipped in the bootstrap" above); a `Duration` type, calendar-component
+  access, custom format strings, and timezone support remain deferred —
+  Certo's stdlib already has all of it (a full `DateTime`/`Duration`/
+  `Timezone`/`Date` API), so this is purely a scoping choice, not a
+  feasibility gap;
 - richer process configuration: working directory, environment overrides,
   stdin, and timeout;
 - HTTP requests with typed results and bounded response handling;

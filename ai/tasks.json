@@ -576,6 +576,12 @@
     "stdout": "2"
   },
   {
+    "id": "time_to_iso_fixed",
+    "prompt": "Print the length of the UTC ISO-8601 string for the fixed Unix timestamp 1700000000, produced by time.to_iso.",
+    "args": [],
+    "stdout": "20"
+  },
+  {
     "id": "file_write_read_roundtrip",
     "prompt": "Write a file then read it back and print its contents.",
     "args": [],

@@ -1,0 +1,4 @@
+fn main(args: [str]) -> int {
+  print(time.to_iso("not an int"))
+  return 0
+}

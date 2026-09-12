@@ -74,6 +74,14 @@ $invalidDirList = & $Lume run (Join-Path $PSScriptRoot 'examples\invalid_dir_lis
 if ($LASTEXITCODE -ne 0) { throw "invalid dir list exited $LASTEXITCODE" }
 Assert-Equal 'directory listing missing path' 'false' ($invalidDirList -join "`n")
 
+$timeFunctions = & $Lume run (Join-Path $PSScriptRoot 'examples\time_functions.lume')
+if ($LASTEXITCODE -ne 0) { throw "time functions exited $LASTEXITCODE" }
+Assert-Equal 'time functions' "true`n1970-01-01T00:00:00Z`n2023-11-14T22:13:20Z" ($timeFunctions -join "`n")
+
+$invalidTimeToIso = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_time_to_iso.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "time.to_iso validation should exit 1" }
+Assert-Equal 'time.to_iso requires int' 'E0699 builtin `time.to_iso` requires int' ($invalidTimeToIso -join "`n")
+
 $enums = & $Lume run (Join-Path $PSScriptRoot 'examples\enums.lume')
 if ($LASTEXITCODE -ne 0) { throw "enums exited $LASTEXITCODE" }
 Assert-Equal 'enum construction' ('{"$enum":"JobState","$variant":"pending"}' + "`n" + '{"$enum":"JobState","$variant":"completed","code":"i:0"}') ($enums -join "`n")
