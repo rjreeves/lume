@@ -164,7 +164,7 @@ json.valid(text)             json.get(text, key)
 json.encode(value)
 path.join(a, b)              path.basename(text)
 path.dirname(text)           path.stem(text)
-path.extension(text)
+path.extension(text)         dir.list(path)
 list.len(values)             list.get(values, index)
 list.push(values, item)
 map.new()                    map.len(m)
@@ -525,6 +525,22 @@ print(match path.extension("reports/2026/summary.csv") {
 (not the whole path) — `path.stem("a/b/c.txt")` is `"c"`. `path.extension`
 returns `None` for a path with no dot or a leading-dot name like
 `.gitignore`.
+
+`dir.list(path)` lists one directory level and returns `Result<[str],
+str>` — entry names only, in whatever order the filesystem returns them:
+
+```lume
+let listed = dir.list("reports")
+if result.is_ok(listed) {
+  let entries = result.value(listed)
+  print(list.len(entries))
+  print(path.join("reports", list.get(entries, 0)))
+} else {
+  eprint(result.error(listed))
+}
+```
+
+There is no recursive traversal yet — `dir.list` covers a single level.
 
 ## Example: a multi-module task board
 

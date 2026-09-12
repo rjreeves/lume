@@ -421,7 +421,7 @@ json.valid(text)                json.get(text, key)
 json.encode(value)
 path.join(a, b)                  path.basename(text)
 path.dirname(text)               path.stem(text)
-path.extension(text)
+path.extension(text)             dir.list(path)
 list.len(values)                list.get(values, index)
 list.push(values, item)         list.map/filter/find/fold(...)
 map.new()                        map.len(m)
@@ -447,6 +447,11 @@ across `/` and `\` separators. `path.stem` returns the last path
 component with its extension removed (`path.stem("a/b/c.txt")` is `"c"`,
 not `"a/b/c"`); `path.extension` returns `None` for a path with no dot or
 a leading-dot name like `.gitignore` (no extension, not an empty one).
+
+`dir.list(path) -> Result<[str], str>` lists one directory level — entry
+names only (not full paths; combine with `path.join` when a full path is
+needed), in whatever order the filesystem returns them (not sorted).
+Recursive traversal is not implemented yet.
 
 ## 12. Generic list transformations
 
@@ -635,6 +640,8 @@ simply not built yet and carries no such argument against it.
   today only as the direct argument to the four `list.*` higher-order
   builtins
 - `match` inside a `list.*` callback's reachable call graph (§12)
+- recursive directory traversal (`dir.list` covers one level only; no
+  `isDirectory` check exists yet to build a walk on top of it, §11)
 - multi-line call/record-construction argument lists (§2, §8)
 - postfix field access directly on a call expression's result (§8)
 - `let`/`var` type annotations (§5)

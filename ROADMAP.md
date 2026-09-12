@@ -326,6 +326,11 @@ non-trivial benchmark in this file has met its own bar.**
   returning just the basename minus extension) — it's composed instead
   from `Path.basename` + `Path.extension`, matching the file-stem
   convention every other language uses;
+- single-level directory enumeration (`dir.list(path) -> Result<[str],
+  str>`) — entry names only, unsorted (matching this file's own existing
+  `listDir` call site, which was never sorted either); recursive
+  traversal remains deferred (see "Now" above) since no `isDirectory`
+  primitive exists in Certo's stdlib to build one safely on top of;
 - process exit-code, standard-output, and standard-error inspection;
 - human-readable and structured compiler errors;
 - native test declarations, assertions, filters, and direct-child
@@ -386,7 +391,15 @@ into every compilation.
   "Shipped in the bootstrap" above); wraps Certo's own already-portable
   `Path.*` primitives, so no separator-handling logic exists on Lume's
   side at all;
-- directory enumeration and controlled recursive traversal;
+- ~~directory enumeration~~ — shipped as `dir.list(path) -> Result<[str],
+  str>` (see "Shipped in the bootstrap" above), one level, unsorted,
+  names only;
+- controlled recursive traversal — deferred: no `isDirectory`/`stat`
+  primitive exists anywhere in Certo's stdlib to tell a directory entry
+  from a file without an indirect, extra-syscall `listDir`-probing
+  workaround, and no inode-based cycle detection is possible without one
+  either, so "controlled" (a real depth or cycle bound) needs more design
+  than a thin wrapper;
 - typed time and duration values;
 - richer process configuration: working directory, environment overrides,
   stdin, and timeout;

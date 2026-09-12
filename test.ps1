@@ -66,6 +66,14 @@ $pathFunctions = & $Lume run (Join-Path $PSScriptRoot 'examples\path_functions.l
 if ($LASTEXITCODE -ne 0) { throw "path functions exited $LASTEXITCODE" }
 Assert-Equal 'path functions' "reports/2026`nsummary.csv`nreports/2026`nsummary`ncsv`nnone" ($pathFunctions -join "`n")
 
+$dirList = & $Lume run (Join-Path $PSScriptRoot 'examples\dir_list.lume')
+if ($LASTEXITCODE -ne 0) { throw "dir list exited $LASTEXITCODE" }
+Assert-Equal 'directory listing' "2`nmath_test.lume`ntext_test.lume" ($dirList -join "`n")
+
+$invalidDirList = & $Lume run (Join-Path $PSScriptRoot 'examples\invalid_dir_list.lume')
+if ($LASTEXITCODE -ne 0) { throw "invalid dir list exited $LASTEXITCODE" }
+Assert-Equal 'directory listing missing path' 'false' ($invalidDirList -join "`n")
+
 $enums = & $Lume run (Join-Path $PSScriptRoot 'examples\enums.lume')
 if ($LASTEXITCODE -ne 0) { throw "enums exited $LASTEXITCODE" }
 Assert-Equal 'enum construction' ('{"$enum":"JobState","$variant":"pending"}' + "`n" + '{"$enum":"JobState","$variant":"completed","code":"i:0"}') ($enums -join "`n")
