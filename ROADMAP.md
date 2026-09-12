@@ -257,15 +257,18 @@ non-trivial benchmark in this file has met its own bar.**
 - generic list functions: `map`, `filter`, `find`, and `fold`;
 - protocol declarations and explicit implementations;
 - protocol methods compiled as concrete functions with static dispatch;
-- a function constrained by a single `T: Protocol` may call that protocol's
-  method on `T` from inside its own body (`T.method(value)`), resolved by a
-  direct runtime type-tag check against every known implementer, not a
+- a function constrained by `T: Protocol` — one constraint, or several
+  joined with `+` (`T: Eq + Named`) — may call any of those protocols'
+  methods on `T` from inside its own body (`T.method(value)`), resolved by
+  a direct runtime type-tag check against every known implementer, not a
   vtable or an indirect dispatch table — the same closed-world mechanism
-  `match` already uses for enum variants. Scoped to a protocol method with
-  exactly one parameter, typed `Self` — every protocol method that exists in
-  this codebase's own examples is already this shape. `T: Eq + Named`
-  multi-constraint syntax and protocol methods with additional non-`Self`
-  parameters are the next steps (see "Now" below);
+  `match` already uses for enum variants. Exactly one constraint in the
+  list may declare the called method — an "ambiguous call" diagnostic fires
+  if more than one does, naming every protocol that matched. Scoped to a
+  protocol method with exactly one parameter, typed `Self` — every protocol
+  method that exists in this codebase's own examples is already this shape;
+  protocol methods with additional non-`Self` parameters are the next step
+  (see "Now" below);
 - no trait objects or an indirect dispatch table for calls whose receiver
   type is statically known — those still compile straight to a concrete
   function name with zero runtime branching, exactly as before.
@@ -283,22 +286,18 @@ non-trivial benchmark in this file has met its own bar.**
 - a machine-readable API manifest, compact AI generation contract, and fixed
   AI evaluation tasks.
 
-## Now: multi-constraint generic protocol dispatch
+## Now: full-shape generic protocol dispatch
 
-Single-constraint generic dispatch is shipped (see above): a function
-constrained by one `T: Protocol` can call that protocol's single-`Self`-
-parameter method on `T`, resolved at runtime by a direct type-tag check
-against a compile-time-enumerable set of implementers, with precise
-diagnostics for every failure mode found while building it (unconstrained
-`T`, a built-in-marker constraint with no methods, a protocol lacking the
-called method, and a protocol method shaped beyond what generic dispatch
-supports yet). What's left is the two items that pass explicitly deferred:
+Single- and multi-constraint generic dispatch are both shipped (see
+above): a function constrained by `T: Protocol` or `T: A + B + ...` can
+call any of those protocols' single-`Self`-parameter methods on `T`,
+resolved at runtime by a direct type-tag check, with precise diagnostics
+for every failure mode found while building it (unconstrained `T`, a
+built-in-marker constraint with no methods, a protocol lacking the called
+method, ambiguity across multiple matching constraints, and a protocol
+method shaped beyond what generic dispatch supports yet). What's left is
+the two items that pass explicitly deferred:
 
-- support multiple constraints on one type parameter, `T: Eq + Named`, and
-  search all of them for the called method — including diagnosing ambiguity
-  if more than one constraint declares a method with that name. The parser
-  doesn't accept `+` in constraint position at all today (`genericConstraints`
-  reads a single `name: constraint` pair, not a list);
 - extend generic dispatch to protocol methods with parameters beyond the
   single `Self` receiver (today: a clear "not yet supported" diagnostic,
   E0691, rather than an attempt to guess the receiver's stack position among

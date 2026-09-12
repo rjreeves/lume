@@ -420,6 +420,12 @@
     "stdout": "Hello, Ada"
   },
   {
+    "id": "protocol_multi_constraint_dispatch",
+    "prompt": "Constrain a generic function by two protocols (T: Named + Sized) and call only one of their methods generically.",
+    "args": [],
+    "stdout": "Hello, Ada"
+  },
+  {
     "id": "closure_capture_immutable",
     "prompt": "Map a list with a closure capturing an outer immutable value, then fold it.",
     "args": [],

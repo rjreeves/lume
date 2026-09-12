@@ -1,0 +1,38 @@
+protocol Named {
+  fn name(value: Self) -> str
+}
+
+protocol Sized {
+  fn size(value: Self) -> int
+}
+
+type User {
+  label: str
+  count: int
+}
+
+impl Named for User {
+  fn name(value: User) -> str {
+    return value.label
+  }
+}
+
+impl Sized for User {
+  fn size(value: User) -> int {
+    return value.count
+  }
+}
+
+fn keep<T: Number + Eq>(value: T) -> T {
+  return value
+}
+
+fn announce<T: Named + Sized>(value: T) -> str {
+  return "Hello, " + T.name(value)
+}
+
+fn main(args: [str]) -> int {
+  print(keep(5))
+  print(announce(User(label: "Ada", count: 3)))
+  return 0
+}

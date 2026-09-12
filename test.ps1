@@ -309,6 +309,18 @@ $genericDispatchNonSelfMethod = & $Lume check (Join-Path $PSScriptRoot 'examples
 if ($LASTEXITCODE -ne 1) { throw "generic dispatch non-Self method should exit 1" }
 Assert-Equal 'generic dispatch non-Self method' 'E0691 line 16: `Comparer.compare` is not yet supported for generic dispatch; only a single `Self` parameter is supported' ($genericDispatchNonSelfMethod -join "`n")
 
+$multiConstraint = & $Lume run (Join-Path $PSScriptRoot 'examples\multi_constraint.lume')
+if ($LASTEXITCODE -ne 0) { throw "multi-constraint generics exited $LASTEXITCODE" }
+Assert-Equal 'multi-constraint generics' "5`nHello, Ada" ($multiConstraint -join "`n")
+
+$genericDispatchAmbiguous = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_generic_dispatch_ambiguous_method.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "generic dispatch ambiguous method should exit 1" }
+Assert-Equal 'generic dispatch ambiguous method' 'E0694 line 10: call to `T.describe` is ambiguous - Named, Labeled all declare method `describe`' ($genericDispatchAmbiguous -join "`n")
+
+$multiConstraintUnsatisfied = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_multi_constraint_unsatisfied.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "multi-constraint unsatisfied should exit 1" }
+Assert-Equal 'multi-constraint unsatisfied' 'E0680 line 20: type `User` does not satisfy `Number` for `T` calling `keep`' ($multiConstraintUnsatisfied -join "`n")
+
 $listCallback = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_list_callback.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "list callback validation should exit 1" }
 Assert-Equal 'list callback validation' 'E0673 callback parameter type does not match list element type' ($listCallback -join "`n")
