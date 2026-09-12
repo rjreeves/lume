@@ -570,6 +570,12 @@
     "stdout": "report.csv\ncsv"
   },
   {
+    "id": "dir_list_count",
+    "prompt": "List the entries of the examples/native_suite directory with dir.list and print how many there are, using result.is_ok and result.value (not match) to handle the Result.",
+    "args": [],
+    "stdout": "2"
+  },
+  {
     "id": "file_write_read_roundtrip",
     "prompt": "Write a file then read it back and print its contents.",
     "args": [],

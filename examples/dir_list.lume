@@ -1,0 +1,13 @@
+fn main(args: [str]) -> int {
+  let entries = result.value(dir.list("examples/native_suite"))
+  print(list.len(entries))
+  print(match list.find(entries, fn(entry: str) -> bool => entry == "math_test.lume") {
+    Some(name) => name
+    None => "missing"
+  })
+  print(match list.find(entries, fn(entry: str) -> bool => entry == "text_test.lume") {
+    Some(name) => name
+    None => "missing"
+  })
+  return 0
+}

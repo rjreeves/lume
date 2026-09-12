@@ -1,0 +1,5 @@
+fn main(args: [str]) -> int {
+  let listed = dir.list("this/path/does/not/exist")
+  print(result.is_ok(listed))
+  return 0
+}
