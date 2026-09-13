@@ -373,13 +373,16 @@ non-trivial benchmark in this file has met its own bar.**
   reruns exactly one test;
 - local packages: a `lume.json` manifest (`name`, `version`,
   `dependencies` as an array of `{name, path}`), `lume install <dir>`
-  resolving them once into a generated `lume.lock.json`, and `use`
-  resolution reading only that lock file at compile time — never the
-  manifest, never doing resolution work itself. A project with neither
-  file behaves identically to before this existed. Not transitive (a
-  dependency's own dependencies aren't resolved), no registry, no
-  semver ranges, no content-hash caching yet — see "2. Packages and
-  dependency resolution" below for what's still open and why;
+  resolving the full transitive dependency tree once into a single flat
+  generated `lume.lock.json` (a dependency's own `dependencies` are
+  resolved too, recursively, with cycle detection — `E0709` — and
+  ambiguous-name detection — `E0708` — mirroring how `use` cycles are
+  already caught), and `use` resolution reading only that lock file at
+  compile time — never a manifest, never doing resolution work itself.
+  A project with neither file behaves identically to before this
+  existed. No registry, no semver ranges, no content-hash caching yet
+  — see "2. Packages and dependency resolution" below for what's still
+  open and why;
 - formatter and format checking;
 - language-server support;
 - a machine-readable API manifest, compact AI generation contract, and fixed
@@ -431,12 +434,14 @@ foundation — is next.
   candidate versions, picking one that satisfies every constraint)
   remains deferred until a registry makes that ambiguity possible in
   the first place;
+- ~~resolve transitive dependencies~~ — shipped: `lume install` walks
+  a dependency's own `dependencies` too, recursively, into the same
+  flat `lume.lock.json`, with cycle (`E0709`) and ambiguous-name
+  (`E0708`) detection mirroring `use`'s own cycle detection;
 - cache resolved dependencies by content hash — deferred: not
   meaningful yet for local paths (reading a local directory has no
   fetch cost to cache); revisit once packages can come from anywhere
-  other than the local filesystem. Transitive dependencies (a
-  dependency's own `dependencies`) are also not resolved yet — `lume
-  install` only walks the root manifest's direct dependencies.
+  other than the local filesystem.
 
 Package management must not introduce source-level package graph resolution
 into every compilation.

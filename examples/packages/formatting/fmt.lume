@@ -1,0 +1,3 @@
+pub fn fmt.shout(text: str) -> str {
+  return str.upper(text)
+}

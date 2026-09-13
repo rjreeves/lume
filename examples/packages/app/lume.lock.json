@@ -1,1 +1,1 @@
-{"dependencies":[{"name":"mathutils","path":"../mathutils","version":"0.1.0"}]}
+{"dependencies":[{"name":"mathutils","path":"../mathutils","version":"0.1.0"},{"name":"formatting","path":"../formatting","version":"0.1.0"}]}

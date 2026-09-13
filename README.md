@@ -252,10 +252,16 @@ Another project depends on it by declaring a local path in its own manifest:
 else about `use` (recursive loading, cycle detection, qualified `pub
 fn` names) works exactly the same as for a local module. A project
 with no `lume.json`/`lume.lock.json` sees no change in behavior at all.
-Dependencies are not transitive yet (a dependency's own dependencies
-aren't resolved), and there's no real version-range resolution or
-registry yet — `version` is recorded for forward compatibility but not
-yet checked against anything.
+
+Dependencies are transitive: `lume install` walks a dependency's own
+`dependencies` too, so `mathutils` can declare a dependency of its own
+and `app` picks it up automatically without declaring it directly. A
+dependency cycle across `lume.json` files is a compile-time-style
+error (`E0709`), same as a `use` cycle within one project; the same
+package name resolving to two different locations is `E0708`. There's
+still no real version-range resolution or registry yet — `version` is
+recorded for forward compatibility but not yet checked against
+anything.
 
 ```powershell
 .\dist\lume.exe check .\examples\arithmetic.lume

@@ -177,6 +177,17 @@ type PackageDep = {
   path: Text
 }
 
+type ResolvedDep = {
+  name: Text
+  path: Text
+  version: Text
+}
+
+type ResolveOutcome = {
+  resolved: List<ResolvedDep>
+  problem: Text
+}
+
 fn makeToken(kind: Text, text: Text, line: Int): Token =
   Token { kind: kind, text: text, line: line }
 
@@ -4642,6 +4653,91 @@ fn readManifestVersion(manifestPath: Text): Result<Text, Text> = {
   } else { Err("cannot read manifest `" ++ manifestPath ++ "`") }
 }
 
+// Path.join never collapses ".." segments (confirmed empirically: joining
+// "../b" with "../a" produces the literal string "../b/../a", not "..").
+// Without normalizing, two routes to the same physical directory (the
+// common shape of both a genuine cycle and a legitimate diamond
+// dependency) produce different strings and never compare equal, so
+// resolveDependencies's cycle/conflict checks below would misfire -
+// masking a real cycle as an "ambiguous name" instead. Collapsing here
+// once, right where a root-relative path is computed, keeps every
+// downstream comparison (and the path actually written to the lock file)
+// consistent and human-readable.
+fn normalizePath(path: Text): Text = {
+  var stack: List<Text> = []
+  for segment in Text.split(path, "/") {
+    if Text.eq(segment, "..") then {
+      if List.len(stack) == 0 then { stack = List.push(stack, segment) }
+      else if Text.eq(List.getOrPanic(stack, List.len(stack) - 1), "..") then { stack = List.push(stack, segment) }
+      else { stack = List.slice(stack, 0, List.len(stack) - 1) }
+    } else if not Text.eq(segment, ".") and not Text.eq(segment, "") then {
+      stack = List.push(stack, segment)
+    }
+  }
+  Text.join(stack, "/")
+}
+
+fn findResolvedPath(resolved: List<ResolvedDep>, name: Text): Text? = {
+  var index = 0
+  var found = false
+  var path = ""
+  while index < List.len(resolved) and not found {
+    val dep = List.getOrPanic(resolved, index)
+    if Text.eq(dep.name, name) then {
+      found = true
+      path = dep.path
+    }
+    index = index + 1
+  }
+  if found then Some(path) else None
+}
+
+fn resolveDependencies(rootDir: Text, rootRelative: Text, active: List<Text>, resolved: List<ResolvedDep>): ResolveOutcome [io] = {
+  val manifestPath = Path.join(Path.join(rootDir, rootRelative), "lume.json")
+  if let Some(source) = readFile(manifestPath) {
+    val depsArray = JsonValue.get(Json.parse(source), "dependencies")
+    var currentResolved = resolved
+    var problem = ""
+    if JsonValue.isArray(depsArray) then {
+      var index = 0
+      while index < JsonValue.length(depsArray) and Text.eq(problem, "") {
+        val entry = Json.parse(JsonValue.atText(depsArray, index))
+        val depName = JsonValue.asText(JsonValue.get(entry, "name"))
+        val declaredPath = JsonValue.asText(JsonValue.get(entry, "path"))
+        val depRootRelative = normalizePath(if Text.eq(rootRelative, "") then declaredPath else Path.join(rootRelative, declaredPath))
+        if containsName(active, depRootRelative) then {
+          // Checked before `resolved`, not after: an entry is added to
+          // `resolved` (below) before recursing into ITS OWN dependencies,
+          // so by the time a real cycle closes back onto an ancestor,
+          // that ancestor already has a "resolved" entry despite its own
+          // recursive call not having returned yet. Only `active` (the
+          // in-progress stack) reliably distinguishes "still being
+          // resolved higher up" from "genuinely finished" - checking it
+          // first is what makes a true cycle actually surface as E0709
+          // instead of silently matching the premature `resolved` entry.
+          problem = "E0709 dependency cycle at `" ++ depName ++ "`"
+        } else if let Some(existingPath) = findResolvedPath(currentResolved, depName) {
+          if not Text.eq(existingPath, depRootRelative) then {
+            problem = "E0708 dependency `" ++ depName ++ "` resolves to two different paths: `" ++ existingPath ++ "` and `" ++ depRootRelative ++ "`"
+          }
+        } else {
+          val depManifestPath = Path.join(Path.join(rootDir, depRootRelative), "lume.json")
+          if let Ok(depVersion) = readManifestVersion(depManifestPath) {
+            currentResolved = List.push(currentResolved, ResolvedDep { name: depName, path: depRootRelative, version: depVersion })
+            val nested = resolveDependencies(rootDir, depRootRelative, List.push(active, depRootRelative), currentResolved)
+            if not Text.eq(nested.problem, "") then { problem = nested.problem }
+            else { currentResolved = nested.resolved }
+          } else if let Err(message) = readManifestVersion(depManifestPath) {
+            problem = "E0706 cannot resolve dependency `" ++ depName ++ "`: " ++ message
+          }
+        }
+        index = index + 1
+      }
+    }
+    ResolveOutcome { resolved: currentResolved, problem: problem }
+  } else { ResolveOutcome { resolved: resolved, problem: "E0706 cannot read manifest `" ++ manifestPath ++ "`" } }
+}
+
 fn installPackages(dir: Text): Unit [io] = {
   val manifestPath = Path.join(dir, "lume.json")
   if let Some(source) = readFile(manifestPath) {
@@ -4652,32 +4748,19 @@ fn installPackages(dir: Text): Unit [io] = {
       eprintln("E0705 manifest `" ++ manifestPath ++ "` requires string `name` and `version` fields")
       Process.quit(1)
     } else {
-      val depsArray = JsonValue.get(root, "dependencies")
-      val lockDeps = Json.array()
-      var problem = ""
-      if JsonValue.isArray(depsArray) then {
-        var index = 0
-        while index < JsonValue.length(depsArray) and Text.eq(problem, "") {
-          val entry = Json.parse(JsonValue.atText(depsArray, index))
-          val depName = JsonValue.asText(JsonValue.get(entry, "name"))
-          val relativePath = JsonValue.asText(JsonValue.get(entry, "path"))
-          val depManifestPath = Path.join(Path.join(dir, relativePath), "lume.json")
-          if let Ok(depVersion) = readManifestVersion(depManifestPath) {
-            val lockEntry = Json.object()
-            JsonValue.set(lockEntry, "name", Json.string(depName))
-            JsonValue.set(lockEntry, "path", Json.string(relativePath))
-            JsonValue.set(lockEntry, "version", Json.string(depVersion))
-            JsonValue.push(lockDeps, lockEntry)
-          } else if let Err(message) = readManifestVersion(depManifestPath) {
-            problem = "E0706 cannot resolve dependency `" ++ depName ++ "`: " ++ message
-          }
-          index = index + 1
-        }
-      }
-      if not Text.eq(problem, "") then {
-        eprintln(problem)
+      val outcome = resolveDependencies(dir, "", [], [])
+      if not Text.eq(outcome.problem, "") then {
+        eprintln(outcome.problem)
         Process.quit(1)
       } else {
+        val lockDeps = Json.array()
+        for dep in outcome.resolved {
+          val lockEntry = Json.object()
+          JsonValue.set(lockEntry, "name", Json.string(dep.name))
+          JsonValue.set(lockEntry, "path", Json.string(dep.path))
+          JsonValue.set(lockEntry, "version", Json.string(dep.version))
+          JsonValue.push(lockDeps, lockEntry)
+        }
         val lockRoot = Json.object()
         JsonValue.set(lockRoot, "dependencies", lockDeps)
         val lockPath = Path.join(dir, "lume.lock.json")
