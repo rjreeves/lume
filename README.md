@@ -153,6 +153,7 @@ fs.exists(path)              fs.read_text(path)
 fs.write_text(path, text)
 fs.try_read_text(path)       fs.try_write_text(path, text)
 env.get(name)                env.has(name)
+env.set(name, value)         env.unset(name)
 process.run(executable, args) process.ok(result)
 process.code(result)          process.stdout(result)
 process.stderr(result)
@@ -181,6 +182,7 @@ map.map/filter/fold(...)
 result.ok(value)              result.err(message)
 result.is_ok(result)          result.value(result)
 result.error(result)
+fixture.temp_dir()           fixture.cleanup(path)
 ```
 
 Functions declare structured failures as `value_type ! error_type`. Postfix `!`
@@ -607,6 +609,28 @@ underlying client has no streaming or early-abort mode. Windows only:
 the underlying client is a stub on other platforms that aborts the
 process rather than returning an error. There is no `post`/`put`/
 `delete`, no custom headers, and no binary body support yet.
+
+### Test fixtures
+
+`fixture.temp_dir()` creates and returns a fresh, unique directory;
+`env.set`/`env.unset` mutate the process environment directly:
+
+```lume
+let dir = fixture.temp_dir()
+let written = fs.write_text(path.join(dir, "note.txt"), "hello fixture")
+print(fs.read_text(path.join(dir, "note.txt")))
+let cleaned = fixture.cleanup(dir)
+print(cleaned)
+
+let didSet = env.set("FEATURE_X", "1")
+print(env.get("FEATURE_X"))
+let didUnset = env.unset("FEATURE_X")
+print(env.has("FEATURE_X"))
+```
+
+There is no automatic cleanup — like every other resource in Lume,
+`fixture.cleanup` must be called explicitly when a fixture is no longer
+needed.
 
 ## Example: a multi-module task board
 

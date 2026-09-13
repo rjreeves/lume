@@ -612,6 +612,12 @@
     "stdout": "true"
   },
   {
+    "id": "env_set_get_unset_roundtrip",
+    "prompt": "Print whether the environment variable LUME_EVAL_ROUNDTRIP_VAR is currently set. Then set it to \"present\" with env.set, and print whether it is now set and its current value. Finally unset it with env.unset and print whether it is set afterward.",
+    "args": [],
+    "stdout": "false\ntrue\npresent\nfalse"
+  },
+  {
     "id": "args_count_and_get",
     "prompt": "Print the argument count and each argument.",
     "args": [

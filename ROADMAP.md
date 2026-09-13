@@ -356,6 +356,11 @@ non-trivial benchmark in this file has met its own bar.**
 - human-readable and structured compiler errors;
 - native test declarations, assertions, filters, and direct-child
   `*_test.lume` discovery;
+- temporary-directory and environment fixtures for tests
+  (`fixture.temp_dir() -> str`, `fixture.cleanup(path) -> bool`,
+  `env.set(name, value) -> bool`, `env.unset(name) -> bool`) — no
+  automatic cleanup, consistent with every other resource in Lume
+  (files, processes) already requiring an explicit call to release;
 - formatter and format checking;
 - language-server support;
 - a machine-readable API manifest, compact AI generation contract, and fixed
@@ -399,8 +404,13 @@ into every compilation.
 
 ### 3. Stronger test tooling
 
-- recursively discover test files with explicit ignore rules;
-- provide temporary-directory and environment fixtures;
+- recursively discover test files with explicit ignore rules — deferred:
+  blocked on the same missing `isDirectory`/`stat` primitive as `dir.list`'s
+  own recursive traversal (see "4. Standard scripting APIs" below);
+- ~~provide temporary-directory and environment fixtures~~ — shipped as
+  `fixture.temp_dir()`/`fixture.cleanup(path)` and `env.set`/`env.unset`
+  (see "Shipped in the bootstrap" above); no automatic cleanup, matching
+  every other resource in Lume;
 - add structured test output for CI and editor integrations;
 - support test timeouts and process-output assertions;
 - report stable test identifiers for filters and reruns.
