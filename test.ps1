@@ -159,11 +159,18 @@ $processConfig = & $Lume run (Join-Path $PSScriptRoot 'examples\process_config.l
 if ($LASTEXITCODE -ne 0) { throw "process config example exited $LASTEXITCODE" }
 Assert-Equal 'richer process configuration' "HELLO LUME`nhello_from_lume`nfalse" ($processConfig -join "`n")
 
-# The only network-dependent check in this suite: a live GET against http://example.com,
-# chosen because its content has been stable for over a decade. Everything else here is local.
+# The first of two network-dependent checks in this suite: a live GET against
+# http://example.com, chosen because its content has been stable for over a decade.
 $httpGet = & $Lume run (Join-Path $PSScriptRoot 'examples\http_get.lume')
 if ($LASTEXITCODE -ne 0) { throw "http get example exited $LASTEXITCODE" }
 Assert-Equal 'http get' "200`ntrue`ntrue" ($httpGet -join "`n")
+
+# The second network-dependent check: httpbin.org echoes the request back, which is the
+# only way to prove a POST/PUT body and content-type were genuinely sent, not just that
+# some response came back. Everything else in this suite beyond these two checks is local.
+$httpPostPutDelete = & $Lume run (Join-Path $PSScriptRoot 'examples\http_post_put_delete.lume')
+if ($LASTEXITCODE -ne 0) { throw "http post/put/delete example exited $LASTEXITCODE" }
+Assert-Equal 'http post/put/delete' "true`ntrue`ntrue`ntrue`ntrue" ($httpPostPutDelete -join "`n")
 
 $fixtures = & $Lume run (Join-Path $PSScriptRoot 'examples\fixtures.lume')
 if ($LASTEXITCODE -ne 0) { throw "fixtures example exited $LASTEXITCODE" }
@@ -326,6 +333,10 @@ Assert-Equal 'process run_with_env argument validation' 'E0700 process.run_with_
 $httpGetArgs = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_http_get_args.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "http get argument validation should exit 1" }
 Assert-Equal 'http get argument validation' 'E0608 builtin `http.get` requires str' ($httpGetArgs -join "`n")
+
+$httpPostArgs = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_http_post_args.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "http post argument validation should exit 1" }
+Assert-Equal 'http post argument validation' 'E0710 builtin `http.post` requires (str, str, str)' ($httpPostArgs -join "`n")
 
 $envSetArgs = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_env_set_args.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "env set argument validation should exit 1" }

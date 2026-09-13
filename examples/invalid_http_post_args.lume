@@ -1,0 +1,4 @@
+fn main(args: [str]) -> int {
+  let outcome = http.post(5, "body", "text/plain")
+  return 0
+}

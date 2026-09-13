@@ -159,9 +159,11 @@ process.code(result)          process.stdout(result)
 process.stderr(result)
 process.run_with_input(executable, args, input)
 process.run_with_env(executable, args, envMap)
-http.get(url)                 http.status(response)
-http.body(response)           http.content_type(response)
-http.ok(response)
+http.get(url)                 http.delete(url)
+http.post(url, body, content_type)
+http.put(url, body, content_type)
+http.status(response)         http.body(response)
+http.content_type(response)   http.ok(response)
 str.len(text)                str.trim(text)
 str.upper(text)              str.lower(text)
 str.contains(text, part)     str.starts_with(text, prefix)
@@ -676,12 +678,27 @@ if result.is_ok(outcome) {
 }
 ```
 
+`http.delete(url)` works the same way. `http.post(url, body,
+content_type)` and `http.put(url, body, content_type)` send `body`
+with the given `Content-Type`, returning the same `http` result:
+
+```lume
+let outcome = http.post("https://httpbin.org/post", "hello", "text/plain")
+if result.is_ok(outcome) {
+  let response = result.value(outcome)
+  print(http.status(response))
+  print(http.ok(response))
+} else {
+  eprint(result.error(outcome))
+}
+```
+
 `Err` covers a failed request and a response over a fixed 10 MiB cap —
 checked only after the full response is already downloaded, since the
 underlying client has no streaming or early-abort mode. Windows only:
 the underlying client is a stub on other platforms that aborts the
-process rather than returning an error. There is no `post`/`put`/
-`delete`, no custom headers, and no binary body support yet.
+process rather than returning an error. There is no custom header
+support and no binary body support yet.
 
 ### Test fixtures
 
