@@ -361,6 +361,11 @@ non-trivial benchmark in this file has met its own bar.**
   `env.set(name, value) -> bool`, `env.unset(name) -> bool`) — no
   automatic cleanup, consistent with every other resource in Lume
   (files, processes) already requiring an explicit call to release;
+- structured, machine-readable test output: `lume test <path> --json`
+  emits JSON Lines (a `file` event per discovered test file in
+  directory mode, a `test` event per result, a final `summary` event)
+  instead of plain text, mirroring the `--json` convention `check`/`fmt`
+  already had; combinable with `--filter` in either order;
 - formatter and format checking;
 - language-server support;
 - a machine-readable API manifest, compact AI generation contract, and fixed
@@ -411,7 +416,11 @@ into every compilation.
   `fixture.temp_dir()`/`fixture.cleanup(path)` and `env.set`/`env.unset`
   (see "Shipped in the bootstrap" above); no automatic cleanup, matching
   every other resource in Lume;
-- add structured test output for CI and editor integrations;
+- ~~add structured test output for CI and editor integrations~~ —
+  shipped as `lume test`'s `--json` flag (see "Shipped in the
+  bootstrap" above), JSON Lines events for discovered files, per-test
+  results, and a final summary; combinable with `--filter` in either
+  order; plain-text output unchanged when `--json` is absent;
 - support test timeouts and process-output assertions;
 - report stable test identifiers for filters and reruns.
 

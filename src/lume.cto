@@ -4650,6 +4650,53 @@ fn reportProblem(problem: Text, path: Text, json: Bool): Unit [io] = {
   else { eprintln(problem) }
 }
 
+fn hasFlag(flag: Text): Bool = {
+  var index = 3
+  var found = false
+  while index < argCount() and not found {
+    if Text.eq(arg(index) ?? "", flag) then { found = true }
+    index = index + 1
+  }
+  found
+}
+
+fn flagValue(flag: Text): Text? = {
+  var index = 3
+  var result: Text? = None
+  while index < argCount() {
+    if Text.eq(arg(index) ?? "", flag) then { result = arg(index + 1) }
+    index = index + 1
+  }
+  result
+}
+
+fn testFileJson(path: Text): Text = {
+  val root = Json.object()
+  JsonValue.set(root, "event", Json.string("file"))
+  JsonValue.set(root, "path", Json.string(path))
+  Json.stringify(root)
+}
+
+fn testResultJson(name: Text, ok: Bool, line: Int, message: Text): Text = {
+  val root = Json.object()
+  JsonValue.set(root, "event", Json.string("test"))
+  JsonValue.set(root, "name", Json.string(name))
+  JsonValue.set(root, "status", Json.string(if ok then "pass" else "fail"))
+  JsonValue.set(root, "line", Json.int(line))
+  JsonValue.set(root, "message", Json.string(message))
+  Json.stringify(root)
+}
+
+fn testSummaryJson(passed: Int, failed: Int, note: Text): Text = {
+  val root = Json.object()
+  JsonValue.set(root, "event", Json.string("summary"))
+  JsonValue.set(root, "passed", Json.int(passed))
+  JsonValue.set(root, "failed", Json.int(failed))
+  JsonValue.set(root, "total", Json.int(passed + failed))
+  if not Text.eq(note, "") then { JsonValue.set(root, "note", Json.string(note)) }
+  Json.stringify(root)
+}
+
 fn formatSource(source: Text): Text = {
   val lines = Text.split(source, newline())
   var output: List<Text> = []
@@ -4743,7 +4790,13 @@ fn runCode(code: List<Instruction>): Unit [io] = {
   }
 }
 
-fn runTests(code: List<Instruction>, filter: Text): Unit [io] = {
+fn printTestResult(json: Bool, name: Text, ok: Bool, line: Int, message: Text): Unit [io] = {
+  if json then { println(testResultJson(name, ok, line, message)) }
+  else if ok then { println("PASS " ++ name) }
+  else { println("FAIL " ++ name ++ " (line " ++ intToText(line) ++ "): " ++ message) }
+}
+
+fn runTests(code: List<Instruction>, filter: Text, json: Bool): Unit [io] = {
   var passed = 0
   var failed = 0
   var discovered = 0
@@ -4754,29 +4807,31 @@ fn runTests(code: List<Instruction>, filter: Text): Unit [io] = {
     if Text.eq(item.op, "function") and (declaredTest or Text.startsWith(name, "test_")) and (Text.eq(filter, "") or Text.contains(displayName, filter)) then {
       discovered = discovered + 1
       if item.number != 0 or not Text.eq(markerReturnType(item.text), "bool") then {
-        println("FAIL " ++ displayName ++ " (line " ++ intToText(item.line) ++ "): tests must take no parameters and return bool")
+        printTestResult(json, displayName, false, item.line, "tests must take no parameters and return bool")
         failed = failed + 1
       } else {
         val outcome = callPure(code, "f:" ++ name, [])
         if not Text.eq(outcome.problem, "") then {
-          println("FAIL " ++ displayName ++ " (line " ++ intToText(item.line) ++ "): " ++ outcome.problem)
+          printTestResult(json, displayName, false, item.line, outcome.problem)
           failed = failed + 1
         } else if Text.eq(valueKind(outcome.value), "b:") and Text.eq(valueBody(outcome.value), "true") then {
-          println("PASS " ++ displayName)
+          printTestResult(json, displayName, true, item.line, "")
           passed = passed + 1
         } else {
           val detail = if Text.eq(valueKind(outcome.value), "x:") then valueBody(outcome.value) else "returned false"
-          println("FAIL " ++ displayName ++ " (line " ++ intToText(item.line) ++ "): " ++ detail)
+          printTestResult(json, displayName, false, item.line, detail)
           failed = failed + 1
         }
       }
     }
   }
   if discovered == 0 then {
-    println(if Text.eq(filter, "") then "FAIL no tests found" else "FAIL no tests matched `" ++ filter ++ "`")
+    val note = if Text.eq(filter, "") then "no tests found" else "no tests matched `" ++ filter ++ "`"
+    if json then { println(testSummaryJson(0, 0, note)) } else { println("FAIL " ++ note) }
     Process.quit(1)
   } else {
-    println(intToText(passed) ++ " passed; " ++ intToText(failed) ++ " failed")
+    if json then { println(testSummaryJson(passed, failed, "")) }
+    else { println(intToText(passed) ++ " passed; " ++ intToText(failed) ++ " failed") }
     if failed > 0 then { Process.quit(1) }
   }
 }
@@ -4785,6 +4840,7 @@ fn main(): Unit [io] = {
   val command = arg(1) ?? "help"
   val path = arg(2) ?? ""
   val jsonDiagnostics = Text.eq(arg(3) ?? "", "--json")
+  val testJson = hasFlag("--json")
   if Text.eq(command, "api") then {
     println(apiManifest())
   } else if Text.eq(command, "ai-reference") then {
@@ -4802,28 +4858,28 @@ fn main(): Unit [io] = {
       eprintln("command `" ++ command ++ "` requires a file")
       Process.quit(1)
     } else {
-      val filter = if Text.eq(arg(3) ?? "", "--filter") then arg(4) ?? "" else ""
+      val filter = flagValue("--filter") ?? ""
       var files = 0
       for entry in entries {
         if Text.endsWith(entry, "_test.lume") then {
           files = files + 1
           val testPath = Path.join(path, entry)
-          println("TEST " ++ testPath)
+          if testJson then { println(testFileJson(testPath)) } else { println("TEST " ++ testPath) }
           val program = loadProgram(testPath)
           if not Text.eq(program.problem, "") then {
-            reportProblem(program.problem, testPath, false)
+            reportProblem(program.problem, testPath, testJson)
             Process.quit(1)
           }
           val compiled = compileSource(program.source)
           if not Text.eq(compiled.problem, "") then {
-            reportProblem(compiled.problem, testPath, false)
+            reportProblem(compiled.problem, testPath, testJson)
             Process.quit(1)
           }
-          runTests(compiled.code, filter)
+          runTests(compiled.code, filter, testJson)
         }
       }
       if files == 0 then {
-        eprintln("no *_test.lume files found in " ++ path)
+        reportProblem("E0503 no *_test.lume files found in `" ++ path ++ "`", path, testJson)
         Process.quit(1)
       }
     }
@@ -4858,8 +4914,8 @@ fn main(): Unit [io] = {
       } else if Text.eq(command, "check") then {
         println("ok")
       } else if Text.eq(command, "test") then {
-        val filter = if Text.eq(arg(3) ?? "", "--filter") then arg(4) ?? "" else ""
-        runTests(compiled.code, filter)
+        val filter = flagValue("--filter") ?? ""
+        runTests(compiled.code, filter, testJson)
       } else if Text.eq(command, "bytecode") then {
         printCode(compiled.code)
       } else if Text.eq(command, "run") then {
