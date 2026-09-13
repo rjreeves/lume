@@ -564,6 +564,12 @@
     "stdout": "3"
   },
   {
+    "id": "json_encode_enum",
+    "prompt": "Declare an enum State with a payload-free variant waiting and a variant done(code: int). Encode State.done(code: 7) to JSON with json.encode and print the resulting string.",
+    "args": [],
+    "stdout": "{\"variant\":\"done\",\"code\":7}"
+  },
+  {
     "id": "path_join_basename",
     "prompt": "Join two path segments with path.join, then print the basename and extension of the joined path (extension via match on the Option result).",
     "args": [],

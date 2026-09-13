@@ -272,12 +272,17 @@ fn classify(raw: RawTask) -> Status {
 
 `json.encode(value) -> Result<str, str>` encodes back the other direction,
 supporting the same shapes decoding does — `str`, `int`, `bool`, nested
-records, and lists, recursively. It does not support enum values either
-(including `Option<T>`/`Result<T,E>`, which are enums under the hood) —
-attempting to encode one returns `Err`, not a crash. There is no schema
-or expected-type argument: every value already carries its own runtime
-type tag, so encoding a valid, already-typechecked value cannot itself
-fail except when it contains an unsupported enum somewhere inside it.
+records, and lists, recursively — plus enum values, including `Option<T>`/
+`Result<T,E>` (enums under the hood): an enum encodes as its variant name
+under a `"variant"` key, with any payload fields flattened alongside it —
+`State.done(code: 0)` becomes `{"variant":"done","code":0}`, and a
+payload-free variant like `Option.None()` becomes `{"variant":"None"}`.
+An enum nested inside a record field or list element is encoded the same
+recursive way as anything else. This is one-directional: decoding a JSON
+payload into an enum field is still not supported (§8), so there is no
+matching decode shape and no round-trip guarantee. There is no schema or
+expected-type argument: every value already carries its own runtime type
+tag, so encoding a valid, already-typechecked value cannot itself fail.
 
 Records are updated immutably with `with`:
 
@@ -779,7 +784,6 @@ simply not built yet and carries no such argument against it.
 - `for`/`in` loops, `break`, `continue`
 - `&&`, `||`, `not` boolean operators
 - `int`↔`str` conversion of any kind
-- JSON encoding of enum values (`json.encode`, §8)
 - `use ... as` import aliasing
 - a `(key, value)`-style two-parameter callback for `map.*` transforms
   (today's `map.map`/`map.filter`/`map.fold` take the value only)

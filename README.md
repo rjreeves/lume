@@ -404,9 +404,26 @@ print(roundtripped.name == user.name)
 
 It takes no schema or expected type — every value already carries its own
 runtime type tag, so it works on any record or list without declaring
-anything extra. It does not support enum values (including `Option<T>`/
-`Result<T, E>`, which are enums under the hood) — encoding one returns
-`Err`, not a crash.
+anything extra. An enum — including `Option<T>`/`Result<T, E>`, which are
+enums under the hood — encodes as its variant name under a `"variant"` key,
+with any payload fields flattened alongside it:
+
+```lume
+enum State {
+  waiting
+  done(code: int)
+}
+
+print(json.encode(State.waiting()))       // {"variant":"waiting"}
+print(json.encode(State.done(code: 7)))   // {"variant":"done","code":7}
+print(json.encode(Option.Some(value: 1))) // {"variant":"Some","value":1}
+```
+
+An enum nested inside a record or list field is encoded the same
+recursive way as any other value. This is one-directional — decoding a
+JSON payload back into an enum field is still not supported (see
+"Records" above), so there is no matching decode shape and no round-trip
+guarantee.
 
 ### Enums
 
