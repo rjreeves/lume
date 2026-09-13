@@ -162,6 +162,7 @@ process.run_with_env(executable, args, envMap)
 http.get(url)                 http.delete(url)
 http.post(url, body, content_type)
 http.put(url, body, content_type)
+http.request(method, url, headers, body)
 http.status(response)         http.body(response)
 http.content_type(response)   http.ok(response)
 str.len(text)                str.trim(text)
@@ -693,12 +694,27 @@ if result.is_ok(outcome) {
 }
 ```
 
+`http.request(method, url, headers, body)`, where `headers: Map<str,
+str>`, sends any method with arbitrary headers — the only builtin that
+can send an `Authorization` header or anything else beyond a fixed
+`Content-Type`:
+
+```lume
+let headers = map.set(map.new(), "X-Api-Key", "secret")
+let outcome = http.request("GET", "https://httpbin.org/headers", headers, "")
+if result.is_ok(outcome) {
+  print(http.status(result.value(outcome)))
+} else {
+  eprint(result.error(outcome))
+}
+```
+
 `Err` covers a failed request and a response over a fixed 10 MiB cap —
 checked only after the full response is already downloaded, since the
 underlying client has no streaming or early-abort mode. Windows only:
 the underlying client is a stub on other platforms that aborts the
-process rather than returning an error. There is no custom header
-support and no binary body support yet.
+process rather than returning an error. There is no binary body
+support yet (`Bytes` isn't exposed at the Lume level).
 
 ### Test fixtures
 

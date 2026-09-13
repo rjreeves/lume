@@ -1,0 +1,4 @@
+fn main(args: [str]) -> int {
+  let outcome = http.request("GET", "https://httpbin.org/headers", "not a map", "")
+  return 0
+}

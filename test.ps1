@@ -167,10 +167,17 @@ Assert-Equal 'http get' "200`ntrue`ntrue" ($httpGet -join "`n")
 
 # The second network-dependent check: httpbin.org echoes the request back, which is the
 # only way to prove a POST/PUT body and content-type were genuinely sent, not just that
-# some response came back. Everything else in this suite beyond these two checks is local.
+# some response came back.
 $httpPostPutDelete = & $Lume run (Join-Path $PSScriptRoot 'examples\http_post_put_delete.lume')
 if ($LASTEXITCODE -ne 0) { throw "http post/put/delete example exited $LASTEXITCODE" }
 Assert-Equal 'http post/put/delete' "true`ntrue`ntrue`ntrue`ntrue" ($httpPostPutDelete -join "`n")
+
+# The third network-dependent check: httpbin.org's /headers endpoint echoes every header
+# it received, the only way to prove a custom header was genuinely sent. Everything else
+# in this suite beyond these three checks is local.
+$httpRequestHeaders = & $Lume run (Join-Path $PSScriptRoot 'examples\http_request_headers.lume')
+if ($LASTEXITCODE -ne 0) { throw "http request headers example exited $LASTEXITCODE" }
+Assert-Equal 'http request custom headers' "true`ntrue" ($httpRequestHeaders -join "`n")
 
 $fixtures = & $Lume run (Join-Path $PSScriptRoot 'examples\fixtures.lume')
 if ($LASTEXITCODE -ne 0) { throw "fixtures example exited $LASTEXITCODE" }
@@ -337,6 +344,10 @@ Assert-Equal 'http get argument validation' 'E0608 builtin `http.get` requires s
 $httpPostArgs = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_http_post_args.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "http post argument validation should exit 1" }
 Assert-Equal 'http post argument validation' 'E0710 builtin `http.post` requires (str, str, str)' ($httpPostArgs -join "`n")
+
+$httpRequestArgs = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_http_request_args.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "http request argument validation should exit 1" }
+Assert-Equal 'http request argument validation' 'E0711 http.request requires (str, str, Map<str,str>, str)' ($httpRequestArgs -join "`n")
 
 $envSetArgs = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_env_set_args.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "env set argument validation should exit 1" }

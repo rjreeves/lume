@@ -345,15 +345,17 @@ non-trivial benchmark in this file has met its own bar.**
   (see "Now" above) since no output-capturing Certo primitive accepts
   either;
 - `http.get`/`http.post`/`http.put`/`http.delete(url[, body,
-  content_type]) -> Result<http, str>` with `http.status/body/
-  content_type/ok(response)` accessors — a hard 10 MiB response-size cap
-  is enforced after the (already-complete) download, since Certo's HTTP
-  client has no streaming or early-abort mode; Windows only, since
-  Certo's non-Windows `Http.*` calls are stubs that abort the process
-  rather than returning an error; custom headers and binary bodies
-  remain deferred (see "Now" above) — both already exist as registered
-  Certo primitives, so this is purely a scoping choice for the next
-  slice;
+  content_type]) -> Result<http, str>` and `http.request(method, url,
+  headers: Map<str,str>, body) -> Result<http, str>` for arbitrary
+  methods and headers, with `http.status/body/content_type/ok(response)`
+  accessors — a hard 10 MiB response-size cap is enforced after the
+  (already-complete) download, since Certo's HTTP client has no
+  streaming or early-abort mode; Windows only, since Certo's
+  non-Windows `Http.*` calls are stubs that abort the process rather
+  than returning an error; binary bodies remain deferred (see "Now"
+  above) — `Http.requestBytes` already exists as a registered Certo
+  primitive, but needs a `Bytes` type this session hasn't exposed at
+  the Lume level;
 - human-readable and structured compiler errors;
 - native test declarations, assertions, filters, and direct-child
   `*_test.lume` discovery;
@@ -503,12 +505,14 @@ into every compilation.
   primitive exists anywhere in Certo's process stdlib, so both need new
   C-level work in Certo itself, not just a Lume-side wrapper;
 - ~~HTTP requests with typed results and bounded response handling~~ —
-  partially shipped: `http.get`/`http.post`/`http.put`/`http.delete`
-  are done (see "Shipped in the bootstrap" above); custom headers,
-  binary bodies, and true request-time (rather than post-download)
-  response bounding remain deferred — the first two are a scoping
-  choice (Certo already registers `Http.request`/`Http.requestBytes`),
-  the last needs a streaming primitive that doesn't exist in Certo yet;
+  partially shipped: `http.get`/`http.post`/`http.put`/`http.delete`/
+  `http.request` (arbitrary methods and headers via `Map<str,str>`)
+  are done (see "Shipped in the bootstrap" above); binary bodies and
+  true request-time (rather than post-download) response bounding
+  remain deferred — the former is a scoping choice (`Http.requestBytes`
+  already exists, but needs a `Bytes` type not yet exposed at the Lume
+  level), the latter needs a streaming primitive that doesn't exist in
+  Certo yet;
 - ~~JSON encoding to complement typed decoding~~ — shipped as
   `json.encode(value) -> Result<str, str>` (see "Shipped in the
   bootstrap" above); supports the same shapes decoding does
