@@ -1,0 +1,17 @@
+fn main(args: [str]) -> int {
+  let dir = fixture.temp_dir()
+  let filePath = path.join(dir, "payload.bin")
+  let wrote = fs.write_bytes(filePath, bytes.from_str("roundtrip content"))
+  print(wrote)
+  let readBack = fs.read_bytes(filePath)
+  if result.is_ok(readBack) {
+    let data = result.value(readBack)
+    print(bytes.to_str(data))
+    print(bytes.length(data))
+  } else {
+    print(result.error(readBack))
+  }
+  let cleaned = fixture.cleanup(dir)
+  print(cleaned)
+  return 0
+}

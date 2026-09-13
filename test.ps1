@@ -187,6 +187,12 @@ $httpRequestHeaders = & $Lume run (Join-Path $PSScriptRoot 'examples\http_reques
 if ($LASTEXITCODE -ne 0) { throw "http request headers example exited $LASTEXITCODE" }
 Assert-Equal 'http request custom headers' "true`ntrue" ($httpRequestHeaders -join "`n")
 
+# The fourth network-dependent check: httpbin.org's /post endpoint echoes the request
+# body back, the only way to prove a bytes body was genuinely sent (not just some text).
+$httpRequestBytes = & $Lume run (Join-Path $PSScriptRoot 'examples\http_request_bytes.lume')
+if ($LASTEXITCODE -ne 0) { throw "http request bytes example exited $LASTEXITCODE" }
+Assert-Equal 'http request bytes' "true`ntrue`ntrue`ntrue" ($httpRequestBytes -join "`n")
+
 $fixtures = & $Lume run (Join-Path $PSScriptRoot 'examples\fixtures.lume')
 if ($LASTEXITCODE -ne 0) { throw "fixtures example exited $LASTEXITCODE" }
 Assert-Equal 'test fixtures' "true`nhello fixture`ntrue`nfalse`nfalse`ntrue`nabc`nfalse" ($fixtures -join "`n")
@@ -204,6 +210,18 @@ $roundTripPath = Join-Path $PSScriptRoot 'dist\round-trip.txt'
 $fileWrite = & $Lume run (Join-Path $PSScriptRoot 'examples\file_write.lume') $roundTripPath
 if ($LASTEXITCODE -ne 0) { throw "file write exited $LASTEXITCODE" }
 Assert-Equal 'file write and read' 'round trip' ($fileWrite -join "`n")
+
+$bytesBasics = & $Lume run (Join-Path $PSScriptRoot 'examples\bytes_basics.lume')
+if ($LASTEXITCODE -ne 0) { throw "bytes basics exited $LASTEXITCODE" }
+Assert-Equal 'bytes basics' "hello world`n11" ($bytesBasics -join "`n")
+
+$bytesFileRoundtrip = & $Lume run (Join-Path $PSScriptRoot 'examples\bytes_file_roundtrip.lume')
+if ($LASTEXITCODE -ne 0) { throw "bytes file roundtrip exited $LASTEXITCODE" }
+Assert-Equal 'bytes file roundtrip' "true`nroundtrip content`n17`ntrue" ($bytesFileRoundtrip -join "`n")
+
+$invalidBytesToStr = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_bytes_to_str_args.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "bytes.to_str validation should exit 1" }
+Assert-Equal 'bytes.to_str requires bytes' 'E0712 builtin `bytes.to_str` requires bytes' ($invalidBytesToStr -join "`n")
 
 $check = & $Lume check (Join-Path $PSScriptRoot 'examples\arithmetic.lume')
 if ($LASTEXITCODE -ne 0) { throw "check exited $LASTEXITCODE" }

@@ -152,6 +152,7 @@ args.count()                 args.get(index)
 fs.exists(path)              fs.read_text(path)
 fs.write_text(path, text)
 fs.try_read_text(path)       fs.try_write_text(path, text)
+fs.read_bytes(path)          fs.write_bytes(path, data)
 env.get(name)                env.has(name)
 env.set(name, value)         env.unset(name)
 process.run(executable, args) process.ok(result)
@@ -163,8 +164,12 @@ http.get(url)                 http.delete(url)
 http.post(url, body, content_type)
 http.put(url, body, content_type)
 http.request(method, url, headers, body)
+http.request_bytes(method, url, headers, data)
 http.status(response)         http.body(response)
 http.content_type(response)   http.ok(response)
+http.body_bytes(response)
+bytes.from_str(text)         bytes.to_str(data)
+bytes.length(data)
 str.len(text)                str.trim(text)
 str.upper(text)              str.lower(text)
 str.contains(text, part)     str.starts_with(text, prefix)
@@ -715,12 +720,37 @@ if result.is_ok(outcome) {
 }
 ```
 
+`http.request_bytes(method, url, headers, data)` mirrors
+`http.request` but takes a `bytes` body, paired with
+`http.body_bytes(response) -> bytes` to read one back:
+
+```lume
+let headers = map.new()
+let body = bytes.from_str("hello-bytes-payload")
+let outcome = http.request_bytes("POST", "https://httpbin.org/post", headers, body)
+if result.is_ok(outcome) {
+  let response = result.value(outcome)
+  print(bytes.to_str(http.body_bytes(response)))
+} else {
+  eprint(result.error(outcome))
+}
+```
+
+`bytes` is a type distinct from `str`, but under the hood it's
+represented exactly like `str` — a deliberate, documented scope
+reduction, not a NUL-safe binary type. `bytes.from_str(text) -> bytes`
+and `bytes.to_str(data) -> str` convert between the two, and
+`bytes.length(data) -> int` returns the byte count. Content with an
+embedded NUL byte truncates at the NUL on round-trip (`bytes.to_str`,
+`fs.read_bytes`); `fs.read_bytes(path) -> Result<bytes, str>` and
+`fs.write_bytes(path, data) -> bool` mirror `fs.try_read_text`/
+`fs.write_text` for binary-flavored file content.
+
 `Err` covers a failed request and a response over a fixed 10 MiB cap —
 checked only after the full response is already downloaded, since the
 underlying client has no streaming or early-abort mode. Windows only:
 the underlying client is a stub on other platforms that aborts the
-process rather than returning an error. There is no binary body
-support yet (`Bytes` isn't exposed at the Lume level).
+process rather than returning an error.
 
 ### Test fixtures
 

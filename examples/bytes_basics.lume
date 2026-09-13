@@ -1,0 +1,6 @@
+fn main(args: [str]) -> int {
+  let data = bytes.from_str("hello world")
+  print(bytes.to_str(data))
+  print(bytes.length(data))
+  return 0
+}

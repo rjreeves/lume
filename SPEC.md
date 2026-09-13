@@ -58,7 +58,7 @@ general postfix `.` chaining (see §8).
 ## 4. Built-in types
 
 ```text
-bool int float str
+bool int float str bytes
 [T]             list
 Map<K, V>       key/value map; K restricted to int, str, or bool
 Option<T>       some T or none, spelled `Some`/`None`
@@ -67,9 +67,12 @@ T ! E           sugar for a function's return type only; see §9
 fn(A, B) -> C   the parameter type of a callback slot (see §12)
 ```
 
-Integers are signed 64-bit. Floats are IEEE-754 binary64.
+Integers are signed 64-bit. Floats are IEEE-754 binary64. `bytes` is a
+type distinct from `str` at the type-checker level, but — as a
+deliberate, documented scope reduction (see §11) — it does not carry
+arbitrary binary content: an embedded NUL byte truncates on round-trip.
 
-**Not yet implemented:** `bytes`, `unit`/`never` as usable types, and the
+**Not yet implemented:** `unit`/`never` as usable types, and the
 `T?` postfix sugar for `Option<T>` — write
 `Option<T>` explicitly. There are no implicit conversions, and — contrary to
 what the previous draft of this section claimed — there is currently **no
@@ -450,6 +453,7 @@ args.count()                  args.get(index)
 fs.exists(path)                fs.read_text(path)
 fs.write_text(path, text)      fs.try_read_text(path)
 fs.try_write_text(path, text)
+fs.read_bytes(path)             fs.write_bytes(path, data)
 env.get(name)                  env.has(name)
 env.set(name, value)            env.unset(name)
 process.run(exe, args)         process.ok(result)
@@ -461,8 +465,12 @@ http.get(url)                     http.delete(url)
 http.post(url, body, content_type)
 http.put(url, body, content_type)
 http.request(method, url, headers, body)
+http.request_bytes(method, url, headers, data)
 http.status(response)             http.body(response)
 http.content_type(response)       http.ok(response)
+http.body_bytes(response)
+bytes.from_str(text)            bytes.to_str(data)
+bytes.length(data)
 str.len(text)                  str.trim(text)
 str.upper(text)                str.lower(text)
 str.contains(text, part)       str.starts_with(text, prefix)
@@ -515,6 +523,23 @@ an epoch value (`time.year(1700000000)` is `2023`). There is still no
 plain `int` arithmetic on epoch seconds covers offsets (`time.now() +
 300` for five minutes from now).
 
+`bytes` is a distinct type from `str`, but under the hood a Lume `bytes`
+value is represented exactly like `str` — a genuinely NUL-safe binary
+type would require a change to Lume's runtime value representation,
+which is out of scope today. Practically, this means content with an
+embedded NUL byte silently truncates at the NUL when read back
+(`bytes.to_str`, `fs.read_bytes`) — the same limitation Certo's own
+underlying `Bytes.toText` conversion already has. This covers the large
+majority of real payloads (JSON APIs, text-based formats, most file
+content); `bytes.from_str(text) -> bytes` and `bytes.to_str(data) -> str`
+convert between the two, `bytes.length(data) -> int` returns the byte
+count, `fs.read_bytes(path) -> Result<bytes, str>` and
+`fs.write_bytes(path, data) -> bool` mirror `fs.try_read_text`/
+`fs.write_text` for binary-flavored file content, and
+`http.request_bytes(method, url, headers, data) -> Result<http, str>` /
+`http.body_bytes(response) -> bytes` mirror `http.request`/`http.body`
+with a `bytes` body instead of `str`.
+
 `process.run_with_input(exe, args, input) -> process` runs a command like
 `process.run`, but writes `input` to its stdin before capturing
 `stdout`/`stderr` — use the same `process.code`/`.stdout`/`.stderr`/`.ok`
@@ -534,18 +559,21 @@ content_type) -> Result<http, str>` send `body` with the given
 Result<http, str>`, where `headers: Map<str, str>`, sends any method
 with arbitrary headers — the only builtin that can send an
 `Authorization` header or anything else beyond a fixed
-`Content-Type`. All five share the same `http` result type and
+`Content-Type`. `http.request_bytes(method, url, headers, data) ->
+Result<http, str>` mirrors `http.request` but takes a `bytes` body
+instead of `str` (see §11's `bytes` section for the text-safe-subset
+caveat this implies). All six share the same `http` result type and
 accessors: `http.status(response) -> int`, `http.body(response) ->
-str`, `http.content_type(response) -> str`, or `http.ok(response) ->
-bool` (true when `status` is in `[200, 300)`). `Err` covers both a
+str`, `http.content_type(response) -> str`, `http.ok(response) ->
+bool` (true when `status` is in `[200, 300)`), or `http.body_bytes(response)
+-> bytes`. `Err` covers both a
 failed request (DNS/connect failure) and a response whose body exceeds
 a fixed 10 MiB cap — the cap is checked only after the full response has
 already been downloaded, since the underlying client has no streaming
 or early-abort mode; it bounds what these builtins hand back, not the
-network transfer itself. All five are Windows-only: the underlying
+network transfer itself. All six are Windows-only: the underlying
 client is a stub on other platforms that aborts the process rather than
-returning an error. There is no binary body support yet (`Bytes` isn't
-exposed at the Lume level).
+returning an error.
 
 `fixture.temp_dir() -> str` creates and returns a fresh, unique
 directory (under `%TEMP%`, falling back to `%TMP%` then `.`) — call
