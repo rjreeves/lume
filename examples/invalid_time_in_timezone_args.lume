@@ -1,0 +1,4 @@
+fn main(args: [str]) -> int {
+  print(time.in_timezone("not-a-timestamp", "America/New_York"))
+  return 0
+}

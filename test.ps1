@@ -98,6 +98,14 @@ $invalidTimeFormat = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_ti
 if ($LASTEXITCODE -ne 1) { throw "time.format validation should exit 1" }
 Assert-Equal 'time.format requires (int, str)' 'E0715 builtin `time.format` requires (int, str)' ($invalidTimeFormat -join "`n")
 
+$timeTimezone = & $Lume run (Join-Path $PSScriptRoot 'examples\time_timezone.lume')
+if ($LASTEXITCODE -ne 0) { throw "time timezone exited $LASTEXITCODE" }
+Assert-Equal 'time timezone' "true`n2023-11-14T17:13:20-05:00`ntrue`n2023-11-14 17:13:20`nfalse`nunknown timezone ``Not/AZone``" ($timeTimezone -join "`n")
+
+$invalidTimeInTimezone = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_time_in_timezone_args.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "time.in_timezone validation should exit 1" }
+Assert-Equal 'time.in_timezone requires (int, str)' 'E0716 builtin `time.in_timezone` requires (int, str)' ($invalidTimeInTimezone -join "`n")
+
 $enums = & $Lume run (Join-Path $PSScriptRoot 'examples\enums.lume')
 if ($LASTEXITCODE -ne 0) { throw "enums exited $LASTEXITCODE" }
 Assert-Equal 'enum construction' ('{"$enum":"JobState","$variant":"pending"}' + "`n" + '{"$enum":"JobState","$variant":"completed","code":"i:0"}') ($enums -join "`n")
