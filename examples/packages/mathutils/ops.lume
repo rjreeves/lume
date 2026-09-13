@@ -1,0 +1,3 @@
+pub fn ops.square(value: int) -> int {
+  return value * value
+}

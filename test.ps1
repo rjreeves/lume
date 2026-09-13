@@ -519,4 +519,14 @@ $filterByPathFragment = & $Lume test $nativeTestsPath --filter 'native_tests.lum
 if ($LASTEXITCODE -ne 0) { throw "filter by path fragment exited $LASTEXITCODE" }
 Assert-Equal 'filter matches path fragment via stable id' "PASS adds two values`nPASS recognizes present values`n2 passed; 0 failed" ($filterByPathFragment -join "`n")
 
+$packagesAppDir = Join-Path $PSScriptRoot 'examples\packages\app'
+$installOutput = & $Lume install $packagesAppDir
+if ($LASTEXITCODE -ne 0) { throw "lume install exited $LASTEXITCODE" }
+$lockContent = Get-Content -LiteralPath (Join-Path $packagesAppDir 'lume.lock.json') -Raw
+Assert-Equal 'package install writes lock file' '{"dependencies":[{"name":"mathutils","path":"../mathutils","version":"0.1.0"}]}' $lockContent.Trim()
+
+$packagesRun = & $Lume run (Join-Path $packagesAppDir 'app.lume')
+if ($LASTEXITCODE -ne 0) { throw "package app example exited $LASTEXITCODE" }
+Assert-Equal 'package use resolution' '36' ($packagesRun -join "`n")
+
 Write-Host 'All Lume smoke tests passed.'

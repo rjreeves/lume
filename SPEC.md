@@ -399,6 +399,39 @@ A root file only needs to `use` the modules it actually needs reachable;
 whether a submodule itself also `use`s its own dependencies only matters if
 those dependencies aren't already reachable some other way from the root.
 
+### Packages
+
+A directory becomes a package by adding a `lume.json` manifest —
+`{"name": str, "version": str, "dependencies": [{"name": str, "path":
+str}, ...]}` (`dependencies` is a JSON array, not an object keyed by
+name — deliberately, since `JsonValue.keys()` is not reliable on a
+nested object obtained via `JsonValue.get()`, only on a top-level
+parse; an array sidesteps it entirely via the already-proven
+`JsonValue.length`/`JsonValue.atText` pair). `dependencies` entries
+declare another package by a path relative to the manifest's own
+directory — no registry, no version ranges yet, `version` fields are
+declarative metadata only.
+
+`lume install <dir>` is a separate step from ordinary compilation, per
+this project's own constraint that package resolution must not happen
+on every compile: it reads `<dir>/lume.json`, reads each declared
+dependency's own `lume.json` for its `version` (not transitive — a
+dependency's own `dependencies` are not resolved), and writes
+`<dir>/lume.lock.json` recording each dependency's `path` and resolved
+`version`. Missing/malformed root manifest is `E0705`; a dependency
+whose own manifest can't be read is `E0706`; a lock file write failure
+is `E0707`.
+
+`use` resolution (`loadModule`) reads `lume.lock.json` once, at the
+very start of loading the root file — never the manifest, and never
+more than once per compile. For each `use` target, the segment before
+the first `.` is checked against the lock file's dependency names
+first; a match resolves the remainder into that dependency's directory
+instead of the importing file's own directory. No match — no lock
+file, no dot, or the name isn't declared — falls through to the
+existing file-relative resolution, unchanged. A project with neither
+file present behaves identically to before this existed.
+
 ## 11. Standard library
 
 APIs follow `noun.verb` naming. The current, complete builtin surface
