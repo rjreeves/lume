@@ -1,27 +1,27 @@
-use http
-use json
-
-type Todo {
-  id: int
+type Slideshow {
+  author: str
   title: str
-  completed: bool
+}
+
+type SlideshowResponse {
+  slideshow: Slideshow
 }
 
 fn main(args: [str]) -> int {
-  match http.get("https://example.test/todos/1") {
-    ok response => match json.decode[Todo](response.body) {
-      ok todo => {
-        print("{todo.id}: {todo.title}")
-        return 0
-      }
-      err message => {
-        eprint(message)
-        return 1
-      }
-    }
-    err message => {
-      eprint(message)
-      return 1
-    }
+  let outcome = http.get("https://httpbin.org/json")
+  if result.is_ok(outcome) == false {
+    eprint(result.error(outcome))
+    return 1
   }
+  let response = result.value(outcome)
+
+  let decoded = SlideshowResponse.from_json(http.body(response))
+  if result.is_ok(decoded) == false {
+    eprint(result.error(decoded))
+    return 1
+  }
+  let show = result.value(decoded)
+  print(show.slideshow.author)
+  print(show.slideshow.title)
+  return 0
 }

@@ -1,22 +1,22 @@
-use fs
-
+// True word-splitting isn't possible yet - str.* has no split, substring,
+// or character-index operation (see BACKLOG.md) - so this reports a file's
+// character count instead, the closest metric actually computable today.
 fn main(args: [str]) -> int {
-  let path = list.get(args, 0) ?? ""
+  var path = ""
+  if args.count() > 0 {
+    path = args.get(0)
+  }
   if path == "" {
     eprint("usage: word_count <file>")
     return 64
   }
 
-  match fs.read_text(path) {
-    ok text => {
-      let words = str.split_whitespace(text)
-      let count = list.len(words)
-      print("{count}")
-      return 0
-    }
-    err message => {
-      eprint(message)
-      return 1
-    }
+  if fs.exists(path) == false {
+    eprint("file not found: " + path)
+    return 1
   }
+
+  let text = fs.read_text(path)
+  print(str.len(text))
+  return 0
 }
