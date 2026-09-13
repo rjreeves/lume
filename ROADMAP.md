@@ -366,6 +366,11 @@ non-trivial benchmark in this file has met its own bar.**
   directory mode, a `test` event per result, a final `summary` event)
   instead of plain text, mirroring the `--json` convention `check`/`fmt`
   already had; combinable with `--filter` in either order;
+- stable per-test identifiers (`<path>#<name>`) reported on every
+  `--json` test result and matched against by `--filter` — a strict
+  superset of matching by bare name, so a path fragment disambiguates
+  same-named tests across files and an `id` captured from one run
+  reruns exactly one test;
 - formatter and format checking;
 - language-server support;
 - a machine-readable API manifest, compact AI generation contract, and fixed
@@ -422,7 +427,13 @@ into every compilation.
   results, and a final summary; combinable with `--filter` in either
   order; plain-text output unchanged when `--json` is absent;
 - support test timeouts and process-output assertions;
-- report stable test identifiers for filters and reruns.
+- ~~report stable test identifiers for filters and reruns~~ — shipped:
+  every test result now carries a stable `id` (`<path>#<name>`, see
+  "Shipped in the bootstrap" above); `--filter` matches against the
+  full `id`, a strict superset of the old bare-name match, so a path
+  fragment now disambiguates same-named tests across files and an
+  `id` captured from one run can be fed straight back for an exact
+  rerun.
 
 ### 4. Standard scripting APIs
 

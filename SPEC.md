@@ -566,12 +566,17 @@ recursive):
 .\dist\lume.exe test .\examples\native_suite
 ```
 
-`--filter text` runs only tests whose name contains `text`; `--json`
+`--filter text` runs only tests whose stable id (`<path>#<name>`, the
+same id reported below) contains `text` — this matches everything a
+bare name match would (the id always contains the name), plus a path
+fragment now disambiguates same-named tests in different files; `--json`
 switches every line of output to a JSON object instead of plain text,
 for CI and editor integrations — both flags work in either order. Per
 discovered test file (directory mode only): `{"event":"file","path":
-"..."}`. Per test: `{"event":"test","name":"...","status":"pass"|
-"fail","line":N,"message":"..."}` (`message` is `""` for a pass).
+"..."}`. Per test: `{"event":"test","id":"...","name":"...","status":
+"pass"|"fail","line":N,"message":"..."}` (`message` is `""` for a
+pass; `id` is `<path>#<name>` exactly as the path was passed on the
+command line — capture it from one run to `--filter` an exact rerun).
 Final summary: `{"event":"summary","passed":N,"failed":N,"total":N}`
 (adds `"note"` only when zero tests were discovered). Plain-text output
 is unchanged when `--json` is not passed.
