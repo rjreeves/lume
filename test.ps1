@@ -26,6 +26,14 @@ $greeting = & $Lume run (Join-Path $PSScriptRoot 'examples\greeting.lume')
 if ($LASTEXITCODE -ne 0) { throw "greeting exited $LASTEXITCODE" }
 Assert-Equal 'string concatenation' 'hello, Lume' ($greeting -join "`n")
 
+$helloDefault = & $Lume run (Join-Path $PSScriptRoot 'examples\hello.lume')
+if ($LASTEXITCODE -ne 0) { throw "hello (default) exited $LASTEXITCODE" }
+Assert-Equal 'hello with no args' 'hello, world' ($helloDefault -join "`n")
+
+$helloArg = & $Lume run (Join-Path $PSScriptRoot 'examples\hello.lume') 'Ada'
+if ($LASTEXITCODE -ne 0) { throw "hello (arg) exited $LASTEXITCODE" }
+Assert-Equal 'hello with an arg' 'hello, Ada' ($helloArg -join "`n")
+
 $control = & $Lume run (Join-Path $PSScriptRoot 'examples\control_flow.lume')
 if ($LASTEXITCODE -ne 0) { throw "control flow exited $LASTEXITCODE" }
 Assert-Equal 'control flow' "control flow works`n10" ($control -join "`n")

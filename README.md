@@ -12,11 +12,12 @@ includes a Certo-written bootstrap compiler and bytecode VM.
 Read the practical guide: [Using Lume — The Fast One](docs/using-lume-the-fast-one.md).
 
 ```lume
-use http
-
 fn main(args: [str]) -> int {
-  let name = list.get(args, 0) ?? "world"
-  print("hello, {name}")
+  var name = "world"
+  if args.count() > 0 {
+    name = args.get(0)
+  }
+  print("hello, " + name)
   return 0
 }
 ```
