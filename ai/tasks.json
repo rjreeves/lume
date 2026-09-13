@@ -582,6 +582,12 @@
     "stdout": "20"
   },
   {
+    "id": "time_calendar_components",
+    "prompt": "For the fixed Unix timestamp 1700000000, print its UTC year, month, day, hour, minute, and second, one per line, using time.year/month/day/hour/minute/second.",
+    "args": [],
+    "stdout": "2023\n11\n14\n22\n13\n20"
+  },
+  {
     "id": "file_write_read_roundtrip",
     "prompt": "Write a file then read it back and print its contents.",
     "args": [],

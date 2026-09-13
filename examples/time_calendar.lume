@@ -1,0 +1,10 @@
+fn main(args: [str]) -> int {
+  let ts = 1700000000
+  print(time.year(ts))
+  print(time.month(ts))
+  print(time.day(ts))
+  print(time.hour(ts))
+  print(time.minute(ts))
+  print(time.second(ts))
+  return 0
+}

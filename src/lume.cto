@@ -911,7 +911,7 @@ fn builtinNames(): List<Text> = [
   "json.valid", "json.get", "json.encode",
   "path.join", "path.basename", "path.dirname", "path.extension", "path.stem",
   "dir.list",
-  "time.now", "time.to_iso",
+  "time.now", "time.to_iso", "time.year", "time.month", "time.day", "time.hour", "time.minute", "time.second",
   "http.get", "http.post", "http.put", "http.delete", "http.request", "http.status", "http.body", "http.content_type", "http.ok",
   "list.len", "list.get", "list.push", "list.map", "list.filter", "list.find", "list.fold",
   "map.new", "map.len", "map.get", "map.has", "map.set", "map.remove", "map.keys", "map.values", "map.map", "map.filter", "map.fold",
@@ -930,7 +930,7 @@ fn builtinCounts(): List<Int> = [
   1, 2, 1,
   2, 1, 1, 1, 1,
   1,
-  0, 1,
+  0, 1, 1, 1, 1, 1, 1, 1,
   1, 3, 3, 1, 4, 1, 1, 1, 1,
   1, 2, 2, 2, 2, 2, 3,
   0, 1, 2, 2, 3, 2, 1, 1, 2, 2, 3,
@@ -2589,6 +2589,11 @@ fn checkBuiltinTypes(code: List<Instruction>, name: Text, stackInput: List<Text>
     stack = valueType.stack
     if not Text.eq(valueType.value, "int") then { problem = "E0699 builtin `" ++ name ++ "` requires int" }
     resultType = "str"
+  } else if Text.eq(name, "time.year") or Text.eq(name, "time.month") or Text.eq(name, "time.day") or Text.eq(name, "time.hour") or Text.eq(name, "time.minute") or Text.eq(name, "time.second") then {
+    val valueType = pop(stack)
+    stack = valueType.stack
+    if not Text.eq(valueType.value, "int") then { problem = "E0699 builtin `" ++ name ++ "` requires int" }
+    resultType = "int"
   } else if Text.eq(name, "http.get") or Text.eq(name, "http.delete") then {
     val valueType = pop(stack)
     stack = valueType.stack
@@ -4226,6 +4231,18 @@ fn callBuiltin(code: List<Instruction>, name: Text, input: List<Text>): BuiltinR
     stack = one.stack
     if let Ok(value) = requireInt(one.value, name) { result = textValue(DateTime.toIso(DateTime.fromUnix(value))) }
     else if let Err(message) = requireInt(one.value, name) { problem = message }
+  } else if Text.eq(name, "time.year") or Text.eq(name, "time.month") or Text.eq(name, "time.day") or Text.eq(name, "time.hour") or Text.eq(name, "time.minute") or Text.eq(name, "time.second") then {
+    val one = pop(stack)
+    stack = one.stack
+    if let Ok(value) = requireInt(one.value, name) {
+      val dt = DateTime.fromUnix(value)
+      if Text.eq(name, "time.year") then { result = intValue(DateTime.year(dt)) }
+      else if Text.eq(name, "time.month") then { result = intValue(DateTime.month(dt)) }
+      else if Text.eq(name, "time.day") then { result = intValue(DateTime.day(dt)) }
+      else if Text.eq(name, "time.hour") then { result = intValue(DateTime.hour(dt)) }
+      else if Text.eq(name, "time.minute") then { result = intValue(DateTime.minute(dt)) }
+      else { result = intValue(DateTime.second(dt)) }
+    } else if let Err(message) = requireInt(one.value, name) { problem = message }
   } else if Text.eq(name, "http.get") or Text.eq(name, "http.delete") then {
     val one = pop(stack)
     stack = one.stack
@@ -4979,7 +4996,7 @@ fn apiManifest(): Text = {
   JsonValue.set(root, "language", Json.string("Lume"))
   JsonValue.set(root, "version", Json.string("0.1.0-bootstrap"))
   val features = Json.array()
-  for feature in ["bindings", "static_types", "homogeneous_lists", "generics", "generic_constraints", "protocols", "protocol_methods", "static_protocol_dispatch", "explicit_protocol_implementations", "generic_records", "generic_enums", "option", "result", "list_map", "list_filter", "list_find", "list_fold", "maps", "map_map", "map_filter", "map_fold", "function_values", "closures", "immutable_capture", "native_test_runner", "test_directory_discovery", "result_propagation", "records", "nested_records", "field_access", "record_updates", "typed_json_decoding", "json_encode", "path_manipulation", "directory_enumeration", "time_now", "process_config", "http_get", "http_post_put_delete", "http_request_headers", "test_fixtures", "enums", "variant_payloads", "match_expressions", "exhaustive_matching", "payload_destructuring", "if_else", "while", "functions", "recursion", "bytecode_cache"] {
+  for feature in ["bindings", "static_types", "homogeneous_lists", "generics", "generic_constraints", "protocols", "protocol_methods", "static_protocol_dispatch", "explicit_protocol_implementations", "generic_records", "generic_enums", "option", "result", "list_map", "list_filter", "list_find", "list_fold", "maps", "map_map", "map_filter", "map_fold", "function_values", "closures", "immutable_capture", "native_test_runner", "test_directory_discovery", "result_propagation", "records", "nested_records", "field_access", "record_updates", "typed_json_decoding", "json_encode", "path_manipulation", "directory_enumeration", "time_now", "time_calendar_components", "process_config", "http_get", "http_post_put_delete", "http_request_headers", "test_fixtures", "enums", "variant_payloads", "match_expressions", "exhaustive_matching", "payload_destructuring", "if_else", "while", "functions", "recursion", "bytecode_cache"] {
     JsonValue.push(features, Json.string(feature))
   }
   JsonValue.set(root, "features", features)
@@ -5008,6 +5025,7 @@ fn aiReference(): Text = {
   "Path helpers: path.join/basename/dirname/stem(text) -> str, path.extension(text) -> Option<str>. " ++
   "List a directory with dir.list(path) -> result<[str],str>; entries are names only, unsorted. " ++
   "time.now() -> int gives the current Unix epoch seconds; time.to_iso(seconds) -> str formats it as UTC ISO-8601. " ++
+  "time.year/month/day/hour/minute/second(seconds) -> int read UTC calendar components from epoch seconds. " ++
   "Run a process with stdin piped in: process.run_with_input(exe, args, input) -> process, same accessors as process.run. " ++
   "Run a process with environment overrides: process.run_with_env(exe, args, envMap: Map<str,str>) -> process; variables are restored to their prior value after the call returns. " ++
   "Make requests with http.get(url)/http.delete(url), http.post(url, body, content_type)/http.put(url, body, content_type), or http.request(method, url, headers: Map<str,str>, body) for custom headers, all -> result<http,str>; read with http.status/body/content_type/ok(response); responses over 10 MiB return an error instead of the body. Windows only. " ++
