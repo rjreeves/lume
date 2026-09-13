@@ -278,6 +278,14 @@ $undefined = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_undefined.
 if ($LASTEXITCODE -ne 1) { throw "undefined validation should exit 1" }
 Assert-Equal 'undefined validation' 'E0210 line 2: undefined binding `missing`' ($undefined -join "`n")
 
+$badTestTimeout = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_test_timeout.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "test timeout clause validation should exit 1" }
+Assert-Equal 'test timeout clause validation' 'E0724 line 1: expected integer timeout value in milliseconds' ($badTestTimeout -join "`n")
+
+$badProcessAssertion = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_process_assertion.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "process assertion receiver validation should exit 1" }
+Assert-Equal 'process assertion receiver validation' 'E0718 expect.exit_code requires a process result' ($badProcessAssertion -join "`n")
+
 $duplicate = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_duplicate.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "duplicate validation should exit 1" }
 Assert-Equal 'duplicate validation' 'E0211 line 3: duplicate binding `answer`' ($duplicate -join "`n")
@@ -575,6 +583,14 @@ Assert-Contains 'native test directory text discovery' 'PASS text works' ($nativ
 $nativeFailure = & $Lume test (Join-Path $PSScriptRoot 'examples\native_tests_failing.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "failing native test should exit 1" }
 Assert-Equal 'native test failure' "FAIL shows expected and actual values (line 1): expected 42, got 41`n0 passed; 1 failed" ($nativeFailure -join "`n")
+
+$nativeTimeout = & $Lume test (Join-Path $PSScriptRoot 'examples\native_tests_timeout.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "native test timeout should exit 1" }
+Assert-Equal 'native test timeout' "PASS completes well within its timeout`nFAIL hangs past its timeout (line 5): test timed out after 50ms`n1 passed; 1 failed" ($nativeTimeout -join "`n")
+
+$nativeProcessAssertions = & $Lume test (Join-Path $PSScriptRoot 'examples\native_tests_process.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "native process assertion test should exit 1" }
+Assert-Equal 'process-output assertions' "PASS process exit code and stdout can be asserted`nFAIL process assertions report a mismatch (line 7): expected exit code 1, got 0`n1 passed; 1 failed" ($nativeProcessAssertions -join "`n")
 
 # The "id" field embeds the test's source path exactly as it was passed on
 # the command line, JSON-escaped - not a portable/hashed value, just enough

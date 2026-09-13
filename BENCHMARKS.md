@@ -1440,3 +1440,53 @@ small O(schema size) lookup per dispatch site) reintroduced a hidden
 superlinear cost. `benchmark-10000-generic-dispatch.ps1` is the permanent,
 fixed-N regression guard for this mechanism going forward, mirroring
 `benchmark-10000.ps1` and `benchmark-10000-features.ps1`.
+
+## Confirming no compile-time regression from test timeouts and process-output assertions (2026-09-13)
+
+ROADMAP.md's acceptance gate requires a before/after measurement for any
+feature entering the core, so this checks the one item added in this
+change: an optional `test "name", timeout: <ms> { }` clause and three new
+`expect.exit_code`/`expect.stdout_contains`/`expect.stderr_contains`
+builtins (see ROADMAP.md's "Stronger test tooling" section).
+
+This feature's only compile-time-path changes are inside `scanFunctions`'
+existing `test` branch and `compile()`'s existing `isTest` handling — both
+already gated behind `Text.eq(at(tokens, index).text, "test")`, so a
+program with zero `test` declarations (like `benchmark-10000.ps1`'s
+trivial 10,000-line file) cannot execute the new code at all. The
+enforcement mechanism itself (a deadline check inside `callPure`'s
+dispatch loop) is a *runtime* cost, not a compile-time one, and is itself
+gated behind `deadlineMs > 0` — inactive for every program that isn't
+`lume test` running a test with a `timeout:` clause. No new benchmark
+sweep was needed for the runtime side for the same reason the roadmap's
+own compile-time gate doesn't apply to it: `execute()`, the interpreter
+for ordinary `lume run`/`lume check`, never calls `callPure` at all except
+indirectly through `callBuiltin` for `list.*`/`map.*` callbacks, and even
+then with `deadlineMs` fixed at `0`.
+
+Built two binaries from the same machine: `01bafed` (immediately before
+this change) as baseline, and this change's own commit as current, both
+via the standard `certo release` build `build.ps1` uses. `benchmark-10000.ps1`
+(trivial 10,000-line file, no `test` declarations, 20 iterations, `lume
+benchmark`'s in-process compile loop) three times per binary:
+
+| Run | Baseline lines/s | Current lines/s |
+| --- | ---: | ---: |
+| 1 | 152,439 | 154,202 |
+| 2 | 152,439 | 152,439 |
+| 3 | 152,439 | 156,128 |
+
+Baseline is perfectly stable across all three runs (identical to the
+millisecond); current varies 152,439-156,128 - i.e. sometimes *faster*
+than baseline - which is ordinary run-to-run system noise, not a
+regression signal in either direction. `benchmark-10000-features.ps1`
+(the representative feature-mix file) shows the same picture at its own
+single-iteration granularity: `CompileTotalMs=172` for both baseline and
+current, byte-for-byte identical.
+
+**No compile-time regression.** Both the trivial and feature-mix
+benchmarks clear their targets by the same wide margin as before this
+change (`TargetMet: True`, ~15x over the 10,000-lines/second bootstrap
+target), consistent with the architectural read above that this feature's
+compile-time footprint is zero for any program that doesn't declare a
+`test "name", timeout: ...` clause.

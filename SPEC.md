@@ -504,6 +504,7 @@ result.ok(value)                result.err(message)
 result.is_ok(result)            result.value(result)
 result.error(result)
 expect.equal/true/ok/err/some(...)   (inside `test { ... }` blocks only, §13)
+expect.exit_code/stdout_contains/stderr_contains(...)  (process assertions, §13)
 fixture.temp_dir()               fixture.cleanup(path)
 ```
 
@@ -575,9 +576,11 @@ accessors on the result. `process.run_with_env(exe, args, envMap) ->
 process`, where `envMap: Map<str, str>`, runs a command with the given
 variables overridden for the duration of that one call; each overridden
 variable is restored to its prior value (or unset, if it wasn't set
-before) once the call returns. Neither a working directory nor a timeout
-is supported yet — Lume's underlying process primitives have no
-output-capturing call that accepts either.
+before) once the call returns. Neither a working directory nor a
+subprocess-level timeout is supported yet — Lume's underlying process
+primitives have no output-capturing call that accepts either (a
+*test's* own timeout, §13, is a separate, already-shipped mechanism
+enforced by the interpreter, not by `process.run` itself).
 
 `http.get(url) -> Result<http, str>` and `http.delete(url) ->
 Result<http, str>` make a GET/DELETE request; `http.post(url, body,
@@ -669,10 +672,42 @@ fn main(args: [str]) -> int {
 }
 ```
 
+An optional `, timeout: <milliseconds>` clause after the name bounds how
+long the test body may run before it is failed automatically — protection
+against an infinite loop in test code hanging the whole run, not a
+subprocess timeout (see the `process.run` note in §11, which remains
+unsupported):
+
+```lume
+test "settles quickly", timeout: 500 {
+  expect.true(settle())
+}
+```
+
+A test with no `timeout:` clause is unbounded, exactly as before this
+existed. On expiry the test fails with `test timed out after <n>ms`,
+reported the same way any other assertion failure is, in both plain-text
+and `--json` output.
+
 `expect.equal`, `expect.true`, `expect.ok`, `expect.err`, and `expect.some`
-are the assertions available inside a `test` block. Run one file, or a
-directory (every direct-child `*_test.lume` file — one level only, not
-recursive):
+are the assertions available inside a `test` block. Two more exist
+specifically for asserting on a `process.run` result (§11):
+`expect.exit_code(process, code: int) -> bool` and
+`expect.stdout_contains(process, text: str) -> bool` /
+`expect.stderr_contains(process, text: str) -> bool`, which check the
+process's exit code or that its captured stdout/stderr contains a given
+substring:
+
+```lume
+test "process exits cleanly" {
+  let result = process.run("hostname.exe", [])
+  expect.exit_code(result, 0)
+  expect.stdout_contains(result, "")
+}
+```
+
+Run one file, or a directory (every direct-child `*_test.lume` file — one
+level only, not recursive):
 
 ```powershell
 .\dist\lume.exe test .\examples\native_tests.lume
@@ -711,7 +746,7 @@ impl       := 'impl' ident 'for' type '{' function* '}'
 function   := 'fn' ident generic_params? '(' params? ')' '->' type block
 generic_params := '<' generic_param (',' generic_param)* '>'
 generic_param  := ident (':' ('Eq' | 'Ord' | 'Number' | 'Text' | ident))?
-test       := 'test' string '{' expect_call* '}'
+test       := 'test' string (',' 'timeout' ':' number)? '{' expect_call* '}'
 block      := '{' newline statement* '}'
 statement  := let_stmt | var_stmt | assignment | if_stmt | while_stmt
             | return_stmt | expression

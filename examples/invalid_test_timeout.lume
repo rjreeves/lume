@@ -1,0 +1,7 @@
+test "bad timeout clause", timeout: "soon" {
+  expect.true(true)
+}
+
+fn main(args: [str]) -> int {
+  return 0
+}

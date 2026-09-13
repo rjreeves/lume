@@ -1,0 +1,12 @@
+test "completes well within its timeout", timeout: 5000 {
+  expect.equal(1 + 1, 2)
+}
+
+test "hangs past its timeout", timeout: 50 {
+  while true {}
+  expect.true(true)
+}
+
+fn main(args: [str]) -> int {
+  return 0
+}

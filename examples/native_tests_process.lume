@@ -1,0 +1,14 @@
+test "process exit code and stdout can be asserted" {
+  let command = process.run("powershell.exe", ["-NoProfile", "-Command", "Write-Output 'hello from process'"])
+  expect.exit_code(command, 0)
+  expect.stdout_contains(command, "hello from process")
+}
+
+test "process assertions report a mismatch" {
+  let command = process.run("powershell.exe", ["-NoProfile", "-Command", "Write-Output 'hello from process'"])
+  expect.exit_code(command, 1)
+}
+
+fn main(args: [str]) -> int {
+  return 0
+}
