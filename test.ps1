@@ -485,23 +485,38 @@ $nativeFailure = & $Lume test (Join-Path $PSScriptRoot 'examples\native_tests_fa
 if ($LASTEXITCODE -ne 1) { throw "failing native test should exit 1" }
 Assert-Equal 'native test failure' "FAIL shows expected and actual values (line 1): expected 42, got 41`n0 passed; 1 failed" ($nativeFailure -join "`n")
 
-$jsonTests = & $Lume test (Join-Path $PSScriptRoot 'examples\native_tests.lume') --json
+# The "id" field embeds the test's source path exactly as it was passed on
+# the command line, JSON-escaped - not a portable/hashed value, just enough
+# to disambiguate same-named tests across files and give a --filter target
+# that reruns exactly one test. Expected strings below build that path the
+# same way the invocation itself does, rather than hardcoding it, since an
+# absolute path varies by checkout location.
+$nativeTestsPath = Join-Path $PSScriptRoot 'examples\native_tests.lume'
+$nativeTestsFailingPath = Join-Path $PSScriptRoot 'examples\native_tests_failing.lume'
+$nativeTestsId = ($nativeTestsPath -replace '\\', '\\')
+$nativeTestsFailingId = ($nativeTestsFailingPath -replace '\\', '\\')
+
+$jsonTests = & $Lume test $nativeTestsPath --json
 if ($LASTEXITCODE -ne 0) { throw "json native test runner exited $LASTEXITCODE" }
-$jsonTestsExpected = '{"event":"test","name":"adds two values","status":"pass","line":9,"message":""}' + "`n" + `
-  '{"event":"test","name":"recognizes present values","status":"pass","line":14,"message":""}' + "`n" + `
+$jsonTestsExpected = "{`"event`":`"test`",`"id`":`"$nativeTestsId#adds two values`",`"name`":`"adds two values`",`"status`":`"pass`",`"line`":9,`"message`":`"`"}" + "`n" + `
+  "{`"event`":`"test`",`"id`":`"$nativeTestsId#recognizes present values`",`"name`":`"recognizes present values`",`"status`":`"pass`",`"line`":14,`"message`":`"`"}" + "`n" + `
   '{"event":"summary","passed":2,"failed":0,"total":2}'
 Assert-Equal 'structured test output' $jsonTestsExpected ($jsonTests -join "`n")
 
-$jsonFailure = & $Lume test (Join-Path $PSScriptRoot 'examples\native_tests_failing.lume') --json 2>&1
+$jsonFailure = & $Lume test $nativeTestsFailingPath --json 2>&1
 if ($LASTEXITCODE -ne 1) { throw "json failing native test should exit 1" }
-$jsonFailureExpected = '{"event":"test","name":"shows expected and actual values","status":"fail","line":1,"message":"expected 42, got 41"}' + "`n" + `
+$jsonFailureExpected = "{`"event`":`"test`",`"id`":`"$nativeTestsFailingId#shows expected and actual values`",`"name`":`"shows expected and actual values`",`"status`":`"fail`",`"line`":1,`"message`":`"expected 42, got 41`"}" + "`n" + `
   '{"event":"summary","passed":0,"failed":1,"total":1}'
 Assert-Equal 'structured test output failure' $jsonFailureExpected ($jsonFailure -join "`n")
 
-$jsonFilterOrder = & $Lume test (Join-Path $PSScriptRoot 'examples\native_tests.lume') --json --filter adds
+$jsonFilterOrder = & $Lume test $nativeTestsPath --json --filter adds
 if ($LASTEXITCODE -ne 0) { throw "json test runner with --json before --filter exited $LASTEXITCODE" }
-$jsonFilterOrderExpected = '{"event":"test","name":"adds two values","status":"pass","line":9,"message":""}' + "`n" + `
+$jsonFilterOrderExpected = "{`"event`":`"test`",`"id`":`"$nativeTestsId#adds two values`",`"name`":`"adds two values`",`"status`":`"pass`",`"line`":9,`"message`":`"`"}" + "`n" + `
   '{"event":"summary","passed":1,"failed":0,"total":1}'
 Assert-Equal 'structured test output with --json before --filter' $jsonFilterOrderExpected ($jsonFilterOrder -join "`n")
+
+$filterByPathFragment = & $Lume test $nativeTestsPath --filter 'native_tests.lume'
+if ($LASTEXITCODE -ne 0) { throw "filter by path fragment exited $LASTEXITCODE" }
+Assert-Equal 'filter matches path fragment via stable id' "PASS adds two values`nPASS recognizes present values`n2 passed; 0 failed" ($filterByPathFragment -join "`n")
 
 Write-Host 'All Lume smoke tests passed.'

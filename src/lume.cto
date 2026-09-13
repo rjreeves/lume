@@ -4677,9 +4677,10 @@ fn testFileJson(path: Text): Text = {
   Json.stringify(root)
 }
 
-fn testResultJson(name: Text, ok: Bool, line: Int, message: Text): Text = {
+fn testResultJson(id: Text, name: Text, ok: Bool, line: Int, message: Text): Text = {
   val root = Json.object()
   JsonValue.set(root, "event", Json.string("test"))
+  JsonValue.set(root, "id", Json.string(id))
   JsonValue.set(root, "name", Json.string(name))
   JsonValue.set(root, "status", Json.string(if ok then "pass" else "fail"))
   JsonValue.set(root, "line", Json.int(line))
@@ -4790,13 +4791,13 @@ fn runCode(code: List<Instruction>): Unit [io] = {
   }
 }
 
-fn printTestResult(json: Bool, name: Text, ok: Bool, line: Int, message: Text): Unit [io] = {
-  if json then { println(testResultJson(name, ok, line, message)) }
+fn printTestResult(json: Bool, id: Text, name: Text, ok: Bool, line: Int, message: Text): Unit [io] = {
+  if json then { println(testResultJson(id, name, ok, line, message)) }
   else if ok then { println("PASS " ++ name) }
   else { println("FAIL " ++ name ++ " (line " ++ intToText(line) ++ "): " ++ message) }
 }
 
-fn runTests(code: List<Instruction>, filter: Text, json: Bool): Unit [io] = {
+fn runTests(code: List<Instruction>, filter: Text, json: Bool, path: Text): Unit [io] = {
   var passed = 0
   var failed = 0
   var discovered = 0
@@ -4804,22 +4805,23 @@ fn runTests(code: List<Instruction>, filter: Text, json: Bool): Unit [io] = {
     val name = beforePipe(item.text)
     val declaredTest = not Text.eq(markerTestName(item.text), "")
     val displayName = if declaredTest then markerTestName(item.text) else name
-    if Text.eq(item.op, "function") and (declaredTest or Text.startsWith(name, "test_")) and (Text.eq(filter, "") or Text.contains(displayName, filter)) then {
+    val id = path ++ "#" ++ displayName
+    if Text.eq(item.op, "function") and (declaredTest or Text.startsWith(name, "test_")) and (Text.eq(filter, "") or Text.contains(id, filter)) then {
       discovered = discovered + 1
       if item.number != 0 or not Text.eq(markerReturnType(item.text), "bool") then {
-        printTestResult(json, displayName, false, item.line, "tests must take no parameters and return bool")
+        printTestResult(json, id, displayName, false, item.line, "tests must take no parameters and return bool")
         failed = failed + 1
       } else {
         val outcome = callPure(code, "f:" ++ name, [])
         if not Text.eq(outcome.problem, "") then {
-          printTestResult(json, displayName, false, item.line, outcome.problem)
+          printTestResult(json, id, displayName, false, item.line, outcome.problem)
           failed = failed + 1
         } else if Text.eq(valueKind(outcome.value), "b:") and Text.eq(valueBody(outcome.value), "true") then {
-          printTestResult(json, displayName, true, item.line, "")
+          printTestResult(json, id, displayName, true, item.line, "")
           passed = passed + 1
         } else {
           val detail = if Text.eq(valueKind(outcome.value), "x:") then valueBody(outcome.value) else "returned false"
-          printTestResult(json, displayName, false, item.line, detail)
+          printTestResult(json, id, displayName, false, item.line, detail)
           failed = failed + 1
         }
       }
@@ -4875,7 +4877,7 @@ fn main(): Unit [io] = {
             reportProblem(compiled.problem, testPath, testJson)
             Process.quit(1)
           }
-          runTests(compiled.code, filter, testJson)
+          runTests(compiled.code, filter, testJson, testPath)
         }
       }
       if files == 0 then {
@@ -4915,7 +4917,7 @@ fn main(): Unit [io] = {
         println("ok")
       } else if Text.eq(command, "test") then {
         val filter = flagValue("--filter") ?? ""
-        runTests(compiled.code, filter, testJson)
+        runTests(compiled.code, filter, testJson, path)
       } else if Text.eq(command, "bytecode") then {
         printCode(compiled.code)
       } else if Text.eq(command, "run") then {

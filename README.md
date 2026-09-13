@@ -260,8 +260,8 @@ line-delimited JSON instead of plain text — for CI and editor integrations:
 ```
 
 ```text
-{"event":"test","name":"adds two values","status":"pass","line":9,"message":""}
-{"event":"test","name":"recognizes present values","status":"pass","line":14,"message":""}
+{"event":"test","id":"examples/native_tests.lume#adds two values","name":"adds two values","status":"pass","line":9,"message":""}
+{"event":"test","id":"examples/native_tests.lume#recognizes present values","name":"recognizes present values","status":"pass","line":14,"message":""}
 {"event":"summary","passed":2,"failed":0,"total":2}
 ```
 
@@ -269,6 +269,13 @@ Directory mode adds one `{"event":"file","path":"..."}` line per
 discovered test file. A failing test's `message` holds the failure
 detail; a run that discovers zero tests reports a `"note"` field on
 the summary instead.
+
+`id` is `<path>#<name>` exactly as the path was passed on the command
+line — stable enough to disambiguate same-named tests across files and
+to feed straight back into `--filter` for an exact rerun. `--filter`
+matches against the full `id`, not just the bare name, so a path
+fragment works too: `--filter native_suite/math_test.lume` selects
+every test in that one file.
 
 The broader syntax in the specification is the roadmap, not yet all implemented
 by the bootstrap.
