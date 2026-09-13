@@ -145,12 +145,16 @@ compile-time complexity class from quadratic to linear.**
   measurement for every feature that has shipped. The protocol-methods
   change roughly doubled the cost of built-in-constrained generics (~2.4x
   → ~5.3x baseline); no before/after benchmark for that change is on record
-  in `BENCHMARKS.md`. This gate's own machinery is also unreliable at the
-  sizes it would need to check: `lume benchmark <path> 20` — the standard
-  multi-iteration harness — crashes with `certo panic: out of memory` on
-  realistic-sized input (see the 0.1 milestone note below), so this gate
-  could not have been checked with the recommended tooling even if someone
-  had tried.
+  in `BENCHMARKS.md`. This gate's own machinery used to be unreliable at
+  the sizes it would need to check — `lume benchmark <path> 20`, the
+  in-process multi-iteration harness, crashed with `certo panic: out of
+  memory` on realistic-sized input — but the benchmark *script* that
+  surfaced this (`benchmark-10000-features.ps1`) has since moved off that
+  in-process loop entirely onto fresh-process-per-sample timing (see the
+  0.1 milestone note below and BENCHMARKS.md), so this gate can now be
+  checked at 30 samples on the representative feature-mix workload; the
+  underlying `lume benchmark` command itself is still unsafe for many
+  in-process iterations on large input.
 - **Closed**: the AI evaluation suite this file's own gate depends on
   (`ai/tasks.json`, "added to the fixed AI evaluation suite") had 7 tasks;
   `BENCHMARKS.md` specifies "at least 100." Expanded to exactly 100,
@@ -198,15 +202,23 @@ false.**
   — see the "protocol-scan fix" section.)
 - *Stabilize diagnostics and bytecode serialization* — not assessed by this
   investigation.
-- *Keep the complete smoke, test-runner, LSP, benchmark, and AI suites
-  green* — **the benchmark suite is not green in a meaningful sense**: the
-  `lume benchmark <path> 20` command used to produce median/p95 numbers
-  crashes with `certo panic: out of memory` on a realistic-sized program,
-  before completing. A single `lume check` of the same file succeeds, so
-  this is a bug in the measurement tool, not only in the thing being
-  measured — and it means every multi-iteration number this gate asks for,
-  on anything beyond a trivial workload, currently cannot be produced at
-  all.
+- ~~Keep the complete smoke, test-runner, LSP, benchmark, and AI suites
+  green~~ — the benchmark suite's crash is fixed (see BENCHMARKS.md's
+  "Fixing `lume benchmark`'s out-of-memory crash" section): the in-process
+  `lume benchmark <path> 20` command itself still reliably OOMs on a
+  realistic-sized program well before 20 iterations — confirmed root
+  cause, Certo has no garbage collector or exposed free primitive, so a
+  long-running process retains every value a compile pass allocates for
+  its whole lifetime, out of scope for a Lume-only fix — but
+  `benchmark-10000-features.ps1` (the script that surfaced this) no longer
+  depends on that command's internal loop at all: it now times 30
+  independent fresh `lume.exe` processes instead, the same pattern
+  `benchmark.ps1` already used, sidestepping the leak entirely and
+  reporting median/p95/stddev for the first time on this benchmark
+  (`TargetMet: True`, ~3.7x the 10,000-lines/second target). Any future
+  benchmark script for a large/realistic program should follow that
+  fresh-process pattern rather than asking `lume benchmark` to loop
+  in-process, since the underlying Certo limitation is unchanged.
 
 **What is working:** the feature surface itself is broad and functionally
 correct — records, enums with payload variants, generics, generic
