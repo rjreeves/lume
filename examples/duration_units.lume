@@ -1,0 +1,8 @@
+fn main(args: [str]) -> int {
+  print(duration.seconds(42))
+  print(duration.minutes(5))
+  print(duration.hours(2))
+  print(duration.days(1))
+  print(duration.minutes(5) == 300)
+  return 0
+}

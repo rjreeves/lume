@@ -1,0 +1,4 @@
+fn main(args: [str]) -> int {
+  print(duration.minutes("five"))
+  return 0
+}

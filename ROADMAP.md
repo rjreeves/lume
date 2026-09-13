@@ -336,11 +336,15 @@ non-trivial benchmark in this file has met its own bar.**
 - typed time (`time.now() -> int`, `time.to_iso(seconds) -> str`,
   `time.year`/`month`/`day`/`hour`/`minute`/`second(seconds) -> int` for
   UTC calendar components, `time.format(seconds, pattern) -> str` for
-  `strftime`-style custom formatting, and `time.in_timezone(seconds,
+  `strftime`-style custom formatting, `time.in_timezone(seconds,
   zone)`/`time.format_in_timezone(seconds, pattern, zone) ->
-  Result<str, str>` for IANA-zone-aware output) — still a slice of
-  Certo's much larger `DateTime`/`Duration`/`Timezone`/`Date` stdlib API;
-  `Duration` arithmetic remains deferred (see "Now" above);
+  Result<str, str>` for IANA-zone-aware output, and
+  `duration.seconds`/`minutes`/`hours`/`days(n) -> int` for named-unit
+  offsets) — still a slice of Certo's much larger
+  `DateTime`/`Duration`/`Timezone`/`Date` stdlib API; a distinct
+  `Duration` type with its own arithmetic remains deferred (see "Now"
+  above) — `duration.*` are plain functions returning `int`, not a new
+  value kind;
 - process exit-code, standard-output, and standard-error inspection;
 - process configuration for stdin and environment overrides
   (`process.run_with_input(exe, args, input)`, `process.run_with_env(exe,
@@ -512,10 +516,14 @@ into every compilation.
   formatting), and now `time.in_timezone(seconds, zone)`/
   `time.format_in_timezone(seconds, pattern, zone) -> Result<str, str>`
   (IANA-zone-aware ISO-8601/custom formatting, `Err` for an unrecognized
-  zone name) are done (see "Shipped in the bootstrap" above); a
-  `Duration` type remains deferred — Certo's stdlib already has one (a
-  full `DateTime`/`Duration`/`Timezone`/`Date` API), so this is purely a
-  scoping choice, not a feasibility gap;
+  zone name), and now `duration.seconds`/`minutes`/`hours`/
+  `days(n) -> int` (named-unit construction as plain epoch-second
+  `int`s — `duration.minutes(5)` is `300`) are done (see "Shipped in
+  the bootstrap" above); a distinct `Duration` *type* — its own value
+  kind with dedicated arithmetic and unit tracking, not plain
+  `int`-returning functions — remains deferred; Certo's stdlib already
+  has one (a full `DateTime`/`Duration`/`Timezone`/`Date` API), so this
+  is purely a scoping choice, not a feasibility gap;
 - ~~richer process configuration~~ — partially shipped: stdin
   (`process.run_with_input`) and environment overrides
   (`process.run_with_env`) are done (see "Shipped in the bootstrap"
