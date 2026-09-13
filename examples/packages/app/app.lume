@@ -1,6 +1,8 @@
 use mathutils.ops
+use formatting.fmt
 
 fn main(args: [str]) -> int {
   print(ops.square(6))
+  print(fmt.shout("done"))
   return 0
 }

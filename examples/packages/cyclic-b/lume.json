@@ -1,0 +1,7 @@
+{
+  "name": "cyclic-b",
+  "version": "0.1.0",
+  "dependencies": [
+    { "name": "cyclic-a", "path": "../cyclic-a" }
+  ]
+}

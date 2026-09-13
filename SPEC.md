@@ -414,13 +414,21 @@ declarative metadata only.
 
 `lume install <dir>` is a separate step from ordinary compilation, per
 this project's own constraint that package resolution must not happen
-on every compile: it reads `<dir>/lume.json`, reads each declared
-dependency's own `lume.json` for its `version` (not transitive — a
-dependency's own `dependencies` are not resolved), and writes
-`<dir>/lume.lock.json` recording each dependency's `path` and resolved
-`version`. Missing/malformed root manifest is `E0705`; a dependency
-whose own manifest can't be read is `E0706`; a lock file write failure
-is `E0707`.
+on every compile: it reads `<dir>/lume.json` and walks the full
+dependency tree — a dependency's own `dependencies` are resolved too,
+recursively — writing every reachable package into a single flat
+`<dir>/lume.lock.json`, each entry's `path` already computed relative
+to `<dir>` itself (not its immediate parent), so `use` resolution stays
+a flat, single-level lookup regardless of nesting depth. A path
+component is normalized (`..` segments collapsed) as it's computed, so
+two routes to the same physical directory compare equal — without
+that, a genuine cycle or a legitimate diamond dependency (two branches
+depending on the same package) would produce different, incomparable
+strings for the same location. Missing/malformed root manifest is
+`E0705`; a dependency whose own manifest can't be read is `E0706`; the
+same declared name resolving to two different locations is `E0708`; a
+genuine dependency cycle is `E0709`; a lock file write failure is
+`E0707`.
 
 `use` resolution (`loadModule`) reads `lume.lock.json` once, at the
 very start of loading the root file — never the manifest, and never

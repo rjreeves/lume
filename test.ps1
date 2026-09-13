@@ -523,10 +523,14 @@ $packagesAppDir = Join-Path $PSScriptRoot 'examples\packages\app'
 $installOutput = & $Lume install $packagesAppDir
 if ($LASTEXITCODE -ne 0) { throw "lume install exited $LASTEXITCODE" }
 $lockContent = Get-Content -LiteralPath (Join-Path $packagesAppDir 'lume.lock.json') -Raw
-Assert-Equal 'package install writes lock file' '{"dependencies":[{"name":"mathutils","path":"../mathutils","version":"0.1.0"}]}' $lockContent.Trim()
+Assert-Equal 'package install writes lock file' '{"dependencies":[{"name":"mathutils","path":"../mathutils","version":"0.1.0"},{"name":"formatting","path":"../formatting","version":"0.1.0"}]}' $lockContent.Trim()
 
 $packagesRun = & $Lume run (Join-Path $packagesAppDir 'app.lume')
 if ($LASTEXITCODE -ne 0) { throw "package app example exited $LASTEXITCODE" }
-Assert-Equal 'package use resolution' '36' ($packagesRun -join "`n")
+Assert-Equal 'package use resolution' "36`nDONE" ($packagesRun -join "`n")
+
+$cyclicOutput = & $Lume install (Join-Path $PSScriptRoot 'examples\packages\cyclic-a') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "cyclic package install should exit 1" }
+Assert-Equal 'package dependency cycle validation' 'E0709 dependency cycle at `cyclic-b`' ($cyclicOutput -join "`n")
 
 Write-Host 'All Lume smoke tests passed.'
