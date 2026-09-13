@@ -1490,3 +1490,73 @@ change (`TargetMet: True`, ~15x over the 10,000-lines/second bootstrap
 target), consistent with the architectural read above that this feature's
 compile-time footprint is zero for any program that doesn't declare a
 `test "name", timeout: ...` clause.
+
+## Fixing `lume benchmark`'s out-of-memory crash on the feature-mix workload (2026-09-13)
+
+ROADMAP.md's status report flagged the multi-iteration harness itself as
+broken: `lume benchmark <path> 20` - the in-process command every script in
+this file except `benchmark.ps1` delegates its iteration loop to - crashes
+with `certo panic: out of memory` on `benchmark-10000-features.ps1`'s
+feature-rich file, well before 20 iterations. `benchmark-10000.ps1`'s
+trivial `total = total + 1` file never showed this because its per-compile
+memory footprint is much smaller, not because the underlying issue doesn't
+apply to it too.
+
+**Root cause, confirmed by reading Certo's own runtime**: Certo has no
+garbage collector, reference counting, or exposed manual-free primitive.
+`Certo/crates/stdlib/src/collections.rs`'s `list_alloc` mallocs and panics
+`"out of memory"` on failure (the literal source of the crash text), and
+`certo_list_push` allocates a new backing array and copies into it but
+never frees the old one - every Token/Instruction/string a compile pass
+allocates is retained until the OS reclaims the whole process. `lume
+benchmark`'s loop (`src/lume.cto:5451-5474`) calls `compileSource`
+`iterations` times in one process and has no way to drop the previous
+iteration's result. Measured directly: peak working set on the feature-mix
+file grows linearly at ~110-140 MB per iteration with no plateau (2
+iterations -> 282 MB, 20 -> 2.40 GB, 200 -> 22.36 GB) - this machine's 32 GB
+was enough to survive 200 iterations without tripping the panic, but the
+unbounded per-iteration growth is the same defect the ROADMAP crash report
+describes, just requiring a smaller/busier machine (or a longer run) to
+actually exhaust memory. **This is inherent to Certo, not fixable inside
+`lume.cto` alone** - out of scope for a Lume-only change, the same category
+as the `process.run` timeout limitation this repo already accepts.
+
+**The fix is a benchmarking-methodology change**, already established
+elsewhere in this file: `benchmark.ps1`'s `Measure-Runs` helper spawns a
+fresh `lume.exe` process per timed sample rather than looping inside one
+process, so the OS reclaims memory between samples and the leak never
+accumulates. `benchmark-10000-features.ps1` now does the same - `lume
+check $path` timed individually with a `Stopwatch` per sample, `-Iterations`
+raised from `1` back to `30` (this file's own "at least 30 runs" contract,
+safe now that the OOM risk is gone) - reporting `MedianMs`/`P95Ms`/
+`StdDevMs` in addition to the mean for the first time on this benchmark:
+
+| Metric | Value |
+| --- | ---: |
+| Iterations | 30 |
+| CompileMeanMs | 267.171 |
+| MedianMs | 266.428 |
+| P95Ms | 279.488 |
+| StdDevMs | 6.265 |
+| CompileLinesPerSecond | 37,429 |
+
+No crash across 30 fresh-process samples, tight distribution (p95 within
+~5% of the median, stddev ~2.3% of the mean - a quiet machine, not a
+bimodal or long-tailed one), `TargetMet: True` at ~3.7x the 10,000-line/s
+bootstrap target. The absolute lines/second figure (37,429) is lower than
+the previous in-process single-sample number (58,140, `CompileTotalMs=172`
+for one iteration) because it now includes full process startup overhead
+per sample, which the in-process measurement excluded entirely - expected,
+and arguably more representative of real non-daemon CLI usage per this
+file's own "exclude process startup only in a separately labelled
+persistent-daemon test" contract, which the old approach violated by
+excluding it unconditionally rather than in a labelled daemon-mode test.
+`benchmark-10000.ps1` and `benchmark-10000-generic-dispatch.ps1` are
+unchanged and still pass at their existing iteration counts (156,128 and
+69,565 lines/second respectively) - they were never the ones crashing, and
+this fix intentionally left them alone rather than introducing unrelated
+risk into scripts that already work. The underlying `lume benchmark`
+in-process command itself is unchanged and still unsafe for many
+iterations on large/realistic workloads - any future large-program
+benchmark script should follow `benchmark-10000-features.ps1`'s
+fresh-process pattern rather than `benchmark-10000.ps1`'s in-process one.

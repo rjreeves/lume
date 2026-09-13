@@ -1,12 +1,18 @@
 param(
-  # NOTE: default is 1, not 20 like benchmark-10000.ps1's. The in-process
-  # `lume benchmark` command retains state across iterations, and on this
-  # feature-rich workload that leads to `certo panic: out of memory` well
-  # before 20 iterations complete (confirmed: it OOMs during iteration
-  # accumulation, not during the one-off `lume check` validation pass,
-  # which alone takes ~23s). Raise this only to intentionally reproduce
-  # that crash.
-  [int]$Iterations = 1,
+  # Each iteration spawns a fresh lume.exe process (see Measure-Samples
+  # below) rather than looping inside one process via `lume benchmark`,
+  # since Certo has no garbage collector or exposed free primitive - a
+  # long-running process retains every Token/Instruction/string a compile
+  # pass allocates for its entire lifetime. `lume benchmark <path> 20`
+  # reliably OOMs on this feature-rich workload well before 20 iterations
+  # (confirmed: ~110-140 MB retained per iteration, no plateau - 20
+  # iterations reaches 2.4 GB, 200 reaches 22+ GB). A fresh process per
+  # sample sidesteps this entirely, since the OS reclaims memory on exit,
+  # so 30 (BENCHMARKS.md's own "at least 30 runs" contract) is safe here
+  # unlike the in-process `lume benchmark` approach this replaced. A
+  # single `lume check` of this file takes ~277 ms, so 30 samples costs
+  # under 10 seconds.
+  [int]$Iterations = 30,
   [string]$Lume = (Join-Path $PSScriptRoot 'dist\lume.exe')
 )
 
@@ -117,16 +123,32 @@ $lines.AddRange([string[]]$closing)
 if ($lines.Count -ne $lineCount) { throw "generator produced $($lines.Count) lines, expected $lineCount" }
 [IO.File]::WriteAllLines($path, $lines, [Text.UTF8Encoding]::new($false))
 
-# Validate the generated program before measuring it.
+# Validate the generated program compiles before measuring it.
 & $Lume check $path | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'generated feature benchmark did not compile' }
 
-$result = @(& $Lume benchmark $path $Iterations)
-if ($LASTEXITCODE -ne 0) { throw 'in-process benchmark failed' }
-$compileTotal = [double](($result | Where-Object { $_ -like 'compile_total_ms=*' }) -replace '^compile_total_ms=', '')
-$bytecodeTotal = [double](($result | Where-Object { $_ -like 'bytecode_load_total_ms=*' }) -replace '^bytecode_load_total_ms=', '')
-$compileMean = $compileTotal / $Iterations
-$bytecodeMean = $bytecodeTotal / $Iterations
+# One fresh lume.exe process per sample (see the -Iterations comment above
+# for why) - mirrors benchmark.ps1's own Measure-Runs, but keeps every
+# individual sample rather than only a total, since median/p95 need the
+# per-run distribution.
+function Measure-Samples([scriptblock]$Action, [int]$Count) {
+  1..$Count | ForEach-Object {
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    & $Action | Out-Null
+    $watch.Stop()
+    if ($LASTEXITCODE -ne 0) { throw "lume check failed during a timed sample (exit $LASTEXITCODE)" }
+    $watch.Elapsed.TotalMilliseconds
+  }
+}
+
+$samples = @(Measure-Samples { & $Lume check $path } $Iterations)
+$sorted = @($samples | Sort-Object)
+$compileMean = ($samples | Measure-Object -Average).Average
+$medianMs = $sorted[[Math]::Floor(($Iterations - 1) / 2)]
+$p95Index = [Math]::Min($Iterations - 1, [Math]::Ceiling(0.95 * $Iterations) - 1)
+$p95Ms = $sorted[$p95Index]
+$variance = (($samples | ForEach-Object { [Math]::Pow($_ - $compileMean, 2) } | Measure-Object -Sum).Sum) / $Iterations
+$stdDevMs = [Math]::Sqrt($variance)
 $targetLinesPerSecond = 10000
 $compileLinesPerSecond = $lineCount / ($compileMean / 1000)
 
@@ -134,10 +156,11 @@ $compileLinesPerSecond = $lineCount / ($compileMean / 1000)
   SourceLines = $lineCount
   Repetitions = $repetitions
   Iterations = $Iterations
-  CompileTotalMs = $compileTotal
   CompileMeanMs = [Math]::Round($compileMean, 3)
+  MedianMs = [Math]::Round($medianMs, 3)
+  P95Ms = [Math]::Round($p95Ms, 3)
+  StdDevMs = [Math]::Round($stdDevMs, 3)
   CompileLinesPerSecond = [Math]::Round($compileLinesPerSecond)
-  BytecodeLoadMeanMs = [Math]::Round($bytecodeMean, 3)
   TargetLinesPerSecond = $targetLinesPerSecond
   TargetMet = $compileLinesPerSecond -ge $targetLinesPerSecond
 }
