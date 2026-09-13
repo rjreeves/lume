@@ -6,11 +6,12 @@ use taskgraph.report
 // as a list.map/filter/find/fold callback (see README "Generic list
 // transformations" and SPEC.md §12/§13): `match` anywhere in the reachable
 // call graph fails at run time with "callback uses unsupported operation".
-// graph.validate/order/transitive_closure and report.to_json all use match
-// internally (directly or through helpers like graph_map_get_list), so they
-// are exercised end-to-end via `lume run` instead (see the taskgraph.lume
-// section of README.md for the exact commands and their expected output).
-// What's covered here is the match-free string/list plumbing underneath.
+// graph.validate/order/transitive_closure all use match internally (directly
+// or through helpers like graph_map_get_list), so they are exercised
+// end-to-end via `lume run` instead (see the taskgraph.lume section of
+// README.md for the exact commands and their expected output).
+// report.to_json is match-free (json.encode is a builtin, not Lume-level
+// match) and so is testable directly, below.
 
 fn task_stub(name: str) -> Task {
   return Task(name: name, command: "cmd", args: [], depends_on: [])
@@ -38,6 +39,13 @@ test "join_names joins with a comma and space" {
   expect.equal(join_names(["a", "b", "c"]), "a, b, c")
   expect.equal(join_names(["solo"]), "solo")
   expect.equal(join_names([]), "")
+}
+
+test "to_json encodes a run's payload-carrying outcome enum" {
+  let runs = [TaskRun(name: "build", outcome: Outcome.failed(exit_code: 1, message: "boom"))]
+  let encoded = report.to_json(runs)
+  expect.ok(encoded)
+  expect.equal(result.value(encoded), "[{\"name\":\"build\",\"outcome\":{\"variant\":\"failed\",\"exit_code\":1,\"message\":\"boom\"}}]")
 }
 
 fn main(args: [str]) -> int {

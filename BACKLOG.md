@@ -122,3 +122,88 @@ restricting callbacks (§12) may not carry over — or document this
 cross-reference explicitly in `SPEC.md` §13 as a load-bearing limitation
 instead of a silent run-time surprise, and update the grammar sketch to
 reflect what a test body actually accepts.
+
+### 3. `?`/`!` result propagation also fails inside the restricted evaluator, undocumented in §12
+
+**Claim contradicted:** `SPEC.md` §12 lists exactly what a callback body
+(and, per item 2 above, a `test` body) may contain: "Field access,
+arithmetic, comparisons, `if`/`while`, calls to other user functions
+(including recursively, transitively), calls to builtins, and `with`
+record updates all work inside a callback. The one thing that still does
+not work, anywhere in a callback's reachable call graph, is `match`." This
+is incomplete — `?` (and its compatibility spelling `!`), §9's own
+result-propagation operator, fails the exact same way, with no mention
+anywhere in §12 or §19's gap list.
+
+**Reproduction — inside a `test` block:**
+
+```lume
+fn upper_or_fail(text: str) -> str ! str {
+  let trimmed = fs.try_read_text(text)?
+  return result.ok(str.upper(trimmed))
+}
+
+test "propagates a shorthand result" {
+  let outcome = upper_or_fail("does-not-exist.txt")
+  expect.true(result.is_ok(outcome) == false)
+}
+
+fn main(args: [str]) -> int {
+  return 0
+}
+```
+
+```
+$ lume test repro.lume --json
+{"event":"test","id":"repro.lume#propagates a shorthand result","name":"propagates a shorthand result","status":"fail","line":6,"message":"callback `upper_or_fail` uses unsupported operation `propagate`"}
+```
+
+**And the restriction is not test-specific** — the identical failure
+reproduces from an ordinary `list.map` callback, confirming this is §12's
+restricted evaluator itself, not something particular to `test` bodies:
+
+```lume
+fn upper_or_fail(text: str) -> str ! str {
+  let trimmed = fs.try_read_text(text)?
+  return result.ok(str.upper(trimmed))
+}
+
+fn always_zero(text: str) -> int {
+  let outcome = upper_or_fail(text)
+  return 0
+}
+
+fn main(args: [str]) -> int {
+  let mapped = list.map(["a.txt"], &always_zero)
+  print(list.get(mapped, 0))
+  return 0
+}
+```
+
+```
+$ lume run repro2.lume
+callback `upper_or_fail` uses unsupported operation `propagate`
+```
+
+Note `always_zero` never uses `?` itself — the failing operation is in
+`upper_or_fail`, called transitively, exactly matching how `match`
+already fails transitively per §12's own existing wording for that case.
+
+**Impact:** compounds item 2 above. Since `fs.try_read_text`,
+`fs.try_write_text`, `Type.from_json`, and `json.encode` are exactly the
+builtins that return the shorthand `T ! E` shape ordinary code is expected
+to use `?` with (§9), **no test can exercise any function that propagates
+one of those results with `?`/`!`**, in addition to the enum/match
+restriction item 2 already covers. A function has to route around both
+restrictions — no `match`, no `?` — anywhere in its reachable call graph
+to be natively testable at all, which in practice rules out most
+fallible, non-trivial Lume code. `examples/taskgraph/report.lume` (PR #40)
+was rewritten to use `result.is_ok`/`result.value`/`result.error` instead
+of `?` specifically so `report.to_json` could be covered by
+`examples/taskgraph_test.lume`, rather than being routed around like
+item 2's other examples.
+
+**Suggested fix:** same as item 2 — either lift the restriction (for
+`test` bodies, or for `?`/`!` specifically if `match` has a genuinely
+different reason to stay restricted), or document §12's actual, complete
+list of disallowed operations, and cross-reference it from §13.

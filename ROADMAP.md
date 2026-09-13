@@ -248,9 +248,11 @@ non-trivial benchmark in this file has met its own bar.**
 - typed JSON decoding into records, and `json.encode(value)` for the
   reverse direction — schema-free (every value already carries its own
   runtime type tag), supporting `str`/`int`/`bool`/records/lists
-  recursively; enum values (including `Option<T>`/`Result<T,E>`) are not
-  supported, symmetric with decoding's own enum-field limitation, and
-  return `Err` rather than crashing;
+  recursively, plus enum values (including `Option<T>`/`Result<T,E>`,
+  enums under the hood): a variant encodes as its name under a `"variant"`
+  key with any payload fields flattened alongside it. One-directional —
+  decoding a JSON payload into an enum field is still not supported,
+  symmetric with decoding's own existing enum-field limitation;
 - enums, variant construction, and statically checked variant payloads;
 - exhaustive matching, duplicate-arm validation, and payload destructuring;
 - built-in `Option<T>` and `Result<T, E>`.
@@ -530,7 +532,8 @@ into every compilation.
 - ~~JSON encoding to complement typed decoding~~ — shipped as
   `json.encode(value) -> Result<str, str>` (see "Shipped in the
   bootstrap" above); supports the same shapes decoding does
-  (`str`/`int`/`bool`/records/lists, recursively), not enums.
+  (`str`/`int`/`bool`/records/lists, recursively), plus enum values
+  (`Option<T>`/`Result<T,E>` included), which decoding still doesn't.
 
 Each API should keep the `noun.verb` naming convention and return explicit
 `Option` or `Result` values rather than throwing exceptions.

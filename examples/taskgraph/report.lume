@@ -1,16 +1,3 @@
-// json.encode has no support for enum values (see README/SPEC), so every
-// Outcome is flattened into this plain-scalar record before encoding.
-type RunReport {
-  name: str
-  status: str
-  exit_code: int
-  message: str
-}
-
-type RunReportFile {
-  runs: [RunReport]
-}
-
 fn join_names(names: [str]) -> str {
   var text = ""
   var index = 0
@@ -48,32 +35,6 @@ fn outcome_is_skipped(outcome: Outcome) -> bool {
     failed(exit_code, message) => false
     skipped(reason) => true
   }
-}
-
-fn to_run_report(run: TaskRun) -> RunReport {
-  return match run.outcome {
-    passed(exit_code) => RunReport(name: run.name, status: "passed", exit_code: exit_code, message: "")
-    failed(exit_code, message) => RunReport(name: run.name, status: "failed", exit_code: exit_code, message: message)
-    skipped(reason) => RunReport(name: run.name, status: "skipped", exit_code: -1, message: reason)
-  }
-}
-
-fn empty_run_reports() -> [RunReport] {
-  return []
-}
-
-// A plain while-loop, not list.map(&to_run_report): a callback passed to
-// list.map/filter/find/fold cannot contain `match` anywhere in its call
-// graph (see README "Generic list transformations"), and to_run_report does.
-fn build_run_reports(runs: [TaskRun]) -> [RunReport] {
-  var output = empty_run_reports()
-  var index = 0
-  while index < list.len(runs) {
-    let run = list.get(runs, index)
-    output = list.push(output, to_run_report(run))
-    index = index + 1
-  }
-  return output
 }
 
 pub fn report.describe_run(run: TaskRun) -> str {
@@ -149,9 +110,17 @@ pub fn report.count_skipped(runs: [TaskRun]) -> int {
   return count
 }
 
+// A TaskRun's outcome field is a payload-carrying enum; json.encode
+// handles that natively (each Outcome becomes {"variant": ..., ...}),
+// so no manual flattening into a scalar DTO record is needed here.
+// Uses result.is_ok/value/error rather than `?`: the restricted evaluator
+// a `test` block's body runs through (see taskgraph_test.lume) rejects
+// `?`/`!` propagation the same way it rejects `match`, undocumented in
+// SPEC.md §12/§13 alongside the match restriction - see BACKLOG.md.
 pub fn report.to_json(runs: [TaskRun]) -> str ! str {
-  let reports = build_run_reports(runs)
-  let wrapper = RunReportFile(runs: reports)
-  let encoded = json.encode(wrapper)?
-  return result.ok(encoded)
+  let encoded = json.encode(runs)
+  if result.is_ok(encoded) {
+    return result.ok(result.value(encoded))
+  }
+  return result.err(result.error(encoded))
 }

@@ -3688,10 +3688,19 @@ fn decodeRecordJson(code: List<Instruction>, recordName: Text, input: Text): Tex
 // schema or expected-type parameter at all, since every tagged runtime
 // value already carries its own kind (valueKind) and, for records, its
 // own "$type" - it just recurses by tag. Skips "$type" when re-emitting
-// a record's fields (real JSON output has no such key). Enums ("v:") and
-// anything else internal-only (closures "c:", process results "p:",
-// legacy results "r:") are not supported, symmetric with decodeJsonValue
-// never supporting enum fields either.
+// a record's fields (real JSON output has no such key). An enum ("v:") -
+// including the built-in Option<T>/Result<T,E>, which are enums under
+// the hood and carry the same real enum_type instructions user-declared
+// enums do (see the two makeInstruction("enum_type", ...) prelude
+// entries) - encodes as its variant name under a "variant" key plus its
+// own payload fields flattened alongside it, found the same way
+// bindVariantPayload already looks them up (findEnumSchema +
+// variantPayloadSchema), payload values recursively encoded the same as
+// any other value. This is one-directional: decodeJsonValue still never
+// decodes into an enum field, so there is no matching decode shape to
+// stay symmetric with, and no round-trip is implied or required.
+// Anything else internal-only (closures "c:", process results "p:",
+// legacy results "r:") is still not supported.
 // JsonValue.keys() empirically returns an empty list for an object that
 // was built via Json.object()/JsonValue.set() then round-tripped through
 // Json.stringify()+Json.parse() (confirmed directly: a debug print showed
@@ -3738,6 +3747,28 @@ fn encodeJsonTree(code: List<Instruction>, value: Text): EncodeValue = {
       }
       EncodeValue { value: output, problem: problem }
     } else { EncodeValue { value: Json.string(""), problem: "json.encode: unknown record `" ++ typeName ++ "`" } }
+  } else if Text.eq(kind, "v:") then {
+    val root = Json.parse(valueBody(value))
+    val enumName = runtimeEnumName(value)
+    val variantName = runtimeVariantName(value)
+    if let Some(enumSchema) = findEnumSchema(code, enumName) {
+      if let Some(payload) = variantPayloadSchema(enumSchema, variantName) {
+        val fields = if Text.eq(payload, "") then [] else Text.split(payload, ",")
+        val output = Json.object()
+        JsonValue.set(output, "variant", Json.string(variantName))
+        var problem = ""
+        var index = 0
+        while index < List.len(fields) and Text.eq(problem, "") {
+          val fieldName = schemaFieldName(List.getOrPanic(fields, index))
+          val fieldValue = JsonValue.asText(JsonValue.get(root, fieldName))
+          val encoded = encodeJsonTree(code, fieldValue)
+          if not Text.eq(encoded.problem, "") then { problem = encoded.problem }
+          else { JsonValue.set(output, fieldName, encoded.value) }
+          index = index + 1
+        }
+        EncodeValue { value: output, problem: problem }
+      } else { EncodeValue { value: Json.string(""), problem: "json.encode: unknown variant `" ++ variantName ++ "` of `" ++ enumName ++ "`" } }
+    } else { EncodeValue { value: Json.string(""), problem: "json.encode: unknown enum `" ++ enumName ++ "`" } }
   } else { EncodeValue { value: Json.string(""), problem: "json.encode does not support this value's type" } }
 }
 
@@ -5065,7 +5096,7 @@ fn apiManifest(): Text = {
   JsonValue.set(root, "language", Json.string("Lume"))
   JsonValue.set(root, "version", Json.string("0.1.0-bootstrap"))
   val features = Json.array()
-  for feature in ["bindings", "static_types", "homogeneous_lists", "generics", "generic_constraints", "protocols", "protocol_methods", "static_protocol_dispatch", "explicit_protocol_implementations", "generic_records", "generic_enums", "option", "result", "list_map", "list_filter", "list_find", "list_fold", "maps", "map_map", "map_filter", "map_fold", "function_values", "closures", "immutable_capture", "native_test_runner", "test_directory_discovery", "result_propagation", "records", "nested_records", "field_access", "record_updates", "typed_json_decoding", "json_encode", "path_manipulation", "directory_enumeration", "time_now", "time_calendar_components", "process_config", "http_get", "http_post_put_delete", "http_request_headers", "bytes_type", "http_request_bytes", "test_fixtures", "enums", "variant_payloads", "match_expressions", "exhaustive_matching", "payload_destructuring", "if_else", "while", "functions", "recursion", "bytecode_cache"] {
+  for feature in ["bindings", "static_types", "homogeneous_lists", "generics", "generic_constraints", "protocols", "protocol_methods", "static_protocol_dispatch", "explicit_protocol_implementations", "generic_records", "generic_enums", "option", "result", "list_map", "list_filter", "list_find", "list_fold", "maps", "map_map", "map_filter", "map_fold", "function_values", "closures", "immutable_capture", "native_test_runner", "test_directory_discovery", "result_propagation", "records", "nested_records", "field_access", "record_updates", "typed_json_decoding", "json_encode", "json_encode_enums", "path_manipulation", "directory_enumeration", "time_now", "time_calendar_components", "process_config", "http_get", "http_post_put_delete", "http_request_headers", "bytes_type", "http_request_bytes", "test_fixtures", "enums", "variant_payloads", "match_expressions", "exhaustive_matching", "payload_destructuring", "if_else", "while", "functions", "recursion", "bytecode_cache"] {
     JsonValue.push(features, Json.string(feature))
   }
   JsonValue.set(root, "features", features)
@@ -5090,7 +5121,7 @@ fn aiReference(): Text = {
   "Types: int, str, bool, [type], and records. Declare `type User { name: str }`, construct `User(name: \"Ada\")`, access `user.name`. " ++
   "Copy a record with checked changes using `user with { active: true }`; the original remains unchanged. " ++
   "Decode JSON with `User.from_json(text)`, which returns `result<User,str>` and reports field paths. " ++
-  "Encode with `json.encode(value)`, which returns `result<str,str>`; supports int/str/bool/lists/records recursively, not enums. " ++
+  "Encode with `json.encode(value)`, which returns `result<str,str>`; supports int/str/bool/lists/records recursively. An enum (including Option<T>/Result<T,E>) encodes as its variant name under a \"variant\" key, with any payload fields flattened alongside it - e.g. `State.done(code: 0)` becomes `{\"variant\":\"done\",\"code\":0}`. " ++
   "Path helpers: path.join/basename/dirname/stem(text) -> str, path.extension(text) -> Option<str>. " ++
   "List a directory with dir.list(path) -> result<[str],str>; entries are names only, unsorted. " ++
   "time.now() -> int gives the current Unix epoch seconds; time.to_iso(seconds) -> str formats it as UTC ISO-8601. " ++

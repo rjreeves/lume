@@ -1,0 +1,23 @@
+enum State {
+  waiting
+  done(code: int)
+}
+
+fn main(args: [str]) -> int {
+  let waiting = json.encode(State.waiting())
+  print(result.is_ok(waiting))
+  print(result.value(waiting))
+
+  let done = json.encode(State.done(code: 7))
+  print(result.is_ok(done))
+  print(result.value(done))
+
+  let some = json.encode(Option.Some(value: 1))
+  print(result.is_ok(some))
+  print(result.value(some))
+
+  let none = json.encode(Option.None())
+  print(result.is_ok(none))
+  print(result.value(none))
+  return 0
+}

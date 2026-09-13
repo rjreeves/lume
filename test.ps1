@@ -58,9 +58,9 @@ $jsonEncode = & $Lume run (Join-Path $PSScriptRoot 'examples\json_encode.lume')
 if ($LASTEXITCODE -ne 0) { throw "json encode exited $LASTEXITCODE" }
 Assert-Equal 'json encode' "{`"name`":`"Ada`",`"age`":30,`"active`":true,`"tags`":[`"admin`",`"eng`"],`"address`":{`"city`":`"London`"}}`ntrue`ntrue`ntrue`ntrue`ntrue" ($jsonEncode -join "`n")
 
-$invalidJsonEncodeEnum = & $Lume run (Join-Path $PSScriptRoot 'examples\invalid_json_encode_enum.lume')
-if ($LASTEXITCODE -ne 0) { throw "invalid json encode enum exited $LASTEXITCODE" }
-Assert-Equal 'json encode enum rejected' "false`njson.encode does not support this value's type" ($invalidJsonEncodeEnum -join "`n")
+$jsonEncodeEnum = & $Lume run (Join-Path $PSScriptRoot 'examples\json_encode_enum.lume')
+if ($LASTEXITCODE -ne 0) { throw "json encode enum exited $LASTEXITCODE" }
+Assert-Equal 'json encode enum' "true`n{`"variant`":`"waiting`"}`ntrue`n{`"variant`":`"done`",`"code`":7}`ntrue`n{`"variant`":`"Some`",`"value`":1}`ntrue`n{`"variant`":`"None`"}" ($jsonEncodeEnum -join "`n")
 
 $pathFunctions = & $Lume run (Join-Path $PSScriptRoot 'examples\path_functions.lume')
 if ($LASTEXITCODE -ne 0) { throw "path functions exited $LASTEXITCODE" }
