@@ -1,0 +1,12 @@
+fn main(args: [str]) -> int {
+  let headers = map.set(map.new(), "X-Lume-Test", "hello-from-lume")
+  let outcome = http.request("GET", "https://httpbin.org/headers", headers, "")
+  if result.is_ok(outcome) {
+    let response = result.value(outcome)
+    print(http.ok(response))
+    print(str.contains(http.body(response), "hello-from-lume"))
+  } else {
+    print(result.error(outcome))
+  }
+  return 0
+}
