@@ -90,6 +90,14 @@ $invalidTimeYear = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_time
 if ($LASTEXITCODE -ne 1) { throw "time.year validation should exit 1" }
 Assert-Equal 'time.year requires int' 'E0699 builtin `time.year` requires int' ($invalidTimeYear -join "`n")
 
+$timeFormat = & $Lume run (Join-Path $PSScriptRoot 'examples\time_format.lume')
+if ($LASTEXITCODE -ne 0) { throw "time format exited $LASTEXITCODE" }
+Assert-Equal 'time format' "2023-11-14`n22:13:20`n2023-11-14T22:13:20Z" ($timeFormat -join "`n")
+
+$invalidTimeFormat = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_time_format_args.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "time.format validation should exit 1" }
+Assert-Equal 'time.format requires (int, str)' 'E0715 builtin `time.format` requires (int, str)' ($invalidTimeFormat -join "`n")
+
 $enums = & $Lume run (Join-Path $PSScriptRoot 'examples\enums.lume')
 if ($LASTEXITCODE -ne 0) { throw "enums exited $LASTEXITCODE" }
 Assert-Equal 'enum construction' ('{"$enum":"JobState","$variant":"pending"}' + "`n" + '{"$enum":"JobState","$variant":"completed","code":"i:0"}') ($enums -join "`n")

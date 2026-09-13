@@ -594,6 +594,12 @@
     "stdout": "2023\n11\n14\n22\n13\n20"
   },
   {
+    "id": "time_format_pattern",
+    "prompt": "For the fixed Unix timestamp 1700000000, print it formatted as \"%Y-%m-%d\" using time.format.",
+    "args": [],
+    "stdout": "2023-11-14"
+  },
+  {
     "id": "bytes_basics",
     "prompt": "Convert the text \"hello world\" to bytes with bytes.from_str, then print it back as text with bytes.to_str and print its length with bytes.length.",
     "args": [],

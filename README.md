@@ -656,18 +656,31 @@ There is no recursive traversal yet — `dir.list` covers a single level.
 `time.now() -> int` returns the current time as Unix epoch seconds;
 `time.to_iso(seconds) -> str` formats an epoch value as UTC ISO-8601;
 `time.year`/`month`/`day`/`hour`/`minute`/`second(seconds) -> int` read
-the UTC calendar components:
+the UTC calendar components; `time.format(seconds, pattern) -> str`
+formats an epoch value with a `strftime`-style pattern, evaluated
+against UTC (the same convention every other `time.*` function already
+uses):
 
 ```lume
 let now = time.now()
 print(time.to_iso(now))
 print(time.year(now))
+print(time.format(now, "%Y-%m-%d"))
+print(time.format(now, "%A, %B %d %Y"))
 ```
 
-There is still no `Duration` type, custom format strings, or timezone
-support yet — plain `int` arithmetic
-on epoch seconds covers offsets (`time.now() + 300` for five minutes
-from now).
+`pattern` accepts the same directives as the C standard library's
+`strftime` (`%Y` four-digit year, `%m` two-digit month, `%d` two-digit
+day, `%H`/`%M`/`%S` hour/minute/second, `%A`/`%B` full weekday/month
+name, and so on) and is passed straight through to it, so behavior for
+directives not listed here matches `strftime` on the host platform. An
+unusually long pattern can silently truncate at 256 bytes of output — a
+limit inherited from the underlying formatting call, not something Lume
+adds on top.
+
+There is still no `Duration` type or timezone support yet — plain `int`
+arithmetic on epoch seconds covers offsets (`time.now() + 300` for five
+minutes from now).
 
 ### Process configuration
 

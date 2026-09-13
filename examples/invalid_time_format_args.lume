@@ -1,0 +1,4 @@
+fn main(args: [str]) -> int {
+  print(time.format("not-a-timestamp", "%Y"))
+  return 0
+}
