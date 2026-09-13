@@ -410,6 +410,7 @@ fs.exists(path)                fs.read_text(path)
 fs.write_text(path, text)      fs.try_read_text(path)
 fs.try_write_text(path, text)
 env.get(name)                  env.has(name)
+env.set(name, value)            env.unset(name)
 process.run(exe, args)         process.ok(result)
 process.code(result)           process.stdout(result)
 process.stderr(result)
@@ -439,6 +440,7 @@ result.ok(value)                result.err(message)
 result.is_ok(result)            result.value(result)
 result.error(result)
 expect.equal/true/ok/err/some(...)   (inside `test { ... }` blocks only, §13)
+fixture.temp_dir()               fixture.cleanup(path)
 ```
 
 `map.map`/`map.filter`/`map.fold` mirror the `list.*` transforms exactly,
@@ -487,6 +489,15 @@ network transfer itself. `http.get` is Windows-only: the underlying
 client is a stub on other platforms that aborts the process rather than
 returning an error. There is no `post`/`put`/`delete`, no custom
 headers, and no binary body support yet.
+
+`fixture.temp_dir() -> str` creates and returns a fresh, unique
+directory (under `%TEMP%`, falling back to `%TMP%` then `.`) — call
+`fixture.cleanup(path) -> bool` to remove it recursively when done.
+There is no automatic cleanup: like every other resource in Lume
+(files, processes), a fixture must be cleaned up explicitly.
+`env.set(name, value) -> bool` and `env.unset(name) -> bool` mutate the
+whole process's environment directly (the same underlying mechanism
+`process.run_with_env` already uses internally to scope its overrides).
 
 ## 12. Generic list transformations
 

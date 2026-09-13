@@ -165,6 +165,10 @@ $httpGet = & $Lume run (Join-Path $PSScriptRoot 'examples\http_get.lume')
 if ($LASTEXITCODE -ne 0) { throw "http get example exited $LASTEXITCODE" }
 Assert-Equal 'http get' "200`ntrue`ntrue" ($httpGet -join "`n")
 
+$fixtures = & $Lume run (Join-Path $PSScriptRoot 'examples\fixtures.lume')
+if ($LASTEXITCODE -ne 0) { throw "fixtures example exited $LASTEXITCODE" }
+Assert-Equal 'test fixtures' "true`nhello fixture`ntrue`nfalse`nfalse`ntrue`nabc`nfalse" ($fixtures -join "`n")
+
 $structured = & $Lume run (Join-Path $PSScriptRoot 'examples\structured_errors.lume') (Join-Path $PSScriptRoot 'examples\data.json')
 if ($LASTEXITCODE -ne 0) { throw "structured success exited $LASTEXITCODE" }
 Assert-Equal 'structured error success' '{"NAME":"LUME","VERSION":1}' ($structured -join "`n")
@@ -322,6 +326,10 @@ Assert-Equal 'process run_with_env argument validation' 'E0700 process.run_with_
 $httpGetArgs = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_http_get_args.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "http get argument validation should exit 1" }
 Assert-Equal 'http get argument validation' 'E0608 builtin `http.get` requires str' ($httpGetArgs -join "`n")
+
+$envSetArgs = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_env_set_args.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "env set argument validation should exit 1" }
+Assert-Equal 'env set argument validation' 'E0607 builtin `env.set` requires str arguments' ($envSetArgs -join "`n")
 
 $unwrap = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_unwrap.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "unwrap validation should exit 1" }

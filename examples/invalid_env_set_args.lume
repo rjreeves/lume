@@ -1,0 +1,4 @@
+fn main(args: [str]) -> int {
+  let x = env.set(5, "value")
+  return 0
+}

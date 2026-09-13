@@ -1,0 +1,18 @@
+fn main(args: [str]) -> int {
+  let dir = fixture.temp_dir()
+  let written = fs.write_text(path.join(dir, "note.txt"), "hello fixture")
+  print(written)
+  print(fs.read_text(path.join(dir, "note.txt")))
+  let cleaned = fixture.cleanup(dir)
+  print(cleaned)
+  let writtenAfterCleanup = fs.write_text(path.join(dir, "note2.txt"), "should fail")
+  print(writtenAfterCleanup)
+
+  print(env.has("LUME_FIXTURE_EXAMPLE_VAR"))
+  let didSet = env.set("LUME_FIXTURE_EXAMPLE_VAR", "abc")
+  print(env.has("LUME_FIXTURE_EXAMPLE_VAR"))
+  print(env.get("LUME_FIXTURE_EXAMPLE_VAR"))
+  let didUnset = env.unset("LUME_FIXTURE_EXAMPLE_VAR")
+  print(env.has("LUME_FIXTURE_EXAMPLE_VAR"))
+  return 0
+}
