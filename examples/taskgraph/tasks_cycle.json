@@ -1,0 +1,16 @@
+{
+  "tasks": [
+    {
+      "name": "build",
+      "command": "powershell.exe",
+      "args": ["-NoProfile", "-Command", "Write-Output building"],
+      "depends_on": ["test"]
+    },
+    {
+      "name": "test",
+      "command": "powershell.exe",
+      "args": ["-NoProfile", "-Command", "Write-Output testing"],
+      "depends_on": ["build"]
+    }
+  ]
+}

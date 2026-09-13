@@ -1,0 +1,280 @@
+enum GraphError {
+  duplicate_task(name: str)
+  unknown_dependency(task: str, dependency: str)
+  self_dependency(task: str)
+  cycle_detected(task: str)
+  unknown_target(name: str)
+}
+
+fn graph_empty_names() -> [str] {
+  return []
+}
+
+fn graph_empty_tasks() -> [Task] {
+  return []
+}
+
+fn empty_task() -> Task {
+  return Task(name: "", command: "", args: [], depends_on: [])
+}
+
+fn contains_name(names: [str], target: str) -> bool {
+  var index = 0
+  var found = false
+  while index < list.len(names) {
+    let existing = list.get(names, index)
+    if existing == target {
+      found = true
+    }
+    index = index + 1
+  }
+  return found
+}
+
+fn no_task() -> Option<Task> {
+  return Option.None()
+}
+
+fn find_task_by_name(tasks: [Task], name: str) -> Option<Task> {
+  var index = 0
+  var found = no_task()
+  while index < list.len(tasks) {
+    let task = list.get(tasks, index)
+    if task.name == name {
+      found = Option.Some(value: task)
+    }
+    index = index + 1
+  }
+  return found
+}
+
+fn unwrap_task_or_empty(maybe: Option<Task>) -> Task {
+  return match maybe {
+    Some(task) => task
+    None => empty_task()
+  }
+}
+
+fn empty_in_degree() -> Map<str, int> {
+  return map.new()
+}
+
+fn empty_dependents() -> Map<str, [str]> {
+  return map.new()
+}
+
+fn graph_map_get_int(values: Map<str, int>, key: str) -> int {
+  return match map.get(values, key) {
+    Some(value) => value
+    None => 0
+  }
+}
+
+fn graph_map_get_list(values: Map<str, [str]>, key: str) -> [str] {
+  return match map.get(values, key) {
+    Some(value) => value
+    None => graph_empty_names()
+  }
+}
+
+fn first_unresolved_name(tasks: [Task], resolved: [str]) -> str {
+  var index = 0
+  var name = ""
+  while index < list.len(tasks) {
+    let task = list.get(tasks, index)
+    if contains_name(resolved, task.name) == false {
+      if name == "" {
+        name = task.name
+      }
+    }
+    index = index + 1
+  }
+  return name
+}
+
+fn filter_by_names(tasks: [Task], names: [str]) -> [Task] {
+  var output = graph_empty_tasks()
+  var index = 0
+  while index < list.len(tasks) {
+    let task = list.get(tasks, index)
+    if contains_name(names, task.name) {
+      output = list.push(output, task)
+    }
+    index = index + 1
+  }
+  return output
+}
+
+// Unlike filter_by_names (which keeps the original manifest order), this
+// rebuilds the task list in exactly the given name order.
+fn names_to_tasks(tasks: [Task], names: [str]) -> [Task] {
+  var output = graph_empty_tasks()
+  var index = 0
+  while index < list.len(names) {
+    let name = list.get(names, index)
+    output = list.push(output, unwrap_task_or_empty(find_task_by_name(tasks, name)))
+    index = index + 1
+  }
+  return output
+}
+
+fn collect_closure(tasks: [Task], target: str) -> [Task] {
+  var visited = graph_empty_names()
+  var frontier = graph_empty_names()
+  frontier = list.push(frontier, target)
+  visited = list.push(visited, target)
+
+  var cursor = 0
+  while cursor < list.len(frontier) {
+    let name = list.get(frontier, cursor)
+    let maybe = find_task_by_name(tasks, name)
+    let task = unwrap_task_or_empty(maybe)
+    var dep_index = 0
+    while dep_index < list.len(task.depends_on) {
+      let dependency = list.get(task.depends_on, dep_index)
+      if contains_name(visited, dependency) == false {
+        visited = list.push(visited, dependency)
+        frontier = list.push(frontier, dependency)
+      }
+      dep_index = dep_index + 1
+    }
+    cursor = cursor + 1
+  }
+
+  return filter_by_names(tasks, visited)
+}
+
+// Every declared field must be supplied exactly once, so duplicate names and
+// unknown/self dependencies are caught here, before any ordering is attempted.
+pub fn graph.validate(tasks: [Task]) -> Result<[Task], GraphError> {
+  var seen = graph_empty_names()
+  var index = 0
+  while index < list.len(tasks) {
+    let task = list.get(tasks, index)
+    if contains_name(seen, task.name) {
+      return Result.Err(error: GraphError.duplicate_task(name: task.name))
+    }
+    seen = list.push(seen, task.name)
+    index = index + 1
+  }
+
+  index = 0
+  while index < list.len(tasks) {
+    let task = list.get(tasks, index)
+    var dep_index = 0
+    while dep_index < list.len(task.depends_on) {
+      let dependency = list.get(task.depends_on, dep_index)
+      if dependency == task.name {
+        return Result.Err(error: GraphError.self_dependency(task: task.name))
+      }
+      if contains_name(seen, dependency) == false {
+        return Result.Err(error: GraphError.unknown_dependency(task: task.name, dependency: dependency))
+      }
+      dep_index = dep_index + 1
+    }
+    index = index + 1
+  }
+
+  return Result.Ok(value: tasks)
+}
+
+// Restrict a validated task set to one target and everything it transitively
+// depends on, so a caller can run (or dry-run) a single slice of the graph.
+pub fn graph.transitive_closure(tasks: [Task], target: str) -> Result<[Task], GraphError> {
+  let root = find_task_by_name(tasks, target)
+  return match root {
+    None => Result.Err(error: GraphError.unknown_target(name: target))
+    Some(task) => Result.Ok(value: collect_closure(tasks, target))
+  }
+}
+
+// Kahn's algorithm, with the ready queue implemented as a growing list and a
+// cursor rather than a real dequeue, since list.* has no remove-from-front.
+pub fn graph.order(tasks: [Task]) -> Result<[Task], GraphError> {
+  var in_degree = empty_in_degree()
+  var dependents = empty_dependents()
+
+  var index = 0
+  while index < list.len(tasks) {
+    let task = list.get(tasks, index)
+    in_degree = map.set(in_degree, task.name, list.len(task.depends_on))
+    index = index + 1
+  }
+
+  index = 0
+  while index < list.len(tasks) {
+    let task = list.get(tasks, index)
+    var dep_index = 0
+    while dep_index < list.len(task.depends_on) {
+      let dependency = list.get(task.depends_on, dep_index)
+      let existing = graph_map_get_list(dependents, dependency)
+      dependents = map.set(dependents, dependency, list.push(existing, task.name))
+      dep_index = dep_index + 1
+    }
+    index = index + 1
+  }
+
+  var queue = graph_empty_names()
+  index = 0
+  while index < list.len(tasks) {
+    let task = list.get(tasks, index)
+    if graph_map_get_int(in_degree, task.name) == 0 {
+      queue = list.push(queue, task.name)
+    }
+    index = index + 1
+  }
+
+  var cursor = 0
+  while cursor < list.len(queue) {
+    let current = list.get(queue, cursor)
+    let waiting = graph_map_get_list(dependents, current)
+    var waiting_index = 0
+    while waiting_index < list.len(waiting) {
+      let dependent = list.get(waiting, waiting_index)
+      let remaining = graph_map_get_int(in_degree, dependent) - 1
+      in_degree = map.set(in_degree, dependent, remaining)
+      if remaining == 0 {
+        queue = list.push(queue, dependent)
+      }
+      waiting_index = waiting_index + 1
+    }
+    cursor = cursor + 1
+  }
+
+  if list.len(queue) < list.len(tasks) {
+    return Result.Err(error: GraphError.cycle_detected(task: first_unresolved_name(tasks, queue)))
+  }
+
+  return Result.Ok(value: names_to_tasks(tasks, queue))
+}
+
+pub fn graph.describe_error(error: GraphError) -> str {
+  return match error {
+    duplicate_task(name) => "duplicate task name: " + name
+    unknown_dependency(task, dependency) => "task " + task + " depends on unknown task " + dependency
+    self_dependency(task) => "task " + task + " depends on itself"
+    cycle_detected(task) => "dependency cycle detected involving task " + task
+    unknown_target(name) => "unknown target task: " + name
+  }
+}
+
+pub fn graph.is_valid(outcome: Result<[Task], GraphError>) -> bool {
+  return match outcome {
+    Ok(value) => true
+    Err(error) => false
+  }
+}
+
+pub fn graph.unwrap(outcome: Result<[Task], GraphError>) -> [Task] {
+  return match outcome {
+    Ok(value) => value
+    Err(error) => graph_empty_tasks()
+  }
+}
+
+pub fn graph.error_of(outcome: Result<[Task], GraphError>) -> str {
+  return match outcome {
+    Ok(value) => ""
+    Err(error) => graph.describe_error(error)
+  }
+}

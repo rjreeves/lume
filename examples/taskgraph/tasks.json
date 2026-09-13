@@ -1,0 +1,34 @@
+{
+  "tasks": [
+    {
+      "name": "install",
+      "command": "powershell.exe",
+      "args": ["-NoProfile", "-Command", "Write-Output installing"],
+      "depends_on": []
+    },
+    {
+      "name": "lint",
+      "command": "powershell.exe",
+      "args": ["-NoProfile", "-Command", "Write-Output linting"],
+      "depends_on": ["install"]
+    },
+    {
+      "name": "build",
+      "command": "powershell.exe",
+      "args": ["-NoProfile", "-Command", "Write-Output building"],
+      "depends_on": ["install"]
+    },
+    {
+      "name": "test",
+      "command": "powershell.exe",
+      "args": ["-NoProfile", "-Command", "Write-Output testing"],
+      "depends_on": ["build"]
+    },
+    {
+      "name": "release",
+      "command": "powershell.exe",
+      "args": ["-NoProfile", "-Command", "Write-Output releasing"],
+      "depends_on": ["build", "test", "lint"]
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+use taskgraph.model
+use taskgraph.graph
+use taskgraph.report
+
+// A `test` block runs its whole body through the same restricted evaluator
+// as a list.map/filter/find/fold callback (see README "Generic list
+// transformations" and SPEC.md §12/§13): `match` anywhere in the reachable
+// call graph fails at run time with "callback uses unsupported operation".
+// graph.validate/order/transitive_closure and report.to_json all use match
+// internally (directly or through helpers like graph_map_get_list), so they
+// are exercised end-to-end via `lume run` instead (see the taskgraph.lume
+// section of README.md for the exact commands and their expected output).
+// What's covered here is the match-free string/list plumbing underneath.
+
+fn task_stub(name: str) -> Task {
+  return Task(name: name, command: "cmd", args: [], depends_on: [])
+}
+
+test "contains_name finds an existing entry and rejects a missing one" {
+  let names = ["install", "build", "test"]
+  expect.true(contains_name(names, "build"))
+  expect.true(contains_name(names, "missing") == false)
+}
+
+test "first_unresolved_name reports the first task missing from resolved" {
+  let tasks = [task_stub("install"), task_stub("build"), task_stub("test")]
+  let resolved = ["install", "test"]
+  expect.equal(first_unresolved_name(tasks, resolved), "build")
+}
+
+test "first_unresolved_name reports nothing once every task resolved" {
+  let tasks = [task_stub("install"), task_stub("build")]
+  let resolved = ["install", "build"]
+  expect.equal(first_unresolved_name(tasks, resolved), "")
+}
+
+test "join_names joins with a comma and space" {
+  expect.equal(join_names(["a", "b", "c"]), "a, b, c")
+  expect.equal(join_names(["solo"]), "solo")
+  expect.equal(join_names([]), "")
+}
+
+fn main(args: [str]) -> int {
+  return 0
+}

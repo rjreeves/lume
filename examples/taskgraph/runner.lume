@@ -1,0 +1,71 @@
+fn runner_empty_runs() -> [TaskRun] {
+  return []
+}
+
+fn empty_failed_map() -> Map<str, bool> {
+  return map.new()
+}
+
+fn map_get_bool(values: Map<str, bool>, key: str) -> bool {
+  return match map.get(values, key) {
+    Some(value) => value
+    None => false
+  }
+}
+
+fn no_blocking_dependency() -> Option<str> {
+  return Option.None()
+}
+
+// Returns the first not-yet-run-successfully dependency, if any, so the
+// caller can skip a task instead of running it against a broken input.
+fn blocking_dependency(depends_on: [str], failed: Map<str, bool>) -> Option<str> {
+  var index = 0
+  var found = no_blocking_dependency()
+  while index < list.len(depends_on) {
+    let dependency = list.get(depends_on, index)
+    if map_get_bool(failed, dependency) {
+      found = Option.Some(value: dependency)
+    }
+    index = index + 1
+  }
+  return found
+}
+
+fn execute_task(task: Task) -> Outcome {
+  let outcome = process.run(task.command, task.args)
+  if process.ok(outcome) {
+    return Outcome.passed(exit_code: process.code(outcome))
+  }
+  return Outcome.failed(exit_code: process.code(outcome), message: str.trim(process.stderr(outcome)))
+}
+
+fn is_outcome_blocking(outcome: Outcome) -> bool {
+  return match outcome {
+    passed(exit_code) => false
+    failed(exit_code, message) => true
+    skipped(reason) => true
+  }
+}
+
+// Runs every task in the given (already topologically sorted) order,
+// skipping anything downstream of a failure instead of running it blind.
+pub fn runner.run_all(ordered: [Task]) -> [TaskRun] {
+  var runs = runner_empty_runs()
+  var failed = empty_failed_map()
+  var index = 0
+  while index < list.len(ordered) {
+    let task = list.get(ordered, index)
+    let blocking = blocking_dependency(task.depends_on, failed)
+    let outcome = match blocking {
+      Some(dependency) => Outcome.skipped(reason: "dependency failed: " + dependency)
+      None => execute_task(task)
+    }
+    runs = list.push(runs, TaskRun(name: task.name, outcome: outcome))
+    if is_outcome_blocking(outcome) {
+      failed = map.set(failed, task.name, true)
+    }
+    index = index + 1
+  }
+  return runs
+}
