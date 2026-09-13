@@ -154,12 +154,6 @@ type EnumScan = {
   problem: Text
 }
 
-type ProtocolScan = {
-  names: List<Text>
-  implementations: List<Text>
-  problem: Text
-}
-
 type ArtifactResult = {
   code: List<Instruction>
   sourceHash: Text
@@ -1518,60 +1512,6 @@ fn scanEnums(tokens: List<Token>): EnumScan = {
     }
   }
   EnumScan { names: names, schemas: schemas, problem: problem }
-}
-
-fn scanProtocols(tokens: List<Token>): ProtocolScan = {
-  var names: List<Text> = []
-  var implementations: List<Text> = []
-  var problem = ""
-  var index = 0
-  while not Text.eq(at(tokens, index).kind, "eof") and Text.eq(problem, "") {
-    index = skipNewlines(tokens, index)
-    if Text.eq(at(tokens, index).kind, "eof") then {}
-    else if Text.eq(at(tokens, index).text, "use") then {
-      while not Text.eq(at(tokens, index).kind, "newline") and not Text.eq(at(tokens, index).kind, "eof") { index = index + 1 }
-    } else {
-      if Text.eq(at(tokens, index).text, "pub") then { index = index + 1 }
-      if Text.eq(at(tokens, index).text, "protocol") then {
-        val name = at(tokens, index + 1)
-        var brace = index + 2
-        while not Text.eq(at(tokens, brace).text, "{") and not Text.eq(at(tokens, brace).kind, "eof") { brace = brace + 1 }
-        if not Text.eq(name.kind, "name") then { problem = "E0250 expected protocol name" }
-        else if containsName(names, name.text) then { problem = "E0251 line " ++ intToText(name.line) ++ ": duplicate protocol `" ++ name.text ++ "`" }
-        else if not Text.eq(at(tokens, brace).text, "{") then { problem = "E0252 line " ++ intToText(name.line) ++ ": expected `{` after protocol name" }
-        else {
-          val finish = skipNewlines(tokens, brace + 1)
-          if not Text.eq(at(tokens, finish).text, "}") then { problem = "E0253 line " ++ intToText(name.line) ++ ": marker protocol body must be empty" }
-          else {
-            names = List.push(names, name.text)
-            index = finish + 1
-          }
-        }
-      } else if Text.eq(at(tokens, index).text, "impl") then {
-        val protocolName = at(tokens, index + 1)
-        val forToken = at(tokens, index + 2)
-        val typeName = at(tokens, index + 3)
-        var brace = index + 4
-        while not Text.eq(at(tokens, brace).text, "{") and not Text.eq(at(tokens, brace).kind, "eof") { brace = brace + 1 }
-        val implementation = protocolName.text ++ "|" ++ typeName.text
-        if not Text.eq(protocolName.kind, "name") or not Text.eq(forToken.text, "for") or not Text.eq(typeName.kind, "name") then { problem = "E0254 line " ++ intToText(at(tokens, index).line) ++ ": expected `impl Protocol for Type`" }
-        else if containsName(implementations, implementation) then { problem = "E0255 line " ++ intToText(protocolName.line) ++ ": duplicate implementation of `" ++ protocolName.text ++ "` for `" ++ typeName.text ++ "`" }
-        else if not Text.eq(at(tokens, brace).text, "{") then { problem = "E0256 line " ++ intToText(protocolName.line) ++ ": expected `{` after implementation" }
-        else {
-          val finish = skipNewlines(tokens, brace + 1)
-          if not Text.eq(at(tokens, finish).text, "}") then { problem = "E0257 line " ++ intToText(protocolName.line) ++ ": marker implementation body must be empty" }
-          else {
-            implementations = List.push(implementations, implementation)
-            index = finish + 1
-          }
-        }
-      } else {
-        while not Text.eq(at(tokens, index).text, "{") and not Text.eq(at(tokens, index).kind, "eof") { index = index + 1 }
-        if Text.eq(at(tokens, index).text, "{") then { index = blockEnd(tokens, index + 1) }
-      }
-    }
-  }
-  ProtocolScan { names: names, implementations: implementations, problem: problem }
 }
 
 fn scanFunctions(tokens: List<Token>): FunctionScan = {
@@ -4760,7 +4700,7 @@ fn execute(code: List<Instruction>): RunResult [io] = {
         exitCode = valueInt(item.value)
         running = false
       }
-    }
+    } else { problem = "E0725 line " ++ intToText(current.line) ++ ": unknown bytecode operation `" ++ current.op ++ "`" }
     if advance then { ip = ip + 1 }
   }
   RunResult { code: exitCode, problem: problem }

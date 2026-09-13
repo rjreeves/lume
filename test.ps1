@@ -191,6 +191,31 @@ $invalidArtifactRun = & $Lume exec $invalidArtifactPath 2>&1
 if ($LASTEXITCODE -ne 1) { throw "invalid bytecode should exit 1" }
 Assert-Contains 'truncated bytecode rejection' 'E0401 invalid bytecode artifact' ($invalidArtifactRun -join "`n")
 
+# A structurally-valid artifact (correct magic/hash/counts/framing) whose
+# instructions were produced by an incompatible build - simulated here by
+# patching one real "return" opcode's bytes in place, same length, so no
+# other offset shifts - must be rejected cleanly rather than silently
+# skipping the unrecognized instruction and corrupting execution.
+$staleArtifactBytes = [IO.File]::ReadAllBytes($artifactPath)
+$cursor = 76
+$patchedOffset = -1
+while ($cursor -lt $staleArtifactBytes.Length) {
+  $opLength = [BitConverter]::ToInt64($staleArtifactBytes, $cursor)
+  $opStart = $cursor + 8
+  $op = [Text.Encoding]::UTF8.GetString($staleArtifactBytes, $opStart, $opLength)
+  if ($op -eq 'return') { $patchedOffset = $opStart }
+  $cursor = $opStart + $opLength
+  $textLength = [BitConverter]::ToInt64($staleArtifactBytes, $cursor)
+  $cursor = $cursor + 8 + $textLength + 16
+}
+if ($patchedOffset -lt 0) { throw 'no return opcode found to patch in test-functions.lbc' }
+[Text.Encoding]::UTF8.GetBytes('zzzzzz').CopyTo($staleArtifactBytes, $patchedOffset)
+$staleArtifactPath = Join-Path $PSScriptRoot 'dist\stale-opcode.lbc'
+[IO.File]::WriteAllBytes($staleArtifactPath, $staleArtifactBytes)
+$staleArtifactRun = & $Lume exec $staleArtifactPath 2>&1
+if ($LASTEXITCODE -ne 1) { throw "stale-opcode bytecode should exit 1" }
+Assert-Contains 'unrecognized bytecode operation rejection' 'E0725' ($staleArtifactRun -join "`n")
+
 $coreApi = & $Lume run (Join-Path $PSScriptRoot 'examples\core_api.lume') (Join-Path $PSScriptRoot 'examples\data.json')
 if ($LASTEXITCODE -ne 0) { throw "core APIs exited $LASTEXITCODE" }
 Assert-Equal 'core APIs' "1`n28`ntrue`nLUME`n1`ntrue`n0" ($coreApi -join "`n")
