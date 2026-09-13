@@ -1,0 +1,4 @@
+fn main(args: [str]) -> int {
+  let value = bytes.to_str("not bytes")
+  return 0
+}

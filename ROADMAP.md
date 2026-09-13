@@ -353,10 +353,21 @@ non-trivial benchmark in this file has met its own bar.**
   (already-complete) download, since Certo's HTTP client has no
   streaming or early-abort mode; Windows only, since Certo's
   non-Windows `Http.*` calls are stubs that abort the process rather
-  than returning an error; binary bodies remain deferred (see "Now"
-  above) — `Http.requestBytes` already exists as a registered Certo
-  primitive, but needs a `Bytes` type this session hasn't exposed at
-  the Lume level;
+  than returning an error;
+- a `bytes` type, distinct from `str` at the type-checker level but
+  represented identically at runtime — a deliberate scope reduction,
+  since Lume's entire value representation is a single tagged `Text`
+  per value (confirmed by how closures store captured variables) and a
+  genuinely NUL-safe binary type would need a change to that
+  representation itself. `bytes.from_str(text) -> bytes`,
+  `bytes.to_str(data) -> str`, and `bytes.length(data) -> int` convert
+  and inspect; `fs.read_bytes(path) -> Result<bytes, str>` and
+  `fs.write_bytes(path, data) -> bool` mirror the `str` file APIs;
+  `http.request_bytes(method, url, headers, data) -> Result<http, str>`
+  and `http.body_bytes(response) -> bytes` mirror `http.request`/
+  `http.body` with a `bytes` body. Content with an embedded NUL byte
+  truncates at the NUL on round-trip — the same limitation Certo's own
+  `Bytes.toText` conversion already documents, not silently different;
 - human-readable and structured compiler errors;
 - native test declarations, assertions, filters, and direct-child
   `*_test.lume` discovery;
@@ -507,13 +518,15 @@ into every compilation.
   C-level work in Certo itself, not just a Lume-side wrapper;
 - ~~HTTP requests with typed results and bounded response handling~~ —
   partially shipped: `http.get`/`http.post`/`http.put`/`http.delete`/
-  `http.request` (arbitrary methods and headers via `Map<str,str>`)
-  are done (see "Shipped in the bootstrap" above); binary bodies and
-  true request-time (rather than post-download) response bounding
-  remain deferred — the former is a scoping choice (`Http.requestBytes`
-  already exists, but needs a `Bytes` type not yet exposed at the Lume
-  level), the latter needs a streaming primitive that doesn't exist in
-  Certo yet;
+  `http.request` (arbitrary methods and headers via `Map<str,str>`),
+  and now `http.request_bytes`/`http.body_bytes` (see "Shipped in the
+  bootstrap" above), are done; binary bodies shipped in a text-safe
+  form — a Lume `bytes` value is represented exactly like `str`
+  (embedded NUL bytes truncate on round-trip), since a genuinely
+  NUL-safe `Bytes` type would need a change to Lume's runtime value
+  representation, out of scope for now. True request-time (rather than
+  post-download) response bounding remains deferred — it needs a
+  streaming primitive that doesn't exist in Certo yet;
 - ~~JSON encoding to complement typed decoding~~ — shipped as
   `json.encode(value) -> Result<str, str>` (see "Shipped in the
   bootstrap" above); supports the same shapes decoding does

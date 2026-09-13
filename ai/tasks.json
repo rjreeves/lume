@@ -588,6 +588,12 @@
     "stdout": "2023\n11\n14\n22\n13\n20"
   },
   {
+    "id": "bytes_basics",
+    "prompt": "Convert the text \"hello world\" to bytes with bytes.from_str, then print it back as text with bytes.to_str and print its length with bytes.length.",
+    "args": [],
+    "stdout": "hello world\n11"
+  },
+  {
     "id": "file_write_read_roundtrip",
     "prompt": "Write a file then read it back and print its contents.",
     "args": [],
