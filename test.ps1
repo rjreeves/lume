@@ -82,6 +82,14 @@ $invalidTimeToIso = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_tim
 if ($LASTEXITCODE -ne 1) { throw "time.to_iso validation should exit 1" }
 Assert-Equal 'time.to_iso requires int' 'E0699 builtin `time.to_iso` requires int' ($invalidTimeToIso -join "`n")
 
+$timeCalendar = & $Lume run (Join-Path $PSScriptRoot 'examples\time_calendar.lume')
+if ($LASTEXITCODE -ne 0) { throw "time calendar exited $LASTEXITCODE" }
+Assert-Equal 'time calendar components' "2023`n11`n14`n22`n13`n20" ($timeCalendar -join "`n")
+
+$invalidTimeYear = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_time_year_args.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "time.year validation should exit 1" }
+Assert-Equal 'time.year requires int' 'E0699 builtin `time.year` requires int' ($invalidTimeYear -join "`n")
+
 $enums = & $Lume run (Join-Path $PSScriptRoot 'examples\enums.lume')
 if ($LASTEXITCODE -ne 0) { throw "enums exited $LASTEXITCODE" }
 Assert-Equal 'enum construction' ('{"$enum":"JobState","$variant":"pending"}' + "`n" + '{"$enum":"JobState","$variant":"completed","code":"i:0"}') ($enums -join "`n")

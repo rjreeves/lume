@@ -1,0 +1,4 @@
+fn main(args: [str]) -> int {
+  let x = time.year("not an int")
+  return 0
+}

@@ -175,6 +175,9 @@ path.join(a, b)              path.basename(text)
 path.dirname(text)           path.stem(text)
 path.extension(text)         dir.list(path)
 time.now()                   time.to_iso(seconds)
+time.year(seconds)           time.month(seconds)
+time.day(seconds)            time.hour(seconds)
+time.minute(seconds)         time.second(seconds)
 list.len(values)             list.get(values, index)
 list.push(values, item)
 map.new()                    map.len(m)
@@ -629,15 +632,18 @@ There is no recursive traversal yet — `dir.list` covers a single level.
 ### Time
 
 `time.now() -> int` returns the current time as Unix epoch seconds;
-`time.to_iso(seconds) -> str` formats an epoch value as UTC ISO-8601:
+`time.to_iso(seconds) -> str` formats an epoch value as UTC ISO-8601;
+`time.year`/`month`/`day`/`hour`/`minute`/`second(seconds) -> int` read
+the UTC calendar components:
 
 ```lume
 let now = time.now()
 print(time.to_iso(now))
+print(time.year(now))
 ```
 
-There is no `Duration` type, calendar-component access (year/month/day),
-custom format strings, or timezone support yet — plain `int` arithmetic
+There is still no `Duration` type, custom format strings, or timezone
+support yet — plain `int` arithmetic
 on epoch seconds covers offsets (`time.now() + 300` for five minutes
 from now).
 
