@@ -26,6 +26,18 @@ $greeting = & $Lume run (Join-Path $PSScriptRoot 'examples\greeting.lume')
 if ($LASTEXITCODE -ne 0) { throw "greeting exited $LASTEXITCODE" }
 Assert-Equal 'string concatenation' 'hello, Lume' ($greeting -join "`n")
 
+$helloDefault = & $Lume run (Join-Path $PSScriptRoot 'examples\hello.lume')
+if ($LASTEXITCODE -ne 0) { throw "hello (default) exited $LASTEXITCODE" }
+Assert-Equal 'hello with no args' 'hello, world' ($helloDefault -join "`n")
+
+$helloArg = & $Lume run (Join-Path $PSScriptRoot 'examples\hello.lume') 'Ada'
+if ($LASTEXITCODE -ne 0) { throw "hello (arg) exited $LASTEXITCODE" }
+Assert-Equal 'hello with an arg' 'hello, Ada' ($helloArg -join "`n")
+
+$wordCount = & $Lume run (Join-Path $PSScriptRoot 'examples\word_count.lume') (Join-Path $PSScriptRoot 'examples\word_count_sample.txt')
+if ($LASTEXITCODE -ne 0) { throw "word count exited $LASTEXITCODE" }
+Assert-Equal 'word count (character count)' '10' ($wordCount -join "`n")
+
 $control = & $Lume run (Join-Path $PSScriptRoot 'examples\control_flow.lume')
 if ($LASTEXITCODE -ne 0) { throw "control flow exited $LASTEXITCODE" }
 Assert-Equal 'control flow' "control flow works`n10" ($control -join "`n")
@@ -208,6 +220,13 @@ Assert-Equal 'http request custom headers' "true`ntrue" ($httpRequestHeaders -jo
 $httpRequestBytes = & $Lume run (Join-Path $PSScriptRoot 'examples\http_request_bytes.lume')
 if ($LASTEXITCODE -ne 0) { throw "http request bytes example exited $LASTEXITCODE" }
 Assert-Equal 'http request bytes' "true`ntrue`ntrue`ntrue" ($httpRequestBytes -join "`n")
+
+# The fifth network-dependent check: httpbin.org/json serves a fixed, never-changing
+# document, chosen (like example.com above) so a typed decode of a live response is
+# actually deterministic.
+$httpJson = & $Lume run (Join-Path $PSScriptRoot 'examples\http_json.lume')
+if ($LASTEXITCODE -ne 0) { throw "http json example exited $LASTEXITCODE" }
+Assert-Equal 'http json decode' "Yours Truly`nSample Slide Show" ($httpJson -join "`n")
 
 $fixtures = & $Lume run (Join-Path $PSScriptRoot 'examples\fixtures.lume')
 if ($LASTEXITCODE -ne 0) { throw "fixtures example exited $LASTEXITCODE" }
