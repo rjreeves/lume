@@ -1,0 +1,7 @@
+fn main(args: [str]) -> int {
+  let epoch = 1700000000
+  print(time.format(epoch, "%Y-%m-%d"))
+  print(time.format(epoch, "%H:%M:%S"))
+  print(time.format(epoch, "%Y-%m-%dT%H:%M:%SZ"))
+  return 0
+}

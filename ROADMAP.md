@@ -333,12 +333,12 @@ non-trivial benchmark in this file has met its own bar.**
   `listDir` call site, which was never sorted either); recursive
   traversal remains deferred (see "Now" above) since no `isDirectory`
   primitive exists in Certo's stdlib to build one safely on top of;
-- minimal typed time (`time.now() -> int`, `time.to_iso(seconds) ->
-  str`, `time.year`/`month`/`day`/`hour`/`minute`/`second(seconds) ->
-  int` for UTC calendar components) — still a small slice of Certo's
+- typed time (`time.now() -> int`, `time.to_iso(seconds) -> str`,
+  `time.year`/`month`/`day`/`hour`/`minute`/`second(seconds) -> int` for
+  UTC calendar components, and `time.format(seconds, pattern) -> str`
+  for `strftime`-style custom formatting) — still a slice of Certo's
   much larger `DateTime`/`Duration`/`Timezone`/`Date` stdlib API;
-  `Duration` arithmetic, custom formatting, and timezones remain
-  deferred (see "Now" above);
+  `Duration` arithmetic and timezones remain deferred (see "Now" above);
 - process exit-code, standard-output, and standard-error inspection;
 - process configuration for stdin and environment overrides
   (`process.run_with_input(exe, args, input)`, `process.run_with_env(exe,
@@ -504,12 +504,13 @@ into every compilation.
   than a thin wrapper;
 - ~~typed time and duration values~~ — partially shipped: `time.now() ->
   int` (Unix epoch seconds), `time.to_iso(seconds) -> str` (fixed UTC
-  ISO-8601), and `time.year`/`month`/`day`/`hour`/`minute`/
-  `second(seconds) -> int` (UTC calendar components) are done (see
-  "Shipped in the bootstrap" above); a `Duration` type, custom format
-  strings, and timezone support remain deferred — Certo's stdlib
-  already has all of it (a full `DateTime`/`Duration`/`Timezone`/`Date`
-  API), so this is purely a scoping choice, not a feasibility gap;
+  ISO-8601), `time.year`/`month`/`day`/`hour`/`minute`/
+  `second(seconds) -> int` (UTC calendar components), and now
+  `time.format(seconds, pattern) -> str` (`strftime`-style custom
+  formatting) are done (see "Shipped in the bootstrap" above); a
+  `Duration` type and timezone support remain deferred — Certo's stdlib
+  already has both (a full `DateTime`/`Duration`/`Timezone`/`Date` API),
+  so this is purely a scoping choice, not a feasibility gap;
 - ~~richer process configuration~~ — partially shipped: stdin
   (`process.run_with_input`) and environment overrides
   (`process.run_with_env`) are done (see "Shipped in the bootstrap"

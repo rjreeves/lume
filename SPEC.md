@@ -489,6 +489,7 @@ time.now()                        time.to_iso(seconds)
 time.year(seconds)                time.month(seconds)
 time.day(seconds)                 time.hour(seconds)
 time.minute(seconds)              time.second(seconds)
+time.format(seconds, pattern)
 list.len(values)                list.get(values, index)
 list.push(values, item)         list.map/filter/find/fold(...)
 map.new()                        map.len(m)
@@ -523,10 +524,14 @@ Recursive traversal is not implemented yet.
 `time.to_iso(seconds) -> str` formats an epoch value as a fixed
 `"YYYY-MM-DDTHH:MM:SSZ"` UTC string. `time.year`/`month`/`day`/`hour`/
 `minute`/`second(seconds) -> int` read the UTC calendar components of
-an epoch value (`time.year(1700000000)` is `2023`). There is still no
-`Duration` type, no custom format strings, and no timezone support —
-plain `int` arithmetic on epoch seconds covers offsets (`time.now() +
-300` for five minutes from now).
+an epoch value (`time.year(1700000000)` is `2023`). `time.format(seconds,
+pattern) -> str` formats an epoch value with a `strftime`-style pattern
+(`%Y`, `%m`, `%d`, `%H`, `%M`, `%S`, `%A`, `%B`, and so on), also
+evaluated against UTC; the underlying formatting call uses a fixed
+256-byte buffer, so an unusually long pattern can silently truncate.
+There is still no `Duration` type and no timezone support — plain `int`
+arithmetic on epoch seconds covers offsets (`time.now() + 300` for five
+minutes from now).
 
 `bytes` is a distinct type from `str`, but under the hood a Lume `bytes`
 value is represented exactly like `str` — a genuinely NUL-safe binary
@@ -793,9 +798,9 @@ simply not built yet and carries no such argument against it.
 - `match` inside a `list.*` callback's reachable call graph (§12)
 - recursive directory traversal (`dir.list` covers one level only; no
   `isDirectory` check exists yet to build a walk on top of it, §11)
-- a `Duration` type, custom time format strings, and timezone support
-  (`time.*` covers getting the current time, showing it as UTC
-  ISO-8601, and reading UTC calendar components today, §11)
+- a `Duration` type and timezone support (`time.*` covers getting the
+  current time, showing it as UTC ISO-8601 or a custom `strftime`-style
+  pattern, and reading UTC calendar components today, §11)
 - multi-line call/record-construction argument lists (§2, §8)
 - postfix field access directly on a call expression's result (§8)
 - `let`/`var` type annotations (§5)
