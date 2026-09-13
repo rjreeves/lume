@@ -490,6 +490,7 @@ time.year(seconds)                time.month(seconds)
 time.day(seconds)                 time.hour(seconds)
 time.minute(seconds)              time.second(seconds)
 time.format(seconds, pattern)
+time.in_timezone(seconds, zone)   time.format_in_timezone(seconds, pattern, zone)
 list.len(values)                list.get(values, index)
 list.push(values, item)         list.map/filter/find/fold(...)
 map.new()                        map.len(m)
@@ -529,9 +530,19 @@ pattern) -> str` formats an epoch value with a `strftime`-style pattern
 (`%Y`, `%m`, `%d`, `%H`, `%M`, `%S`, `%A`, `%B`, and so on), also
 evaluated against UTC; the underlying formatting call uses a fixed
 256-byte buffer, so an unusually long pattern can silently truncate.
-There is still no `Duration` type and no timezone support — plain `int`
-arithmetic on epoch seconds covers offsets (`time.now() + 300` for five
-minutes from now).
+`time.in_timezone(seconds, zone) -> Result<str, str>` returns an ISO-8601
+string with `zone`'s own numeric UTC offset (e.g. `+01:00`) instead of
+`Z`, and `time.format_in_timezone(seconds, pattern, zone) -> Result<str,
+str>` applies a `strftime`-style pattern to `zone`'s wall-clock time —
+correctly zone- and DST-adjusted, not just UTC. `zone` is an IANA name
+(`"America/New_York"`); an unrecognized name is `Err`, not a crash.
+`%Z`/`%z` inside `format_in_timezone`'s pattern are unreliable — `strftime`
+reads those from the host platform's own configured timezone, not
+`zone` — so `time.in_timezone`'s numeric offset should be used instead
+of embedding `%z` in a pattern.
+
+There is still no `Duration` type — plain `int` arithmetic on epoch
+seconds covers offsets (`time.now() + 300` for five minutes from now).
 
 `bytes` is a distinct type from `str`, but under the hood a Lume `bytes`
 value is represented exactly like `str` — a genuinely NUL-safe binary
@@ -798,9 +809,10 @@ simply not built yet and carries no such argument against it.
 - `match` inside a `list.*` callback's reachable call graph (§12)
 - recursive directory traversal (`dir.list` covers one level only; no
   `isDirectory` check exists yet to build a walk on top of it, §11)
-- a `Duration` type and timezone support (`time.*` covers getting the
-  current time, showing it as UTC ISO-8601 or a custom `strftime`-style
-  pattern, and reading UTC calendar components today, §11)
+- a `Duration` type (`time.*` covers getting the current time, showing it
+  as UTC or zone-local ISO-8601 or a custom `strftime`-style pattern,
+  reading UTC calendar components, and converting into an IANA timezone
+  today, §11)
 - multi-line call/record-construction argument lists (§2, §8)
 - postfix field access directly on a call expression's result (§8)
 - `let`/`var` type annotations (§5)

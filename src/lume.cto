@@ -913,7 +913,7 @@ fn builtinNames(): List<Text> = [
   "json.valid", "json.get", "json.encode",
   "path.join", "path.basename", "path.dirname", "path.extension", "path.stem",
   "dir.list",
-  "time.now", "time.to_iso", "time.year", "time.month", "time.day", "time.hour", "time.minute", "time.second", "time.format",
+  "time.now", "time.to_iso", "time.year", "time.month", "time.day", "time.hour", "time.minute", "time.second", "time.format", "time.in_timezone", "time.format_in_timezone",
   "http.get", "http.post", "http.put", "http.delete", "http.request", "http.request_bytes", "http.status", "http.body", "http.content_type", "http.ok", "http.body_bytes",
   "list.len", "list.get", "list.push", "list.map", "list.filter", "list.find", "list.fold",
   "map.new", "map.len", "map.get", "map.has", "map.set", "map.remove", "map.keys", "map.values", "map.map", "map.filter", "map.fold",
@@ -933,7 +933,7 @@ fn builtinCounts(): List<Int> = [
   1, 2, 1,
   2, 1, 1, 1, 1,
   1,
-  0, 1, 1, 1, 1, 1, 1, 1, 2,
+  0, 1, 1, 1, 1, 1, 1, 1, 2, 2, 3,
   1, 3, 3, 1, 4, 4, 1, 1, 1, 1, 1,
   1, 2, 2, 2, 2, 2, 3,
   0, 1, 2, 2, 3, 2, 1, 1, 2, 2, 3,
@@ -2599,6 +2599,19 @@ fn checkBuiltinTypes(code: List<Instruction>, name: Text, stackInput: List<Text>
     stack = seconds.stack
     if not Text.eq(seconds.value, "int") or not Text.eq(pattern.value, "str") then { problem = "E0715 builtin `time.format` requires (int, str)" }
     resultType = "str"
+  } else if Text.eq(name, "time.in_timezone") then {
+    val zone = pop(stack)
+    val seconds = pop(zone.stack)
+    stack = seconds.stack
+    if not Text.eq(seconds.value, "int") or not Text.eq(zone.value, "str") then { problem = "E0716 builtin `time.in_timezone` requires (int, str)" }
+    resultType = "result<str,str>"
+  } else if Text.eq(name, "time.format_in_timezone") then {
+    val zone = pop(stack)
+    val pattern = pop(zone.stack)
+    val seconds = pop(pattern.stack)
+    stack = seconds.stack
+    if not Text.eq(seconds.value, "int") or not Text.eq(pattern.value, "str") or not Text.eq(zone.value, "str") then { problem = "E0717 builtin `time.format_in_timezone` requires (int, str, str)" }
+    resultType = "result<str,str>"
   } else if Text.eq(name, "time.year") or Text.eq(name, "time.month") or Text.eq(name, "time.day") or Text.eq(name, "time.hour") or Text.eq(name, "time.minute") or Text.eq(name, "time.second") then {
     val valueType = pop(stack)
     stack = valueType.stack
@@ -4306,6 +4319,29 @@ fn callBuiltin(code: List<Instruction>, name: Text, input: List<Text>): BuiltinR
       if let Ok(fmt) = requireText(pattern.value, name) { result = textValue(DateTime.format(DateTime.fromUnix(value), fmt)) }
       else if let Err(message) = requireText(pattern.value, name) { problem = message }
     } else if let Err(message) = requireInt(seconds.value, name) { problem = message }
+  } else if Text.eq(name, "time.in_timezone") then {
+    val zone = pop(stack)
+    val seconds = pop(zone.stack)
+    stack = seconds.stack
+    if let Ok(value) = requireInt(seconds.value, name) {
+      if let Ok(zoneName) = requireText(zone.value, name) {
+        if let Some(tz) = Timezone(zoneName) { result = resultOk(textValue(DateTime.inTimezone(DateTime.fromUnix(value), tz))) }
+        else { result = resultErr("unknown timezone `" ++ zoneName ++ "`") }
+      } else if let Err(message) = requireText(zone.value, name) { problem = message }
+    } else if let Err(message) = requireInt(seconds.value, name) { problem = message }
+  } else if Text.eq(name, "time.format_in_timezone") then {
+    val zone = pop(stack)
+    val pattern = pop(zone.stack)
+    val seconds = pop(pattern.stack)
+    stack = seconds.stack
+    if let Ok(value) = requireInt(seconds.value, name) {
+      if let Ok(fmt) = requireText(pattern.value, name) {
+        if let Ok(zoneName) = requireText(zone.value, name) {
+          if let Some(tz) = Timezone(zoneName) { result = resultOk(textValue(DateTime.formatTz(DateTime.fromUnix(value), fmt, tz))) }
+          else { result = resultErr("unknown timezone `" ++ zoneName ++ "`") }
+        } else if let Err(message) = requireText(zone.value, name) { problem = message }
+      } else if let Err(message) = requireText(pattern.value, name) { problem = message }
+    } else if let Err(message) = requireInt(seconds.value, name) { problem = message }
   } else if Text.eq(name, "time.year") or Text.eq(name, "time.month") or Text.eq(name, "time.day") or Text.eq(name, "time.hour") or Text.eq(name, "time.minute") or Text.eq(name, "time.second") then {
     val one = pop(stack)
     stack = one.stack
@@ -5110,7 +5146,7 @@ fn apiManifest(): Text = {
   JsonValue.set(root, "language", Json.string("Lume"))
   JsonValue.set(root, "version", Json.string("0.1.0-bootstrap"))
   val features = Json.array()
-  for feature in ["bindings", "static_types", "homogeneous_lists", "generics", "generic_constraints", "protocols", "protocol_methods", "static_protocol_dispatch", "explicit_protocol_implementations", "generic_records", "generic_enums", "option", "result", "list_map", "list_filter", "list_find", "list_fold", "maps", "map_map", "map_filter", "map_fold", "function_values", "closures", "immutable_capture", "native_test_runner", "test_directory_discovery", "result_propagation", "records", "nested_records", "field_access", "record_updates", "typed_json_decoding", "json_encode", "json_encode_enums", "path_manipulation", "directory_enumeration", "time_now", "time_calendar_components", "time_format", "process_config", "http_get", "http_post_put_delete", "http_request_headers", "bytes_type", "http_request_bytes", "test_fixtures", "enums", "variant_payloads", "match_expressions", "exhaustive_matching", "payload_destructuring", "if_else", "while", "functions", "recursion", "bytecode_cache"] {
+  for feature in ["bindings", "static_types", "homogeneous_lists", "generics", "generic_constraints", "protocols", "protocol_methods", "static_protocol_dispatch", "explicit_protocol_implementations", "generic_records", "generic_enums", "option", "result", "list_map", "list_filter", "list_find", "list_fold", "maps", "map_map", "map_filter", "map_fold", "function_values", "closures", "immutable_capture", "native_test_runner", "test_directory_discovery", "result_propagation", "records", "nested_records", "field_access", "record_updates", "typed_json_decoding", "json_encode", "json_encode_enums", "path_manipulation", "directory_enumeration", "time_now", "time_calendar_components", "time_format", "time_timezones", "process_config", "http_get", "http_post_put_delete", "http_request_headers", "bytes_type", "http_request_bytes", "test_fixtures", "enums", "variant_payloads", "match_expressions", "exhaustive_matching", "payload_destructuring", "if_else", "while", "functions", "recursion", "bytecode_cache"] {
     JsonValue.push(features, Json.string(feature))
   }
   JsonValue.set(root, "features", features)
@@ -5141,6 +5177,7 @@ fn aiReference(): Text = {
   "time.now() -> int gives the current Unix epoch seconds; time.to_iso(seconds) -> str formats it as UTC ISO-8601. " ++
   "time.year/month/day/hour/minute/second(seconds) -> int read UTC calendar components from epoch seconds. " ++
   "time.format(seconds, pattern) -> str formats epoch seconds with a strftime-style pattern (e.g. \"%Y-%m-%d\"), evaluated against UTC. " ++
+  "time.in_timezone(seconds, zone) -> result<str,str> gives an ISO-8601 string with that zone's own numeric UTC offset (e.g. \"+01:00\"), and time.format_in_timezone(seconds, pattern, zone) -> result<str,str> applies a strftime-style pattern to that zone's wall-clock time (year/month/day/hour/etc. are zone- and DST-adjusted); `zone` is an IANA name like \"America/New_York\", Err for an unrecognized one; avoid %Z/%z in the pattern, which cannot reflect an arbitrary zone. " ++
   "Run a process with stdin piped in: process.run_with_input(exe, args, input) -> process, same accessors as process.run. " ++
   "Run a process with environment overrides: process.run_with_env(exe, args, envMap: Map<str,str>) -> process; variables are restored to their prior value after the call returns. " ++
   "Make requests with http.get(url)/http.delete(url), http.post(url, body, content_type)/http.put(url, body, content_type), or http.request(method, url, headers: Map<str,str>, body) for custom headers, all -> result<http,str>; read with http.status/body/content_type/ok(response); responses over 10 MiB return an error instead of the body. Windows only. " ++

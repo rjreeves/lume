@@ -335,10 +335,12 @@ non-trivial benchmark in this file has met its own bar.**
   primitive exists in Certo's stdlib to build one safely on top of;
 - typed time (`time.now() -> int`, `time.to_iso(seconds) -> str`,
   `time.year`/`month`/`day`/`hour`/`minute`/`second(seconds) -> int` for
-  UTC calendar components, and `time.format(seconds, pattern) -> str`
-  for `strftime`-style custom formatting) — still a slice of Certo's
-  much larger `DateTime`/`Duration`/`Timezone`/`Date` stdlib API;
-  `Duration` arithmetic and timezones remain deferred (see "Now" above);
+  UTC calendar components, `time.format(seconds, pattern) -> str` for
+  `strftime`-style custom formatting, and `time.in_timezone(seconds,
+  zone)`/`time.format_in_timezone(seconds, pattern, zone) ->
+  Result<str, str>` for IANA-zone-aware output) — still a slice of
+  Certo's much larger `DateTime`/`Duration`/`Timezone`/`Date` stdlib API;
+  `Duration` arithmetic remains deferred (see "Now" above);
 - process exit-code, standard-output, and standard-error inspection;
 - process configuration for stdin and environment overrides
   (`process.run_with_input(exe, args, input)`, `process.run_with_env(exe,
@@ -505,12 +507,15 @@ into every compilation.
 - ~~typed time and duration values~~ — partially shipped: `time.now() ->
   int` (Unix epoch seconds), `time.to_iso(seconds) -> str` (fixed UTC
   ISO-8601), `time.year`/`month`/`day`/`hour`/`minute`/
-  `second(seconds) -> int` (UTC calendar components), and now
+  `second(seconds) -> int` (UTC calendar components),
   `time.format(seconds, pattern) -> str` (`strftime`-style custom
-  formatting) are done (see "Shipped in the bootstrap" above); a
-  `Duration` type and timezone support remain deferred — Certo's stdlib
-  already has both (a full `DateTime`/`Duration`/`Timezone`/`Date` API),
-  so this is purely a scoping choice, not a feasibility gap;
+  formatting), and now `time.in_timezone(seconds, zone)`/
+  `time.format_in_timezone(seconds, pattern, zone) -> Result<str, str>`
+  (IANA-zone-aware ISO-8601/custom formatting, `Err` for an unrecognized
+  zone name) are done (see "Shipped in the bootstrap" above); a
+  `Duration` type remains deferred — Certo's stdlib already has one (a
+  full `DateTime`/`Duration`/`Timezone`/`Date` API), so this is purely a
+  scoping choice, not a feasibility gap;
 - ~~richer process configuration~~ — partially shipped: stdin
   (`process.run_with_input`) and environment overrides
   (`process.run_with_env`) are done (see "Shipped in the bootstrap"

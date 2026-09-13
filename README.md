@@ -678,9 +678,27 @@ unusually long pattern can silently truncate at 256 bytes of output — a
 limit inherited from the underlying formatting call, not something Lume
 adds on top.
 
-There is still no `Duration` type or timezone support yet — plain `int`
-arithmetic on epoch seconds covers offsets (`time.now() + 300` for five
-minutes from now).
+`time.in_timezone(seconds, zone) -> Result<str, str>` gives an ISO-8601
+string with that zone's own numeric UTC offset instead of `Z`, and
+`time.format_in_timezone(seconds, pattern, zone) -> Result<str, str>`
+applies a `strftime`-style pattern to that zone's wall-clock time — the
+year/month/day/hour/etc. are correctly zone- and DST-adjusted. `zone` is
+an IANA name such as `"America/New_York"` or `"Europe/London"`; an
+unrecognized name is `Err`, not a crash:
+
+```lume
+let now = time.now()
+print(result.value(time.in_timezone(now, "America/New_York")))
+print(result.value(time.format_in_timezone(now, "%Y-%m-%d %H:%M:%S", "America/New_York")))
+```
+
+Avoid `%Z`/`%z` inside a `format_in_timezone` pattern — `strftime` reads
+those two directives from the host platform's own configured timezone,
+not from `zone`, so they cannot reflect an arbitrary zone correctly; use
+`time.in_timezone`'s numeric offset instead.
+
+There is still no `Duration` type yet — plain `int` arithmetic on epoch
+seconds covers offsets (`time.now() + 300` for five minutes from now).
 
 ### Process configuration
 

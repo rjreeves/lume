@@ -1,0 +1,16 @@
+fn main(args: [str]) -> int {
+  let epoch = 1700000000
+
+  let inZone = time.in_timezone(epoch, "America/New_York")
+  print(result.is_ok(inZone))
+  print(result.value(inZone))
+
+  let formatted = time.format_in_timezone(epoch, "%Y-%m-%d %H:%M:%S", "America/New_York")
+  print(result.is_ok(formatted))
+  print(result.value(formatted))
+
+  let unknown = time.in_timezone(epoch, "Not/AZone")
+  print(result.is_ok(unknown))
+  print(result.error(unknown))
+  return 0
+}
