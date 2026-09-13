@@ -797,6 +797,52 @@ and file I/O (`fs.try_write_text` for `export`).
 .\dist\lume.exe run .\examples\task_board.lume .\examples\task_board\seed.json export board.txt
 ```
 
+## Example: a dependency-aware task runner
+
+[`examples/taskgraph.lume`](examples/taskgraph.lume) and
+[`examples/taskgraph/`](examples/taskgraph) are a statically checked take on
+a `make`/`just`-style CLI dev tool: a JSON manifest of named tasks, each with
+a shell command and a list of other tasks it depends on, executed in
+dependency order with typed, structured reporting. It is split across four
+modules (`model`, `graph`, `runner`, `report`) and exercises records, a
+payload-carrying `Outcome` enum, `Result<T, E>` with a custom error enum,
+`Option<T>`, `Map<K, V>`, JSON decoding of a manifest and JSON encoding of a
+run report, and `process.run`.
+
+`graph.order` topologically sorts the manifest with Kahn's algorithm (the
+ready queue is a growing list read with a cursor, since `list.*` has no
+remove-from-front) and reports a structured `GraphError` — a duplicate task
+name, an unknown or self dependency, or a cycle — instead of running
+anything against a broken graph. `graph.transitive_closure` walks
+`depends_on` edges from one target backward (a second, independent graph
+traversal) so a single task can be run, or dry-run, with just what it needs
+rather than the whole manifest. `runner.run_all` runs tasks in that order
+and cascades a failure forward: anything downstream of a failed task is
+reported `skipped`, not silently run against broken input. `report.to_json`
+demonstrates the workaround `json.encode`'s enum limitation requires —
+`Outcome` is matched into a plain-scalar `RunReport` record first, since an
+enum can't be encoded directly.
+
+```powershell
+.\dist\lume.exe run .\examples\taskgraph.lume .\examples\taskgraph\tasks.json --dry-run
+.\dist\lume.exe run .\examples\taskgraph.lume .\examples\taskgraph\tasks.json
+.\dist\lume.exe run .\examples\taskgraph.lume .\examples\taskgraph\tasks.json lint --dry-run
+.\dist\lume.exe run .\examples\taskgraph.lume .\examples\taskgraph\tasks_failure.json
+.\dist\lume.exe run .\examples\taskgraph.lume .\examples\taskgraph\tasks_cycle.json
+.\dist\lume.exe test .\examples\taskgraph_test.lume
+```
+
+A successful run also writes a `taskgraph-report.json` next to the manifest.
+[`examples/taskgraph_test.lume`](examples/taskgraph_test.lume) covers the
+match-free string/list helpers directly; `graph.validate`/`order`/
+`transitive_closure` and `report.to_json` all use `match` internally, and a
+`test` block's body runs through the same restricted evaluator as a
+`list.map`/`filter`/`find`/`fold` callback (see "Generic list
+transformations" above), where `match` anywhere in the reachable call graph
+fails at run time — so that logic is verified end-to-end through the `lume
+run` commands above instead, the same approach `task_board` (which has no
+native tests at all) already relies on.
+
 ## Bytecode cache and performance
 
 `run` maintains a content-hash-validated `.lbc` file beside its source. If the

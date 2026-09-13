@@ -1,0 +1,26 @@
+type Task {
+  name: str
+  command: str
+  args: [str]
+  depends_on: [str]
+}
+
+type Manifest {
+  tasks: [Task]
+}
+
+enum Outcome {
+  passed(exit_code: int)
+  failed(exit_code: int, message: str)
+  skipped(reason: str)
+}
+
+type TaskRun {
+  name: str
+  outcome: Outcome
+}
+
+pub fn model.parse(text: str) -> Manifest ! str {
+  let manifest = Manifest.from_json(text)?
+  return result.ok(manifest)
+}

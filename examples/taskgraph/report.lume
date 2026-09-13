@@ -1,0 +1,157 @@
+// json.encode has no support for enum values (see README/SPEC), so every
+// Outcome is flattened into this plain-scalar record before encoding.
+type RunReport {
+  name: str
+  status: str
+  exit_code: int
+  message: str
+}
+
+type RunReportFile {
+  runs: [RunReport]
+}
+
+fn join_names(names: [str]) -> str {
+  var text = ""
+  var index = 0
+  while index < list.len(names) {
+    let name = list.get(names, index)
+    if index == 0 {
+      text = name
+    } else {
+      text = text + ", " + name
+    }
+    index = index + 1
+  }
+  return text
+}
+
+fn outcome_is_passed(outcome: Outcome) -> bool {
+  return match outcome {
+    passed(exit_code) => true
+    failed(exit_code, message) => false
+    skipped(reason) => false
+  }
+}
+
+fn outcome_is_failed(outcome: Outcome) -> bool {
+  return match outcome {
+    passed(exit_code) => false
+    failed(exit_code, message) => true
+    skipped(reason) => false
+  }
+}
+
+fn outcome_is_skipped(outcome: Outcome) -> bool {
+  return match outcome {
+    passed(exit_code) => false
+    failed(exit_code, message) => false
+    skipped(reason) => true
+  }
+}
+
+fn to_run_report(run: TaskRun) -> RunReport {
+  return match run.outcome {
+    passed(exit_code) => RunReport(name: run.name, status: "passed", exit_code: exit_code, message: "")
+    failed(exit_code, message) => RunReport(name: run.name, status: "failed", exit_code: exit_code, message: message)
+    skipped(reason) => RunReport(name: run.name, status: "skipped", exit_code: -1, message: reason)
+  }
+}
+
+fn empty_run_reports() -> [RunReport] {
+  return []
+}
+
+// A plain while-loop, not list.map(&to_run_report): a callback passed to
+// list.map/filter/find/fold cannot contain `match` anywhere in its call
+// graph (see README "Generic list transformations"), and to_run_report does.
+fn build_run_reports(runs: [TaskRun]) -> [RunReport] {
+  var output = empty_run_reports()
+  var index = 0
+  while index < list.len(runs) {
+    let run = list.get(runs, index)
+    output = list.push(output, to_run_report(run))
+    index = index + 1
+  }
+  return output
+}
+
+pub fn report.describe_run(run: TaskRun) -> str {
+  return match run.outcome {
+    passed(exit_code) => "PASS  " + run.name
+    failed(exit_code, message) => "FAIL  " + run.name + " - " + message
+    skipped(reason) => "SKIP  " + run.name + " - " + reason
+  }
+}
+
+pub fn report.render_summary(runs: [TaskRun]) -> str {
+  var text = ""
+  var index = 0
+  while index < list.len(runs) {
+    let run = list.get(runs, index)
+    text = text + report.describe_run(run) + "\n"
+    index = index + 1
+  }
+  return text
+}
+
+pub fn report.render_plan(tasks: [Task]) -> str {
+  var text = ""
+  var index = 0
+  while index < list.len(tasks) {
+    let task = list.get(tasks, index)
+    var line = task.name
+    if list.len(task.depends_on) > 0 {
+      line = line + " (after " + join_names(task.depends_on) + ")"
+    }
+    text = text + line + "\n"
+    index = index + 1
+  }
+  return text
+}
+
+pub fn report.count_passed(runs: [TaskRun]) -> int {
+  var index = 0
+  var count = 0
+  while index < list.len(runs) {
+    let run = list.get(runs, index)
+    if outcome_is_passed(run.outcome) {
+      count = count + 1
+    }
+    index = index + 1
+  }
+  return count
+}
+
+pub fn report.count_failed(runs: [TaskRun]) -> int {
+  var index = 0
+  var count = 0
+  while index < list.len(runs) {
+    let run = list.get(runs, index)
+    if outcome_is_failed(run.outcome) {
+      count = count + 1
+    }
+    index = index + 1
+  }
+  return count
+}
+
+pub fn report.count_skipped(runs: [TaskRun]) -> int {
+  var index = 0
+  var count = 0
+  while index < list.len(runs) {
+    let run = list.get(runs, index)
+    if outcome_is_skipped(run.outcome) {
+      count = count + 1
+    }
+    index = index + 1
+  }
+  return count
+}
+
+pub fn report.to_json(runs: [TaskRun]) -> str ! str {
+  let reports = build_run_reports(runs)
+  let wrapper = RunReportFile(runs: reports)
+  let encoded = json.encode(wrapper)?
+  return result.ok(encoded)
+}
