@@ -485,4 +485,23 @@ $nativeFailure = & $Lume test (Join-Path $PSScriptRoot 'examples\native_tests_fa
 if ($LASTEXITCODE -ne 1) { throw "failing native test should exit 1" }
 Assert-Equal 'native test failure' "FAIL shows expected and actual values (line 1): expected 42, got 41`n0 passed; 1 failed" ($nativeFailure -join "`n")
 
+$jsonTests = & $Lume test (Join-Path $PSScriptRoot 'examples\native_tests.lume') --json
+if ($LASTEXITCODE -ne 0) { throw "json native test runner exited $LASTEXITCODE" }
+$jsonTestsExpected = '{"event":"test","name":"adds two values","status":"pass","line":9,"message":""}' + "`n" + `
+  '{"event":"test","name":"recognizes present values","status":"pass","line":14,"message":""}' + "`n" + `
+  '{"event":"summary","passed":2,"failed":0,"total":2}'
+Assert-Equal 'structured test output' $jsonTestsExpected ($jsonTests -join "`n")
+
+$jsonFailure = & $Lume test (Join-Path $PSScriptRoot 'examples\native_tests_failing.lume') --json 2>&1
+if ($LASTEXITCODE -ne 1) { throw "json failing native test should exit 1" }
+$jsonFailureExpected = '{"event":"test","name":"shows expected and actual values","status":"fail","line":1,"message":"expected 42, got 41"}' + "`n" + `
+  '{"event":"summary","passed":0,"failed":1,"total":1}'
+Assert-Equal 'structured test output failure' $jsonFailureExpected ($jsonFailure -join "`n")
+
+$jsonFilterOrder = & $Lume test (Join-Path $PSScriptRoot 'examples\native_tests.lume') --json --filter adds
+if ($LASTEXITCODE -ne 0) { throw "json test runner with --json before --filter exited $LASTEXITCODE" }
+$jsonFilterOrderExpected = '{"event":"test","name":"adds two values","status":"pass","line":9,"message":""}' + "`n" + `
+  '{"event":"summary","passed":1,"failed":0,"total":1}'
+Assert-Equal 'structured test output with --json before --filter' $jsonFilterOrderExpected ($jsonFilterOrder -join "`n")
+
 Write-Host 'All Lume smoke tests passed.'

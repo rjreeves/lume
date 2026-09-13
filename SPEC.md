@@ -557,13 +557,24 @@ fn main(args: [str]) -> int {
 ```
 
 `expect.equal`, `expect.true`, `expect.ok`, `expect.err`, and `expect.some`
-are the assertions available inside a `test` block. Run one file, or an
-entire directory (every `.lume` file found, recursively):
+are the assertions available inside a `test` block. Run one file, or a
+directory (every direct-child `*_test.lume` file — one level only, not
+recursive):
 
 ```powershell
 .\dist\lume.exe test .\examples\native_tests.lume
 .\dist\lume.exe test .\examples\native_suite
 ```
+
+`--filter text` runs only tests whose name contains `text`; `--json`
+switches every line of output to a JSON object instead of plain text,
+for CI and editor integrations — both flags work in either order. Per
+discovered test file (directory mode only): `{"event":"file","path":
+"..."}`. Per test: `{"event":"test","name":"...","status":"pass"|
+"fail","line":N,"message":"..."}` (`message` is `""` for a pass).
+Final summary: `{"event":"summary","passed":N,"failed":N,"total":N}`
+(adds `"note"` only when zero tests were discovered). Plain-text output
+is unchanged when `--json` is not passed.
 
 ## 14. Concurrency
 
