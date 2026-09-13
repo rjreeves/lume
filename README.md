@@ -215,6 +215,48 @@ Imports are loaded recursively and once per graph. Missing modules, import cycle
 and duplicate function symbols are compile errors. The bytecode cache hashes the
 combined dependency graph, so changing any imported file invalidates the root cache.
 
+### Packages
+
+A directory becomes a package by adding a `lume.json` manifest:
+
+```json
+{
+  "name": "mathutils",
+  "version": "0.1.0"
+}
+```
+
+Another project depends on it by declaring a local path in its own manifest:
+
+```json
+{
+  "name": "app",
+  "version": "0.1.0",
+  "dependencies": [
+    { "name": "mathutils", "path": "../mathutils" }
+  ]
+}
+```
+
+`lume install <dir>` resolves those dependencies once and writes
+`lume.lock.json` — the file `use` resolution actually reads, so ordinary
+`run`/`check`/`test` never re-parse a manifest or do any resolution work:
+
+```powershell
+.\dist\lume.exe install .\examples\packages\app
+.\dist\lume.exe run .\examples\packages\app\app.lume
+```
+
+`use mathutils.ops` then resolves through the lock file into
+`mathutils`'s directory instead of a local relative path — everything
+else about `use` (recursive loading, cycle detection, qualified `pub
+fn` names) works exactly the same as for a local module. A project
+with no `lume.json`/`lume.lock.json` sees no change in behavior at all.
+Dependencies are not transitive yet (a dependency's own dependencies
+aren't resolved), and there's no real version-range resolution or
+registry yet — `version` is recorded for forward compatibility but not
+yet checked against anything.
+
 ```powershell
 .\dist\lume.exe check .\examples\arithmetic.lume
 .\dist\lume.exe bytecode .\examples\arithmetic.lume

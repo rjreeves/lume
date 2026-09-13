@@ -371,6 +371,15 @@ non-trivial benchmark in this file has met its own bar.**
   superset of matching by bare name, so a path fragment disambiguates
   same-named tests across files and an `id` captured from one run
   reruns exactly one test;
+- local packages: a `lume.json` manifest (`name`, `version`,
+  `dependencies` as an array of `{name, path}`), `lume install <dir>`
+  resolving them once into a generated `lume.lock.json`, and `use`
+  resolution reading only that lock file at compile time — never the
+  manifest, never doing resolution work itself. A project with neither
+  file behaves identically to before this existed. Not transitive (a
+  dependency's own dependencies aren't resolved), no registry, no
+  semver ranges, no content-hash caching yet — see "2. Packages and
+  dependency resolution" below for what's still open and why;
 - formatter and format checking;
 - language-server support;
 - a machine-readable API manifest, compact AI generation contract, and fixed
@@ -403,11 +412,31 @@ foundation — is next.
 
 ### 2. Packages and dependency resolution
 
-- define a minimal package manifest and lock file;
-- use explicit versions and deterministic resolution;
-- separate dependency resolution from source compilation;
-- support local packages before a public registry;
-- cache resolved dependencies by content hash.
+- ~~define a minimal package manifest and lock file~~ — shipped: a
+  `lume.json` manifest (`name`, `version`, a `dependencies` array of
+  `{name, path}`) and a generated `lume.lock.json` (see "Shipped in
+  the bootstrap" above);
+- ~~support local packages before a public registry~~ — shipped: a
+  dependency is declared by a local relative path; no registry, no
+  remote fetching;
+- ~~separate dependency resolution from source compilation~~ —
+  shipped: `lume install <dir>` does all resolution work once,
+  writing the lock file; ordinary `run`/`check`/`test` only ever read
+  the already-resolved lock file, never the manifest, satisfying this
+  file's own closing constraint below;
+- use explicit versions and deterministic resolution — partially
+  shipped: `version` is declared and recorded, and resolution is
+  already fully deterministic for local-path dependencies (a path has
+  no ambiguity to resolve); real semver-range resolution (multiple
+  candidate versions, picking one that satisfies every constraint)
+  remains deferred until a registry makes that ambiguity possible in
+  the first place;
+- cache resolved dependencies by content hash — deferred: not
+  meaningful yet for local paths (reading a local directory has no
+  fetch cost to cache); revisit once packages can come from anywhere
+  other than the local filesystem. Transitive dependencies (a
+  dependency's own `dependencies`) are also not resolved yet — `lume
+  install` only walks the root manifest's direct dependencies.
 
 Package management must not introduce source-level package graph resolution
 into every compilation.

@@ -172,6 +172,11 @@ type ModuleLoad = {
   problem: Text
 }
 
+type PackageDep = {
+  name: Text
+  path: Text
+}
+
 fn makeToken(kind: Text, text: Text, line: Int): Token =
   Token { kind: kind, text: text, line: line }
 
@@ -4548,7 +4553,53 @@ fn importedModules(source: Text): List<Text> = {
   modules
 }
 
-fn loadModule(path: Text, active: List<Text>, alreadyLoaded: List<Text>): ModuleLoad [io] = {
+fn findDepPath(deps: List<PackageDep>, name: Text): Text? = {
+  var index = 0
+  var found = false
+  var path = ""
+  while index < List.len(deps) and not found {
+    val dep = List.getOrPanic(deps, index)
+    if Text.eq(dep.name, name) then {
+      found = true
+      path = dep.path
+    }
+    index = index + 1
+  }
+  if found then Some(path) else None
+}
+
+fn loadPackageDeps(dir: Text): List<PackageDep> [io] = {
+  val lockPath = Path.join(dir, "lume.lock.json")
+  if let Some(source) = readFile(lockPath) {
+    val root = Json.parse(source)
+    val depsArray = JsonValue.get(root, "dependencies")
+    if JsonValue.isArray(depsArray) then {
+      var deps: List<PackageDep> = []
+      var index = 0
+      while index < JsonValue.length(depsArray) {
+        val entry = Json.parse(JsonValue.atText(depsArray, index))
+        val name = JsonValue.asText(JsonValue.get(entry, "name"))
+        val relativePath = JsonValue.asText(JsonValue.get(entry, "path"))
+        deps = List.push(deps, PackageDep { name: name, path: Path.join(dir, relativePath) })
+        index = index + 1
+      }
+      deps
+    } else { [] }
+  } else { [] }
+}
+
+fn resolveModulePath(path: Text, moduleName: Text, deps: List<PackageDep>): Text = {
+  val dot = Text.indexOf(moduleName, ".") ?? -1
+  val head = if dot >= 0 then Text.slice(moduleName, 0, dot) else moduleName
+  if let Some(depPath) = findDepPath(deps, head) {
+    if dot >= 0 then {
+      val rest = Text.slice(moduleName, dot + 1, Text.len(moduleName))
+      Path.join(depPath, Text.replace(rest, ".", "/") ++ ".lume")
+    } else { Path.join(Path.dirname(path), Text.replace(moduleName, ".", "/") ++ ".lume") }
+  } else { Path.join(Path.dirname(path), Text.replace(moduleName, ".", "/") ++ ".lume") }
+}
+
+fn loadModule(path: Text, active: List<Text>, alreadyLoaded: List<Text>, deps: List<PackageDep>): ModuleLoad [io] = {
   if containsName(alreadyLoaded, path) then { ModuleLoad { source: "", loadedPaths: alreadyLoaded, problem: "" } }
   else if containsName(active, path) then { ModuleLoad { source: "", loadedPaths: alreadyLoaded, problem: "E0702 module import cycle at `" ++ path ++ "`" } }
   else if let Some(source) = readFile(path) {
@@ -4558,9 +4609,8 @@ fn loadModule(path: Text, active: List<Text>, alreadyLoaded: List<Text>): Module
     var problem = ""
     for moduleName in importedModules(source) {
       if Text.eq(problem, "") then {
-        val relative = Text.replace(moduleName, ".", "/") ++ ".lume"
-        val dependencyPath = Path.join(Path.dirname(path), relative)
-        val dependency = loadModule(dependencyPath, nextActive, loadedPaths)
+        val dependencyPath = resolveModulePath(path, moduleName, deps)
+        val dependency = loadModule(dependencyPath, nextActive, loadedPaths, deps)
         if not Text.eq(dependency.problem, "") then { problem = dependency.problem }
         else {
           combined = combined ++ dependency.source
@@ -4576,7 +4626,73 @@ fn loadModule(path: Text, active: List<Text>, alreadyLoaded: List<Text>): Module
   }
 }
 
-fn loadProgram(path: Text): ModuleLoad [io] = loadModule(path, [], [])
+fn loadProgram(path: Text): ModuleLoad [io] = loadModule(path, [], [], loadPackageDeps(Path.dirname(path)))
+
+fn readManifestVersion(manifestPath: Text): Result<Text, Text> = {
+  if let Some(source) = readFile(manifestPath) {
+    val root = Json.parse(source)
+    if not JsonValue.isObject(root) then { Err("cannot read manifest `" ++ manifestPath ++ "`") }
+    else {
+      val name = JsonValue.get(root, "name")
+      val version = JsonValue.get(root, "version")
+      if not JsonValue.isString(name) or not JsonValue.isString(version) then {
+        Err("manifest `" ++ manifestPath ++ "` requires string `name` and `version` fields")
+      } else { Ok(JsonValue.asText(version)) }
+    }
+  } else { Err("cannot read manifest `" ++ manifestPath ++ "`") }
+}
+
+fn installPackages(dir: Text): Unit [io] = {
+  val manifestPath = Path.join(dir, "lume.json")
+  if let Some(source) = readFile(manifestPath) {
+    val root = Json.parse(source)
+    val name = JsonValue.get(root, "name")
+    val version = JsonValue.get(root, "version")
+    if not JsonValue.isObject(root) or not JsonValue.isString(name) or not JsonValue.isString(version) then {
+      eprintln("E0705 manifest `" ++ manifestPath ++ "` requires string `name` and `version` fields")
+      Process.quit(1)
+    } else {
+      val depsArray = JsonValue.get(root, "dependencies")
+      val lockDeps = Json.array()
+      var problem = ""
+      if JsonValue.isArray(depsArray) then {
+        var index = 0
+        while index < JsonValue.length(depsArray) and Text.eq(problem, "") {
+          val entry = Json.parse(JsonValue.atText(depsArray, index))
+          val depName = JsonValue.asText(JsonValue.get(entry, "name"))
+          val relativePath = JsonValue.asText(JsonValue.get(entry, "path"))
+          val depManifestPath = Path.join(Path.join(dir, relativePath), "lume.json")
+          if let Ok(depVersion) = readManifestVersion(depManifestPath) {
+            val lockEntry = Json.object()
+            JsonValue.set(lockEntry, "name", Json.string(depName))
+            JsonValue.set(lockEntry, "path", Json.string(relativePath))
+            JsonValue.set(lockEntry, "version", Json.string(depVersion))
+            JsonValue.push(lockDeps, lockEntry)
+          } else if let Err(message) = readManifestVersion(depManifestPath) {
+            problem = "E0706 cannot resolve dependency `" ++ depName ++ "`: " ++ message
+          }
+          index = index + 1
+        }
+      }
+      if not Text.eq(problem, "") then {
+        eprintln(problem)
+        Process.quit(1)
+      } else {
+        val lockRoot = Json.object()
+        JsonValue.set(lockRoot, "dependencies", lockDeps)
+        val lockPath = Path.join(dir, "lume.lock.json")
+        if writeFile(lockPath, Json.stringify(lockRoot)) then { println("wrote " ++ lockPath) }
+        else {
+          eprintln("E0707 cannot write lock file `" ++ lockPath ++ "`")
+          Process.quit(1)
+        }
+      }
+    }
+  } else {
+    eprintln("E0705 cannot read manifest `" ++ manifestPath ++ "`")
+    Process.quit(1)
+  }
+}
 
 fn compileSource(source: Text): CompileResult = compile(lex(source))
 
@@ -4779,6 +4895,7 @@ fn usage(): Unit [io] = {
   println("       lume benchmark <file.lume> [iterations]")
   println("       lume test <file.lume> [--filter text]")
   println("       lume fmt <file.lume> [--check]")
+  println("       lume install <dir>")
   println("       lume api|ai-reference")
 }
 
@@ -4855,6 +4972,8 @@ fn main(): Unit [io] = {
       eprintln(artifact.problem)
       Process.quit(1)
     } else { runCode(artifact.code) }
+  } else if Text.eq(command, "install") then {
+    installPackages(path)
   } else if let Some(entries) = listDir(path) {
     if not Text.eq(command, "test") then {
       eprintln("command `" ++ command ++ "` requires a file")
