@@ -394,6 +394,26 @@ non-trivial benchmark in this file has met its own bar.**
   superset of matching by bare name, so a path fragment disambiguates
   same-named tests across files and an `id` captured from one run
   reruns exactly one test;
+- an optional per-test timeout, `test "name", timeout: <milliseconds> {
+  ... }` — enforced in-process by `callPure`'s own interpreter loop
+  against a shared wall-clock deadline (also threaded through
+  `callBuiltin` for `list.*`/`map.*` callbacks invoked from a test body),
+  checked every 4096 *executed* instructions rather than against the raw
+  instruction pointer, since a tight loop (`while true {}`) revisits a
+  small fixed range of addresses and may never land on a naive
+  address-based check interval. A timed-out test fails with `test timed
+  out after <n>ms`, reported through the same path as any other
+  assertion failure; a test with no `timeout:` clause is unbounded,
+  unchanged from before. This bounds a hang in test *code*, not a
+  subprocess — `process.run` itself still has no timeout (see "Standard
+  scripting APIs" below);
+- process-output assertions — `expect.exit_code(process, code: int) ->
+  bool`, `expect.stdout_contains(process, text: str) -> bool`, and
+  `expect.stderr_contains(process, text: str) -> bool` — for asserting
+  on a `process.run`/`process.run_with_input`/`process.run_with_env`
+  result inside a test, following the same `expect.*` conventions
+  (`test_expect`-wrapped, `"x:<message>"` failure sentinel) as
+  `expect.equal` and friends;
 - local packages: a `lume.json` manifest (`name`, `version`,
   `dependencies` as an array of `{name, path}`), `lume install <dir>`
   resolving the full transitive dependency tree once into a single flat
@@ -483,7 +503,19 @@ into every compilation.
   bootstrap" above), JSON Lines events for discovered files, per-test
   results, and a final summary; combinable with `--filter` in either
   order; plain-text output unchanged when `--json` is absent;
-- support test timeouts and process-output assertions;
+- ~~support test timeouts and process-output assertions~~ — shipped: an
+  optional `, timeout: <ms>` clause on `test "name"` bounds an in-process
+  test body against an infinite loop, enforced by the interpreter (a
+  shared wall-clock deadline threaded through `callPure`/`callBuiltin`
+  recursion, checked every 4096 executed instructions rather than by
+  raw instruction address, since a tight loop can revisit a small fixed
+  address range indefinitely); `expect.exit_code`/`expect.stdout_contains`/
+  `expect.stderr_contains` assert on a `process.run` result (see "Shipped
+  in the bootstrap" above). Deliberately does not add a timeout parameter
+  to `process.run` itself — killing a hung subprocess needs new C-level
+  work in Certo (`Process.exec` is a blocking `system()`/`popen` call
+  with no cancellation handle today), out of scope for a Lume-only change;
+  see the `process.run` note in "Standard scripting APIs" below, unchanged;
 - ~~report stable test identifiers for filters and reruns~~ — shipped:
   every test result now carries a stable `id` (`<path>#<name>`, see
   "Shipped in the bootstrap" above); `--filter` matches against the
