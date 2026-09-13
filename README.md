@@ -698,8 +698,24 @@ those two directives from the host platform's own configured timezone,
 not from `zone`, so they cannot reflect an arbitrary zone correctly; use
 `time.in_timezone`'s numeric offset instead.
 
-There is still no `Duration` type yet — plain `int` arithmetic on epoch
-seconds covers offsets (`time.now() + 300` for five minutes from now).
+`duration.seconds`/`minutes`/`hours`/`days(n) -> int` convert a named
+unit into a plain epoch-second count, so an offset reads as what it
+means instead of a magic number:
+
+```lume
+print(time.now() + duration.minutes(5))
+print(time.now() + duration.hours(2))
+```
+
+There is still no distinct `Duration` *type* — `duration.*` are plain
+functions returning `int`, the same representation `time.now()` and
+every other `time.*` value already uses, not a new value kind with its
+own arithmetic operators or unit tracking. This is a deliberate scope
+reduction: `int` arithmetic on epoch seconds already covers every
+offset these functions can express (`time.now() + duration.minutes(5)`
+is exactly `time.now() + 300`), so the readability win doesn't need a
+new type behind it, and skipping one avoids the parser/typechecker
+surface a distinct type would require.
 
 ### Process configuration
 

@@ -118,6 +118,14 @@ $invalidTimeInTimezone = & $Lume check (Join-Path $PSScriptRoot 'examples\invali
 if ($LASTEXITCODE -ne 1) { throw "time.in_timezone validation should exit 1" }
 Assert-Equal 'time.in_timezone requires (int, str)' 'E0716 builtin `time.in_timezone` requires (int, str)' ($invalidTimeInTimezone -join "`n")
 
+$durationUnits = & $Lume run (Join-Path $PSScriptRoot 'examples\duration_units.lume')
+if ($LASTEXITCODE -ne 0) { throw "duration units exited $LASTEXITCODE" }
+Assert-Equal 'duration units' "42`n300`n7200`n86400`ntrue" ($durationUnits -join "`n")
+
+$invalidDuration = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_duration_args.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "duration.minutes validation should exit 1" }
+Assert-Equal 'duration.minutes requires int' 'E0699 builtin `duration.minutes` requires int' ($invalidDuration -join "`n")
+
 $enums = & $Lume run (Join-Path $PSScriptRoot 'examples\enums.lume')
 if ($LASTEXITCODE -ne 0) { throw "enums exited $LASTEXITCODE" }
 Assert-Equal 'enum construction' ('{"$enum":"JobState","$variant":"pending"}' + "`n" + '{"$enum":"JobState","$variant":"completed","code":"i:0"}') ($enums -join "`n")
