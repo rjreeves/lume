@@ -1,0 +1,27 @@
+fn main(args: [str]) -> int {
+  let postOutcome = http.post("https://httpbin.org/post", "hello from lume", "text/plain")
+  if result.is_ok(postOutcome) {
+    let response = result.value(postOutcome)
+    print(http.ok(response))
+    print(str.contains(http.body(response), "hello from lume"))
+  } else {
+    print(result.error(postOutcome))
+  }
+
+  let putOutcome = http.put("https://httpbin.org/put", "put body", "text/plain")
+  if result.is_ok(putOutcome) {
+    let response = result.value(putOutcome)
+    print(http.ok(response))
+    print(str.contains(http.body(response), "put body"))
+  } else {
+    print(result.error(putOutcome))
+  }
+
+  let deleteOutcome = http.delete("https://httpbin.org/delete")
+  if result.is_ok(deleteOutcome) {
+    print(http.ok(result.value(deleteOutcome)))
+  } else {
+    print(result.error(deleteOutcome))
+  }
+  return 0
+}
