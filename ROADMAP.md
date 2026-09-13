@@ -200,8 +200,27 @@ false.**
   about *compile-time cost*, not the presence of this feature, and it no
   longer holds in either direction after this file's own performance fixes
   — see the "protocol-scan fix" section.)
-- *Stabilize diagnostics and bytecode serialization* — not assessed by this
-  investigation.
+- *Stabilize diagnostics and bytecode serialization* — partially assessed,
+  two issues found and fixed, two more scoped for later. Fixed: (1)
+  `execute()`'s bytecode-dispatch loop had no catch-all for an
+  unrecognized opcode — a structurally-valid but semantically-stale
+  `.lbc` artifact (e.g. built by an incompatible `lume.exe`) silently
+  skipped the unknown instruction instead of erroring, corrupting the
+  stack; now rejected cleanly with `E0725`, mirroring the catch-all
+  `callPure()` already had. (2) dead code (`scanProtocols`/
+  `ProtocolScan`, an earlier marker-only protocol design fully superseded
+  by `scanFunctions`' live protocol-method dispatch) retained two
+  diagnostic codes (`E0253`, `E0257`) whose meanings diverged from the
+  live code's own reuse of those same numbers — deleted, removing the
+  collision at its root. Still open: ~125 of 217 diagnostic codes (every
+  parser-level error routed through `expressionError`) carry no source
+  line number at all, silently reporting `line: 0` in `--json` output —
+  contradicts SPEC.md §18's "every diagnostic has a stable code, primary
+  span" claim, and is independently documented in BACKLOG.md; and SPEC.md
+  §17 describes an aspirational register-VM bytecode design that doesn't
+  match the actual stack-based VM, missing from §19's own gap list. Both
+  are large enough (many call sites; a full spec rewrite) to warrant their
+  own separate pass rather than folding into this one.
 - ~~Keep the complete smoke, test-runner, LSP, benchmark, and AI suites
   green~~ — the benchmark suite's crash is fixed (see BENCHMARKS.md's
   "Fixing `lume benchmark`'s out-of-memory crash" section): the in-process
