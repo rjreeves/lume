@@ -368,6 +368,18 @@ $builtinArity = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_builtin
 if ($LASTEXITCODE -ne 1) { throw "builtin arity validation should exit 1" }
 Assert-Equal 'builtin arity validation' 'E0217 line 2: function `str.len` expects 1 arguments, got 2' ($builtinArity -join "`n")
 
+$namedAfterPositional = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_call_named_after_positional.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "named-after-positional argument validation should exit 1" }
+Assert-Equal 'named argument after positional argument validation' 'E0106 line 6: named argument cannot follow positional argument' ($namedAfterPositional -join "`n")
+
+$positionalAfterNamed = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_call_positional_after_named.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "positional-after-named argument validation should exit 1" }
+Assert-Equal 'positional argument after named argument validation' 'E0105 line 6: positional argument cannot follow named argument' ($positionalAfterNamed -join "`n")
+
+$missingCallComma = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_call_missing_comma.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "missing call comma validation should exit 1" }
+Assert-Equal 'missing comma in argument list validation' 'E0103 line 6: expected `,` or `)` in argument list' ($missingCallComma -join "`n")
+
 $assignmentType = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_assignment_type.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "assignment type validation should exit 1" }
 Assert-Equal 'assignment type validation' 'E0611 line 3: cannot assign str to int' ($assignmentType -join "`n")

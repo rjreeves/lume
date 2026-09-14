@@ -201,7 +201,8 @@ false.**
   longer holds in either direction after this file's own performance fixes
   — see the "protocol-scan fix" section.)
 - *Stabilize diagnostics and bytecode serialization* — partially assessed,
-  six issues found and fixed, one more scoped for later. Fixed: (1)
+  seven issues found and fixed, one more (partially sliced) scoped for
+  later. Fixed: (1)
   `execute()`'s bytecode-dispatch loop had no catch-all for an
   unrecognized opcode — a structurally-valid but semantically-stale
   `.lbc` artifact (e.g. built by an incompatible `lume.exe`) silently
@@ -249,12 +250,18 @@ false.**
   legitimate source construct triggers them, since a real call already
   passed static checking by the time it would reach this path — so no
   existing test exercised this path at all; a new test now does, via the
-  same byte-patching technique fix (1)'s test already established. Still
-  open: ~40-50 scattered parser-level codes (every `expressionError` call
-  site and the statement/declaration parser) with no single choke point,
-  where each site needs its own line captured individually — large
-  enough (many call sites) to warrant its own separate pass rather than
-  folding into this one.
+  same byte-patching technique fix (1)'s test already established. (7)
+  the first slice of the genuinely scattered parser-level cluster —
+  `parseCallArguments`' three codes (`E0103`, `E0105`, `E0106`) — now
+  carry real line numbers; each site already had the right token in
+  scope, needing no restructuring. Still open: the remaining ~40-45
+  scattered codes across `parseLambda`, `parseMatch`, `parseRecordUpdate`,
+  `scanRecords`, `scanEnums`, and the statement/declaration parser body —
+  no single choke point exists for any of them (unlike fixes 3/4/6 above),
+  so each remaining site needs its own line captured and verified
+  individually — large enough (many call sites, spread across ~10
+  functions) to warrant further, smaller passes rather than one large
+  change.
 - ~~Keep the complete smoke, test-runner, LSP, benchmark, and AI suites
   green~~ — the benchmark suite's crash is fixed (see BENCHMARKS.md's
   "Fixing `lume benchmark`'s out-of-memory crash" section): the in-process
