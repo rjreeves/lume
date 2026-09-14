@@ -3919,7 +3919,7 @@ fn callPure(code: List<Instruction>, callable: Text, arguments: List<Text>, dead
       callArguments = List.reverse(callArguments)
       val target = findFunction(code, current.text)
       if target < 0 then {
-        val builtin = callBuiltin(code, current.text, callArguments, deadlineMs, timeoutMs)
+        val builtin = callBuiltin(code, current.text, callArguments, deadlineMs, timeoutMs, current.line)
         if not Text.eq(builtin.problem, "") then { problem = builtin.problem }
         else {
           val item = pop(builtin.stack)
@@ -3990,7 +3990,7 @@ fn callPure(code: List<Instruction>, callable: Text, arguments: List<Text>, dead
   DecodeValue { value: result, problem: problem }
 }
 
-fn callBuiltin(code: List<Instruction>, name: Text, input: List<Text>, deadlineMs: Int, timeoutMs: Int): BuiltinResult [io] = {
+fn callBuiltin(code: List<Instruction>, name: Text, input: List<Text>, deadlineMs: Int, timeoutMs: Int, line: Int): BuiltinResult [io] = {
   var stack = input
   var problem = ""
   var result = textValue("")
@@ -4508,7 +4508,11 @@ fn callBuiltin(code: List<Instruction>, name: Text, input: List<Text>, deadlineM
     } else if let Err(message) = requireText(left.value, name) { problem = message }
   }
   if Text.eq(problem, "") then { BuiltinResult { stack: List.push(stack, result), problem: "" } }
-  else { builtinFailure(stack, problem) }
+  else {
+    val spaceIndex = Text.indexOf(problem, " ") ?? Text.len(problem)
+    val formatted = Text.slice(problem, 0, spaceIndex) ++ " line " ++ intToText(line) ++ ": " ++ Text.slice(problem, spaceIndex + 1, Text.len(problem))
+    builtinFailure(stack, formatted)
+  }
 }
 
 fn execute(code: List<Instruction>): RunResult [io] = {
@@ -4598,7 +4602,7 @@ fn execute(code: List<Instruction>): RunResult [io] = {
     } else if Text.eq(current.op, "call") then {
       val target = findFunction(code, current.text)
       if target < 0 then {
-        val builtin = callBuiltin(code, current.text, stack, 0, 0)
+        val builtin = callBuiltin(code, current.text, stack, 0, 0, current.line)
         stack = builtin.stack
         problem = builtin.problem
       }

@@ -216,6 +216,39 @@ $staleArtifactRun = & $Lume exec $staleArtifactPath 2>&1
 if ($LASTEXITCODE -ne 1) { throw "stale-opcode bytecode should exit 1" }
 Assert-Contains 'unrecognized bytecode operation rejection' 'E0725' ($staleArtifactRun -join "`n")
 
+# callBuiltin's own diagnostics (as opposed to checkBuiltinTypes' compile-
+# time twin) only run at actual execution, never during `lume check` on
+# real source - since a legitimate call already passed typechecking by
+# the time it reaches this path. Reached here the same way as the stale-
+# opcode case above: patch a real, already-typechecked "call" instruction
+# to target a different, incompatible builtin of the same name length
+# (str.len -> map.len, both 7 bytes, no offset shift needed), simulating
+# the only way this runtime path is ever actually reachable - a stale or
+# hand-tampered bytecode artifact, not anything expressible in source.
+$builtinCheckPath = Join-Path $PSScriptRoot 'dist\callbuiltin-runtime-check.lbc'
+& $Lume build (Join-Path $PSScriptRoot 'examples\callbuiltin_runtime_check.lume') $builtinCheckPath | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "callbuiltin runtime check build exited $LASTEXITCODE" }
+$builtinCheckBytes = [IO.File]::ReadAllBytes($builtinCheckPath)
+$cursor = 76
+$textPatchOffset = -1
+while ($cursor -lt $builtinCheckBytes.Length) {
+  $opLength = [BitConverter]::ToInt64($builtinCheckBytes, $cursor)
+  $opStart = $cursor + 8
+  $op = [Text.Encoding]::UTF8.GetString($builtinCheckBytes, $opStart, $opLength)
+  $cursor = $opStart + $opLength
+  $textLength = [BitConverter]::ToInt64($builtinCheckBytes, $cursor)
+  $textStart = $cursor + 8
+  $text = [Text.Encoding]::UTF8.GetString($builtinCheckBytes, $textStart, $textLength)
+  if ($op -eq 'call' -and $text -eq 'str.len') { $textPatchOffset = $textStart }
+  $cursor = $textStart + $textLength + 16
+}
+if ($textPatchOffset -lt 0) { throw 'no call to str.len found to patch in callbuiltin-runtime-check.lbc' }
+[Text.Encoding]::UTF8.GetBytes('map.len').CopyTo($builtinCheckBytes, $textPatchOffset)
+[IO.File]::WriteAllBytes($builtinCheckPath, $builtinCheckBytes)
+$builtinCheckRun = & $Lume exec $builtinCheckPath 2>&1
+if ($LASTEXITCODE -ne 1) { throw "callbuiltin runtime check should exit 1" }
+Assert-Equal 'callBuiltin runtime diagnostic carries a line number' 'E0695 line 3: builtin `map.len` expected Map' ($builtinCheckRun -join "`n")
+
 $coreApi = & $Lume run (Join-Path $PSScriptRoot 'examples\core_api.lume') (Join-Path $PSScriptRoot 'examples\data.json')
 if ($LASTEXITCODE -ne 0) { throw "core APIs exited $LASTEXITCODE" }
 Assert-Equal 'core APIs' "1`n28`ntrue`nLUME`n1`ntrue`n0" ($coreApi -join "`n")
