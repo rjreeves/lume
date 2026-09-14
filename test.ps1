@@ -477,19 +477,19 @@ Assert-Equal 'protocol implementation constraint' 'E0680 line 12: type `User` do
 
 $protocolImpl = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_protocol_impl.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "unknown protocol implementation should exit 1" }
-Assert-Equal 'unknown protocol implementation' 'E0258 unknown protocol `Missing` in implementation' ($protocolImpl -join "`n")
+Assert-Equal 'unknown protocol implementation' 'E0258 line 5: unknown protocol `Missing` in implementation' ($protocolImpl -join "`n")
 
 $protocolMissingMethod = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_protocol_missing_method.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "missing protocol method should exit 1" }
-Assert-Equal 'missing protocol method' 'E0262 implementation of `Named` for `User` is missing method `name`' ($protocolMissingMethod -join "`n")
+Assert-Equal 'missing protocol method' 'E0262 line 9: implementation of `Named` for `User` is missing method `name`' ($protocolMissingMethod -join "`n")
 
 $protocolMethodType = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_protocol_method_type.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "protocol method signature mismatch should exit 1" }
-Assert-Equal 'protocol method signature' 'E0263 method `User.name` does not match protocol signature' ($protocolMethodType -join "`n")
+Assert-Equal 'protocol method signature' 'E0263 line 9: method `User.name` does not match protocol signature' ($protocolMethodType -join "`n")
 
 $protocolExtraMethod = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_protocol_extra_method.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "extra protocol method should exit 1" }
-Assert-Equal 'extra protocol method' 'E0264 method `code` is not declared by protocol `Named`' ($protocolExtraMethod -join "`n")
+Assert-Equal 'extra protocol method' 'E0264 line 9: method `code` is not declared by protocol `Named`' ($protocolExtraMethod -join "`n")
 
 $genericDispatchUnknownMethod = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_generic_dispatch_unknown_method.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "generic dispatch unknown method should exit 1" }
@@ -541,7 +541,7 @@ Assert-Equal 'map key not eligible' 'E0697 line 6: map key type must be int, str
 
 $ordImpl = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_ord_impl.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "Ord impl validation should exit 1" }
-Assert-Equal 'Ord impl still rejected' 'E0258 unknown protocol `Ord` in implementation' ($ordImpl -join "`n")
+Assert-Equal 'Ord impl still rejected' 'E0258 line 6: unknown protocol `Ord` in implementation' ($ordImpl -join "`n")
 
 $mapValueTypeMismatch = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_map_value_type_mismatch.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "map value type mismatch validation should exit 1" }

@@ -201,7 +201,7 @@ false.**
   longer holds in either direction after this file's own performance fixes
   — see the "protocol-scan fix" section.)
 - *Stabilize diagnostics and bytecode serialization* — partially assessed,
-  three issues found and fixed, two more scoped for later. Fixed: (1)
+  four issues found and fixed, two more scoped for later. Fixed: (1)
   `execute()`'s bytecode-dispatch loop had no catch-all for an
   unrecognized opcode — a structurally-valid but semantically-stale
   `.lbc` artifact (e.g. built by an incompatible `lume.exe`) silently
@@ -221,16 +221,20 @@ false.**
   `"E0NNN <message>"` messages as `"E0NNN line N: <message>"`, matching
   the convention ~90 other codes already used, so `diagnosticJson`'s
   existing `" line "`-searching `--json` extraction needed no changes and
-  now reports the real line instead of `0` for this cluster. Still open:
-  two smaller diagnostic-line gaps (`E0258`/`E0259`, protocol-
-  implementation checks, ~2 codes — the line is available where the
-  packed implementation string is built but gets flattened away) and
-  ~40-50 scattered parser-level codes (every `expressionError` call site
-  and the statement/declaration parser) where no single choke point
-  exists and each site needs its own line captured individually; and
-  SPEC.md §17 describes an aspirational register-VM bytecode design that
-  doesn't match the actual stack-based VM, missing from §19's own gap
-  list. All three are large enough (many call sites; a full spec rewrite)
+  now reports the real line instead of `0` for this cluster. (4) the
+  protocol-implementation cluster (`E0258`/`E0259`/`E0262`/`E0263`/
+  `E0264`, five codes, not the two originally scoped — a second consumer
+  of the same packed `functions.implementations` list turned up while
+  fixing the first) — the line was already captured for three sibling
+  codes right next to where the packed string is built but never carried
+  into it; now appended as a fourth pipe field and read by both
+  consumers. Still open: ~40-50 scattered parser-level codes (every
+  `expressionError` call site and the statement/declaration parser) where
+  no single choke point exists and each site needs its own line captured
+  individually; and SPEC.md §17 describes an aspirational register-VM
+  bytecode design that doesn't match the actual stack-based VM, missing
+  from §19's own gap
+  list. Both are large enough (many call sites; a full spec rewrite)
   to warrant their own separate passes rather than folding into this one.
 - ~~Keep the complete smoke, test-runner, LSP, benchmark, and AI suites
   green~~ — the benchmark suite's crash is fixed (see BENCHMARKS.md's
