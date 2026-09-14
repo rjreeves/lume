@@ -2244,7 +2244,7 @@ fn inferGeneric(expected: Text, actual: Text, parameters: List<Text>, arguments:
   output
 }
 
-fn checkBuiltinTypes(code: List<Instruction>, name: Text, stackInput: List<Text>, protocolImplBuckets: List<List<Text>>): TypeStackResult = {
+fn checkBuiltinTypes(code: List<Instruction>, name: Text, stackInput: List<Text>, protocolImplBuckets: List<List<Text>>, line: Int): TypeStackResult = {
   var stack = stackInput
   var resultType = "unknown"
   var problem = ""
@@ -2653,7 +2653,11 @@ fn checkBuiltinTypes(code: List<Instruction>, name: Text, stackInput: List<Text>
     else if Text.eq(name, "str.len") then { resultType = "int" }
     else { resultType = "str" }
   }
-  TypeStackResult { stack: stack, resultType: resultType, problem: problem }
+  val formatted = if Text.eq(problem, "") then "" else {
+    val spaceIndex = Text.indexOf(problem, " ") ?? Text.len(problem)
+    Text.slice(problem, 0, spaceIndex) ++ " line " ++ intToText(line) ++ ": " ++ Text.slice(problem, spaceIndex + 1, Text.len(problem))
+  }
+  TypeStackResult { stack: stack, resultType: resultType, problem: formatted }
 }
 
 // containsName(builtinNames(), call.text) is checked before findFunction,
@@ -2673,7 +2677,7 @@ fn checkBuiltinTypes(code: List<Instruction>, name: Text, stackInput: List<Text>
 // function made the whole thing O(n^2).
 fn checkCallTypes(code: List<Instruction>, call: Instruction, stackInput: List<Text>, protocolBuckets: List<List<Text>>, protocolImplBuckets: List<List<Text>>): TypeStackResult = {
   val target = if containsName(builtinNames(), call.text) then -1 else findFunction(code, call.text)
-  if target < 0 then { checkBuiltinTypes(code, call.text, stackInput, protocolImplBuckets) }
+  if target < 0 then { checkBuiltinTypes(code, call.text, stackInput, protocolImplBuckets, call.line) }
   else {
     var stack = stackInput
     var problem = ""
