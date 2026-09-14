@@ -201,7 +201,7 @@ false.**
   longer holds in either direction after this file's own performance fixes
   — see the "protocol-scan fix" section.)
 - *Stabilize diagnostics and bytecode serialization* — partially assessed,
-  five issues found and fixed, one more scoped for later. Fixed: (1)
+  six issues found and fixed, one more scoped for later. Fixed: (1)
   `execute()`'s bytecode-dispatch loop had no catch-all for an
   unrecognized opcode — a structurally-valid but semantically-stale
   `.lbc` artifact (e.g. built by an incompatible `lume.exe`) silently
@@ -237,11 +237,24 @@ false.**
   decode-time framing checks plus runtime catch-all that guard a loaded
   artifact (this same "register bytecode execution" phrasing was also
   independently wrong in this file's own "Shipped in the bootstrap"
-  list, fixed alongside it). Still open: ~40-50 scattered parser-level
-  codes (every `expressionError` call site and the statement/declaration
-  parser) with no single choke point, where each site needs its own line
-  captured individually — large enough (many call sites) to warrant its
-  own separate pass rather than folding into this one.
+  list, fixed alongside it). (6) `callBuiltin` — the *runtime* bytecode
+  executor for builtin calls, as opposed to `checkBuiltinTypes`' compile-
+  time typecheck — carried its own separate set of 21 line-less codes
+  (several the runtime half of a code already fixed at the typecheck
+  layer), all flowing through the exact same shape of choke point as
+  fix (3): two callers (`callPure`, `execute`) already holding the
+  dispatched instruction's line but discarding it, and one terminal
+  return formatted the same way. These codes are only reachable by
+  actually running a stale or hand-tampered bytecode artifact — no
+  legitimate source construct triggers them, since a real call already
+  passed static checking by the time it would reach this path — so no
+  existing test exercised this path at all; a new test now does, via the
+  same byte-patching technique fix (1)'s test already established. Still
+  open: ~40-50 scattered parser-level codes (every `expressionError` call
+  site and the statement/declaration parser) with no single choke point,
+  where each site needs its own line captured individually — large
+  enough (many call sites) to warrant its own separate pass rather than
+  folding into this one.
 - ~~Keep the complete smoke, test-runner, LSP, benchmark, and AI suites
   green~~ — the benchmark suite's crash is fixed (see BENCHMARKS.md's
   "Fixing `lume benchmark`'s out-of-memory crash" section): the in-process
