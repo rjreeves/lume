@@ -1595,7 +1595,7 @@ fn scanFunctions(tokens: List<Token>): FunctionScan = {
               }
             }
           }
-          implementations = List.push(implementations, implementationBase ++ "|" ++ Text.join(methodNames, ","))
+          implementations = List.push(implementations, implementationBase ++ "|" ++ Text.join(methodNames, ",") ++ "|" ++ intToText(protocolName.line))
           index = cursor + 1
         }
       } else if Text.eq(at(tokens, index).text, "type") or Text.eq(at(tokens, index).text, "enum") then {
@@ -1675,8 +1675,9 @@ fn compile(tokens: List<Token>): CompileResult = {
     val implementationParts = Text.split(implementation, "|")
     val protocolName = List.getOrPanic(implementationParts, 0)
     val typeName = List.getOrPanic(implementationParts, 1)
-    if Text.eq(problem, "") and not containsName(functions.protocolNames, protocolName) and not Text.eq(protocolName, "Eq") then { problem = "E0258 unknown protocol `" ++ protocolName ++ "` in implementation" }
-    else if Text.eq(problem, "") and not Text.eq(typeName, "int") and not Text.eq(typeName, "str") and not Text.eq(typeName, "bool") and not containsGenericName(records.names, typeName) and not containsGenericName(enums.names, typeName) then { problem = "E0259 unknown type `" ++ typeName ++ "` in protocol implementation" }
+    val implLine = if List.len(implementationParts) > 3 then (parseInt(List.getOrPanic(implementationParts, 3)) ?? 0) else 0
+    if Text.eq(problem, "") and not containsName(functions.protocolNames, protocolName) and not Text.eq(protocolName, "Eq") then { problem = "E0258 line " ++ intToText(implLine) ++ ": unknown protocol `" ++ protocolName ++ "` in implementation" }
+    else if Text.eq(problem, "") and not Text.eq(typeName, "int") and not Text.eq(typeName, "str") and not Text.eq(typeName, "bool") and not containsGenericName(records.names, typeName) and not containsGenericName(enums.names, typeName) then { problem = "E0259 line " ++ intToText(implLine) ++ ": unknown type `" ++ typeName ++ "` in protocol implementation" }
     code = List.pushMut(code, makeInstruction("protocol_impl", implementation, 0, 0))
   }
   var enumIndex = 0
@@ -1736,6 +1737,7 @@ fn compile(tokens: List<Token>): CompileResult = {
       val protocolName = List.getOrPanic(implementationParts, 0)
       val typeName = List.getOrPanic(implementationParts, 1)
       val methodText = if List.len(implementationParts) > 2 then List.getOrPanic(implementationParts, 2) else ""
+      val implLine = if List.len(implementationParts) > 3 then (parseInt(List.getOrPanic(implementationParts, 3)) ?? 0) else 0
       val methodNames = if Text.eq(methodText, "") then [] else Text.split(methodText, ",")
       val protocolPosition = nameIndex(functions.protocolNames, protocolName)
       if protocolPosition >= 0 then {
@@ -1745,7 +1747,7 @@ fn compile(tokens: List<Token>): CompileResult = {
           if Text.eq(problem, "") then {
             val methodName = schemaFieldName(method)
             val target = findFunction(code, typeName ++ "." ++ methodName)
-            if target < 0 or not containsName(methodNames, methodName) then { problem = "E0262 implementation of `" ++ protocolName ++ "` for `" ++ typeName ++ "` is missing method `" ++ methodName ++ "`" }
+            if target < 0 or not containsName(methodNames, methodName) then { problem = "E0262 line " ++ intToText(implLine) ++ ": implementation of `" ++ protocolName ++ "` for `" ++ typeName ++ "` is missing method `" ++ methodName ++ "`" }
             else {
               val signature = schemaFieldType(method)
               val separator = Text.indexOf(signature, "@") ?? -1
@@ -1754,13 +1756,13 @@ fn compile(tokens: List<Token>): CompileResult = {
               val expectedParameters = if Text.eq(parameterText, "") then [] else Text.split(parameterText, ",")
               val markerNumber = instructionAt(code, target).number
               val markerText = instructionAt(code, target).text
-              if markerNumber != List.len(expectedParameters) or not Text.eq(markerReturnType(markerText), expectedReturn) then { problem = "E0263 method `" ++ typeName ++ "." ++ methodName ++ "` does not match protocol signature" }
+              if markerNumber != List.len(expectedParameters) or not Text.eq(markerReturnType(markerText), expectedReturn) then { problem = "E0263 line " ++ intToText(implLine) ++ ": method `" ++ typeName ++ "." ++ methodName ++ "` does not match protocol signature" }
               else {
                 var parameterIndex = 0
                 while parameterIndex < List.len(expectedParameters) and Text.eq(problem, "") {
                   val expected = Text.replace(List.getOrPanic(expectedParameters, parameterIndex), "Self", typeName)
                   val actual = afterPipe(instructionAt(code, target + markerNumber - parameterIndex).text)
-                  if not Text.eq(expected, actual) then { problem = "E0263 method `" ++ typeName ++ "." ++ methodName ++ "` does not match protocol signature" }
+                  if not Text.eq(expected, actual) then { problem = "E0263 line " ++ intToText(implLine) ++ ": method `" ++ typeName ++ "." ++ methodName ++ "` does not match protocol signature" }
                   parameterIndex = parameterIndex + 1
                 }
               }
@@ -1770,7 +1772,7 @@ fn compile(tokens: List<Token>): CompileResult = {
         for methodName in methodNames {
           var declared = false
           for method in required { if Text.eq(schemaFieldName(method), methodName) then { declared = true } }
-          if Text.eq(problem, "") and not declared then { problem = "E0264 method `" ++ methodName ++ "` is not declared by protocol `" ++ protocolName ++ "`" }
+          if Text.eq(problem, "") and not declared then { problem = "E0264 line " ++ intToText(implLine) ++ ": method `" ++ methodName ++ "` is not declared by protocol `" ++ protocolName ++ "`" }
         }
       }
     }
