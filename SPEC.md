@@ -779,20 +779,44 @@ independently, enabling forward references and precise incremental caching.
 
 ## 17. Bytecode
 
-A register VM reduces instruction count and dispatch compared with a stack
-VM:
+The VM is a flat stack machine, not a register machine: every instruction
+is one generic `{op, text, number, line}` record, and execution pushes and
+pops an explicit value stack rather than addressing registers. `op`
+selects behavior; `text` and `number` are untyped operand slots reused
+differently per opcode (a constant's literal value, an operand count, a
+jump offset); `line` is attached to every instruction directly, not kept
+in a separate source map. A simple expression like `3 + 4` compiles to:
 
 ```text
-load_const r0, #3
-load_const r1, #4
-add_int    r2, r0, r1
-return     r2
+const_int(3)
+const_int(4)
+add
+return
 ```
 
-Each function stores its register count, constants, instructions, result
-metadata, and a compressed source map. Bytecode is verified once before
-caching, and `run` maintains a content-hash-validated `.lbc` file so an
-unchanged source skips lexing, parsing, and re-emission entirely.
+(each line is one `{op, text, number, line}` record — `const_int` carries
+its literal in `number`, `add`/`return` need no operand and just act on
+whatever is already on the stack)
+
+There is no per-function register count or constants table — constants
+are inlined directly into the instructions that produce them. Richer
+per-function metadata (return type, generics, constraints, and — for a
+`test` declaration — its name and optional `timeout:` bound, §13) is
+packed into one pipe-delimited string carried in a single `"function"`
+instruction's `text` field, decoded by small accessor functions, rather
+than stored as structured fields.
+
+`run` maintains a content-hash-validated `.lbc` file: the source is
+hashed and compared against the cached artifact's own stored hash, and an
+unchanged source skips lexing, parsing, and re-emission entirely. Loading
+that file back is a length-prefixed binary format (a fixed magic header,
+the source hash, then each instruction's fields in sequence) validated
+structurally at decode time — truncated or malformed framing is rejected
+before a single instruction runs. There is no separate verification pass
+beyond that framing check plus the interpreter's own refusal to execute
+an opcode it doesn't recognize (protecting against a structurally-valid
+but semantically-stale artifact, such as one built by an incompatible
+compiler version).
 
 ## 18. Diagnostics contract
 
