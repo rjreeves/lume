@@ -92,7 +92,7 @@ Assert-Equal 'time functions' "true`n1970-01-01T00:00:00Z`n2023-11-14T22:13:20Z"
 
 $invalidTimeToIso = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_time_to_iso.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "time.to_iso validation should exit 1" }
-Assert-Equal 'time.to_iso requires int' 'E0699 builtin `time.to_iso` requires int' ($invalidTimeToIso -join "`n")
+Assert-Equal 'time.to_iso requires int' 'E0699 line 2: builtin `time.to_iso` requires int' ($invalidTimeToIso -join "`n")
 
 $timeCalendar = & $Lume run (Join-Path $PSScriptRoot 'examples\time_calendar.lume')
 if ($LASTEXITCODE -ne 0) { throw "time calendar exited $LASTEXITCODE" }
@@ -100,7 +100,7 @@ Assert-Equal 'time calendar components' "2023`n11`n14`n22`n13`n20" ($timeCalenda
 
 $invalidTimeYear = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_time_year_args.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "time.year validation should exit 1" }
-Assert-Equal 'time.year requires int' 'E0699 builtin `time.year` requires int' ($invalidTimeYear -join "`n")
+Assert-Equal 'time.year requires int' 'E0699 line 2: builtin `time.year` requires int' ($invalidTimeYear -join "`n")
 
 $timeFormat = & $Lume run (Join-Path $PSScriptRoot 'examples\time_format.lume')
 if ($LASTEXITCODE -ne 0) { throw "time format exited $LASTEXITCODE" }
@@ -108,7 +108,7 @@ Assert-Equal 'time format' "2023-11-14`n22:13:20`n2023-11-14T22:13:20Z" ($timeFo
 
 $invalidTimeFormat = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_time_format_args.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "time.format validation should exit 1" }
-Assert-Equal 'time.format requires (int, str)' 'E0715 builtin `time.format` requires (int, str)' ($invalidTimeFormat -join "`n")
+Assert-Equal 'time.format requires (int, str)' 'E0715 line 2: builtin `time.format` requires (int, str)' ($invalidTimeFormat -join "`n")
 
 $timeTimezone = & $Lume run (Join-Path $PSScriptRoot 'examples\time_timezone.lume')
 if ($LASTEXITCODE -ne 0) { throw "time timezone exited $LASTEXITCODE" }
@@ -116,7 +116,7 @@ Assert-Equal 'time timezone' "true`n2023-11-14T17:13:20-05:00`ntrue`n2023-11-14 
 
 $invalidTimeInTimezone = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_time_in_timezone_args.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "time.in_timezone validation should exit 1" }
-Assert-Equal 'time.in_timezone requires (int, str)' 'E0716 builtin `time.in_timezone` requires (int, str)' ($invalidTimeInTimezone -join "`n")
+Assert-Equal 'time.in_timezone requires (int, str)' 'E0716 line 2: builtin `time.in_timezone` requires (int, str)' ($invalidTimeInTimezone -join "`n")
 
 $durationUnits = & $Lume run (Join-Path $PSScriptRoot 'examples\duration_units.lume')
 if ($LASTEXITCODE -ne 0) { throw "duration units exited $LASTEXITCODE" }
@@ -124,7 +124,7 @@ Assert-Equal 'duration units' "42`n300`n7200`n86400`ntrue" ($durationUnits -join
 
 $invalidDuration = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_duration_args.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "duration.minutes validation should exit 1" }
-Assert-Equal 'duration.minutes requires int' 'E0699 builtin `duration.minutes` requires int' ($invalidDuration -join "`n")
+Assert-Equal 'duration.minutes requires int' 'E0699 line 2: builtin `duration.minutes` requires int' ($invalidDuration -join "`n")
 
 $enums = & $Lume run (Join-Path $PSScriptRoot 'examples\enums.lume')
 if ($LASTEXITCODE -ne 0) { throw "enums exited $LASTEXITCODE" }
@@ -289,7 +289,7 @@ Assert-Equal 'bytes file roundtrip' "true`nroundtrip content`n17`ntrue" ($bytesF
 
 $invalidBytesToStr = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_bytes_to_str_args.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "bytes.to_str validation should exit 1" }
-Assert-Equal 'bytes.to_str requires bytes' 'E0712 builtin `bytes.to_str` requires bytes' ($invalidBytesToStr -join "`n")
+Assert-Equal 'bytes.to_str requires bytes' 'E0712 line 2: builtin `bytes.to_str` requires bytes' ($invalidBytesToStr -join "`n")
 
 $check = & $Lume check (Join-Path $PSScriptRoot 'examples\arithmetic.lume')
 if ($LASTEXITCODE -ne 0) { throw "check exited $LASTEXITCODE" }
@@ -309,7 +309,7 @@ Assert-Equal 'test timeout clause validation' 'E0724 line 1: expected integer ti
 
 $badProcessAssertion = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_process_assertion.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "process assertion receiver validation should exit 1" }
-Assert-Equal 'process assertion receiver validation' 'E0718 expect.exit_code requires a process result' ($badProcessAssertion -join "`n")
+Assert-Equal 'process assertion receiver validation' 'E0718 line 2: expect.exit_code requires a process result' ($badProcessAssertion -join "`n")
 
 $duplicate = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_duplicate.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "duplicate validation should exit 1" }
@@ -429,31 +429,31 @@ Assert-Equal 'record update source validation' 'E0660 line 3: `with` requires a 
 
 $processArgs = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_process_args.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "process argument validation should exit 1" }
-Assert-Equal 'process argument validation' 'E0619 process.run requires (str, [str])' ($processArgs -join "`n")
+Assert-Equal 'process argument validation' 'E0619 line 2: process.run requires (str, [str])' ($processArgs -join "`n")
 
 $processInputArgs = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_process_run_with_input_args.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "process run_with_input argument validation should exit 1" }
-Assert-Equal 'process run_with_input argument validation' 'E0700 process.run_with_input requires (str, [str], str)' ($processInputArgs -join "`n")
+Assert-Equal 'process run_with_input argument validation' 'E0700 line 2: process.run_with_input requires (str, [str], str)' ($processInputArgs -join "`n")
 
 $processEnvArgs = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_process_run_with_env_args.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "process run_with_env argument validation should exit 1" }
-Assert-Equal 'process run_with_env argument validation' 'E0700 process.run_with_env requires (str, [str], Map<str,str>)' ($processEnvArgs -join "`n")
+Assert-Equal 'process run_with_env argument validation' 'E0700 line 2: process.run_with_env requires (str, [str], Map<str,str>)' ($processEnvArgs -join "`n")
 
 $httpGetArgs = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_http_get_args.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "http get argument validation should exit 1" }
-Assert-Equal 'http get argument validation' 'E0608 builtin `http.get` requires str' ($httpGetArgs -join "`n")
+Assert-Equal 'http get argument validation' 'E0608 line 2: builtin `http.get` requires str' ($httpGetArgs -join "`n")
 
 $httpPostArgs = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_http_post_args.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "http post argument validation should exit 1" }
-Assert-Equal 'http post argument validation' 'E0710 builtin `http.post` requires (str, str, str)' ($httpPostArgs -join "`n")
+Assert-Equal 'http post argument validation' 'E0710 line 2: builtin `http.post` requires (str, str, str)' ($httpPostArgs -join "`n")
 
 $httpRequestArgs = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_http_request_args.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "http request argument validation should exit 1" }
-Assert-Equal 'http request argument validation' 'E0711 http.request requires (str, str, Map<str,str>, str)' ($httpRequestArgs -join "`n")
+Assert-Equal 'http request argument validation' 'E0711 line 2: http.request requires (str, str, Map<str,str>, str)' ($httpRequestArgs -join "`n")
 
 $envSetArgs = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_env_set_args.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "env set argument validation should exit 1" }
-Assert-Equal 'env set argument validation' 'E0607 builtin `env.set` requires str arguments' ($envSetArgs -join "`n")
+Assert-Equal 'env set argument validation' 'E0607 line 2: builtin `env.set` requires str arguments' ($envSetArgs -join "`n")
 
 $unwrap = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_unwrap.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "unwrap validation should exit 1" }
@@ -529,15 +529,15 @@ Assert-Equal 'multi-constraint unsatisfied' 'E0680 line 20: type `User` does not
 
 $mapRequiresMap = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_map_requires_map.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "map requires-a-map validation should exit 1" }
-Assert-Equal 'map requires a map' 'E0695 `map.len` requires a Map' ($mapRequiresMap -join "`n")
+Assert-Equal 'map requires a map' 'E0695 line 2: `map.len` requires a Map' ($mapRequiresMap -join "`n")
 
 $mapKeyTypeMismatch = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_map_key_type_mismatch.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "map key type mismatch validation should exit 1" }
-Assert-Equal 'map key type mismatch' 'E0696 `map.get` key type does not match map key type' ($mapKeyTypeMismatch -join "`n")
+Assert-Equal 'map key type mismatch' 'E0696 line 3: `map.get` key type does not match map key type' ($mapKeyTypeMismatch -join "`n")
 
 $mapKeyNotEligible = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_map_key_not_eligible.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "map key eligibility validation should exit 1" }
-Assert-Equal 'map key not eligible' 'E0697 map key type must be int, str, bool, or a type with `impl Eq for <Type> {}`' ($mapKeyNotEligible -join "`n")
+Assert-Equal 'map key not eligible' 'E0697 line 6: map key type must be int, str, bool, or a type with `impl Eq for <Type> {}`' ($mapKeyNotEligible -join "`n")
 
 $ordImpl = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_ord_impl.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "Ord impl validation should exit 1" }
@@ -545,15 +545,15 @@ Assert-Equal 'Ord impl still rejected' 'E0258 unknown protocol `Ord` in implemen
 
 $mapValueTypeMismatch = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_map_value_type_mismatch.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "map value type mismatch validation should exit 1" }
-Assert-Equal 'map value type mismatch' 'E0698 map.set value type does not match map value type' ($mapValueTypeMismatch -join "`n")
+Assert-Equal 'map value type mismatch' 'E0698 line 3: map.set value type does not match map value type' ($mapValueTypeMismatch -join "`n")
 
 $mapCallback = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_map_callback.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "map callback validation should exit 1" }
-Assert-Equal 'map callback validation' 'E0673 callback parameter type does not match map value type' ($mapCallback -join "`n")
+Assert-Equal 'map callback validation' 'E0673 line 7: callback parameter type does not match map value type' ($mapCallback -join "`n")
 
 $listCallback = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_list_callback.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "list callback validation should exit 1" }
-Assert-Equal 'list callback validation' 'E0673 callback parameter type does not match list element type' ($listCallback -join "`n")
+Assert-Equal 'list callback validation' 'E0673 line 6: callback parameter type does not match list element type' ($listCallback -join "`n")
 
 $closureReturn = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_closure_return.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "closure return validation should exit 1" }

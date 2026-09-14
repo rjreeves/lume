@@ -201,7 +201,7 @@ false.**
   longer holds in either direction after this file's own performance fixes
   — see the "protocol-scan fix" section.)
 - *Stabilize diagnostics and bytecode serialization* — partially assessed,
-  two issues found and fixed, two more scoped for later. Fixed: (1)
+  three issues found and fixed, two more scoped for later. Fixed: (1)
   `execute()`'s bytecode-dispatch loop had no catch-all for an
   unrecognized opcode — a structurally-valid but semantically-stale
   `.lbc` artifact (e.g. built by an incompatible `lume.exe`) silently
@@ -212,15 +212,26 @@ false.**
   by `scanFunctions`' live protocol-method dispatch) retained two
   diagnostic codes (`E0253`, `E0257`) whose meanings diverged from the
   live code's own reuse of those same numbers — deleted, removing the
-  collision at its root. Still open: ~125 of 217 diagnostic codes (every
-  parser-level error routed through `expressionError`) carry no source
-  line number at all, silently reporting `line: 0` in `--json` output —
-  contradicts SPEC.md §18's "every diagnostic has a stable code, primary
-  span" claim, and is independently documented in BACKLOG.md; and SPEC.md
-  §17 describes an aspirational register-VM bytecode design that doesn't
-  match the actual stack-based VM, missing from §19's own gap list. Both
-  are large enough (many call sites; a full spec rewrite) to warrant their
-  own separate pass rather than folding into this one.
+  collision at its root. (3) of the ~125 line-less diagnostic codes found,
+  the largest single cluster — the ~50 `checkBuiltinTypes`-originated
+  codes covering `map.*`/`list.*`/`http.*`/`process.*`/`time.*`/`expect.*`
+  builtin argument-type checks — now carry a real line number: its only
+  caller, `checkCallTypes`, already held the calling instruction's line
+  but discarded it; now threaded through and formatted into the existing
+  `"E0NNN <message>"` messages as `"E0NNN line N: <message>"`, matching
+  the convention ~90 other codes already used, so `diagnosticJson`'s
+  existing `" line "`-searching `--json` extraction needed no changes and
+  now reports the real line instead of `0` for this cluster. Still open:
+  two smaller diagnostic-line gaps (`E0258`/`E0259`, protocol-
+  implementation checks, ~2 codes — the line is available where the
+  packed implementation string is built but gets flattened away) and
+  ~40-50 scattered parser-level codes (every `expressionError` call site
+  and the statement/declaration parser) where no single choke point
+  exists and each site needs its own line captured individually; and
+  SPEC.md §17 describes an aspirational register-VM bytecode design that
+  doesn't match the actual stack-based VM, missing from §19's own gap
+  list. All three are large enough (many call sites; a full spec rewrite)
+  to warrant their own separate passes rather than folding into this one.
 - ~~Keep the complete smoke, test-runner, LSP, benchmark, and AI suites
   green~~ — the benchmark suite's crash is fixed (see BENCHMARKS.md's
   "Fixing `lume benchmark`'s out-of-memory crash" section): the in-process
