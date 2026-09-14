@@ -406,10 +406,10 @@ fn parseCallArguments(tokens: List<Token>, start: Int): CallArgsResult = {
     var label = ""
     if Text.eq(at(tokens, index).kind, "name") and Text.eq(at(tokens, index + 1).text, ":") then {
       label = at(tokens, index).text
-      if sawPositional then { problem = "E0106 named argument cannot follow positional argument" }
+      if sawPositional then { problem = "E0106 line " ++ intToText(at(tokens, index).line) ++ ": named argument cannot follow positional argument" }
       else { sawNamed = true }
       index = index + 2
-    } else if sawNamed then { problem = "E0105 positional argument cannot follow named argument" }
+    } else if sawNamed then { problem = "E0105 line " ++ intToText(at(tokens, index).line) ++ ": positional argument cannot follow named argument" }
     else { sawPositional = true }
     val argument = parseComparison(tokens, index)
     if not Text.eq(argument.problem, "") then { problem = argument.problem }
@@ -422,7 +422,7 @@ fn parseCallArguments(tokens: List<Token>, start: Int): CallArgsResult = {
       else if Text.eq(at(tokens, index).text, ")") then {
         index = index + 1
         finished = true
-      } else { problem = "E0103 expected `,` or `)` in argument list" }
+      } else { problem = "E0103 line " ++ intToText(at(tokens, index).line) ++ ": expected `,` or `)` in argument list" }
     }
   }
   CallArgsResult { next: index, code: code, count: count, labels: labels, problem: problem }
