@@ -201,7 +201,7 @@ false.**
   longer holds in either direction after this file's own performance fixes
   — see the "protocol-scan fix" section.)
 - *Stabilize diagnostics and bytecode serialization* — partially assessed,
-  four issues found and fixed, two more scoped for later. Fixed: (1)
+  five issues found and fixed, one more scoped for later. Fixed: (1)
   `execute()`'s bytecode-dispatch loop had no catch-all for an
   unrecognized opcode — a structurally-valid but semantically-stale
   `.lbc` artifact (e.g. built by an incompatible `lume.exe`) silently
@@ -228,14 +228,20 @@ false.**
   fixing the first) — the line was already captured for three sibling
   codes right next to where the packed string is built but never carried
   into it; now appended as a fourth pipe field and read by both
-  consumers. Still open: ~40-50 scattered parser-level codes (every
-  `expressionError` call site and the statement/declaration parser) where
-  no single choke point exists and each site needs its own line captured
-  individually; and SPEC.md §17 describes an aspirational register-VM
-  bytecode design that doesn't match the actual stack-based VM, missing
-  from §19's own gap
-  list. Both are large enough (many call sites; a full spec rewrite)
-  to warrant their own separate passes rather than folding into this one.
+  consumers. (5) `SPEC.md` §17 described an aspirational register-VM
+  bytecode design (per-instruction register operands, a per-function
+  register count and constants table, a compressed source map) that
+  didn't match the actual flat stack machine at all — rewritten to
+  describe the real `{op, text, number, line}` instruction shape, the
+  pipe-encoded per-function marker-text convention, and the actual
+  decode-time framing checks plus runtime catch-all that guard a loaded
+  artifact (this same "register bytecode execution" phrasing was also
+  independently wrong in this file's own "Shipped in the bootstrap"
+  list, fixed alongside it). Still open: ~40-50 scattered parser-level
+  codes (every `expressionError` call site and the statement/declaration
+  parser) with no single choke point, where each site needs its own line
+  captured individually — large enough (many call sites) to warrant its
+  own separate pass rather than folding into this one.
 - ~~Keep the complete smoke, test-runner, LSP, benchmark, and AI suites
   green~~ — the benchmark suite's crash is fixed (see BENCHMARKS.md's
   "Fixing `lume benchmark`'s out-of-memory crash" section): the in-process
@@ -286,7 +292,7 @@ non-trivial benchmark in this file has met its own bar.**
 - structured errors and concise result propagation with `?`;
 - function values, expression-bodied closures, and immutable captures;
 - modules and imports;
-- register bytecode execution and a content-addressed bytecode cache.
+- stack-based bytecode execution and a content-addressed bytecode cache.
 
 ### Typed data
 
