@@ -3,7 +3,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$root = Split-Path -Parent $MyInvocation.MyCommand.Path
+$root = $PSScriptRoot
 $dist = Join-Path $root 'dist'
 New-Item -ItemType Directory -Path $dist -Force | Out-Null
 
