@@ -1,0 +1,34 @@
+fn main(args: [str]) -> int {
+  var certo = "C:/Users/robert/Desktop/Certo/target/release/certo.exe"
+  if args.count() > 0 {
+    certo = args.get(0)
+  }
+
+  let checkResult = process.run(certo, ["check", "src/lume.cto"])
+  if process.ok(checkResult) {
+    print("check ok")
+  } else {
+    eprint(process.stderr(checkResult))
+    return process.code(checkResult)
+  }
+
+  let compileResult = process.run(certo, ["src/lume.cto", "-o", "dist/lume.exe"])
+  if process.ok(compileResult) {} else {
+    eprint(process.stderr(compileResult))
+    return process.code(compileResult)
+  }
+
+  let apiResult = process.run("dist/lume.exe", ["api"])
+  if process.ok(apiResult) {} else {
+    eprint(process.stderr(apiResult))
+    return process.code(apiResult)
+  }
+
+  if fs.write_text("ai/lume-api.json", process.stdout(apiResult)) {
+    print("wrote dist/lume.exe")
+    return 0
+  } else {
+    eprint("failed to write ai/lume-api.json")
+    return 1
+  }
+}
