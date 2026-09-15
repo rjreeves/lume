@@ -1,0 +1,13 @@
+type Money {
+  cents: int
+}
+
+impl Ord for Money {
+  fn compare(a: Money) -> int {
+    return a.cents
+  }
+}
+
+fn main(args: [str]) -> int {
+  return 0
+}

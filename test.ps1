@@ -170,6 +170,10 @@ $eqImpl = & $Lume run (Join-Path $PSScriptRoot 'examples\eq_impl.lume')
 if ($LASTEXITCODE -ne 0) { throw "eq impl exited $LASTEXITCODE" }
 Assert-Equal 'explicit Eq implementation' "0`nhome`nfalse" ($eqImpl -join "`n")
 
+$ordImplRun = & $Lume run (Join-Path $PSScriptRoot 'examples\ord_impl.lume')
+if ($LASTEXITCODE -ne 0) { throw "ord impl exited $LASTEXITCODE" }
+Assert-Equal 'explicit Ord implementation' "true`ntrue`nfalse`nfalse`n250`n100" ($ordImplRun -join "`n")
+
 $closures = & $Lume run (Join-Path $PSScriptRoot 'examples\closures.lume')
 if ($LASTEXITCODE -ne 0) { throw "closures exited $LASTEXITCODE" }
 Assert-Equal 'closures and function values' "12`n14`n2`n11" ($closures -join "`n")
@@ -733,8 +737,16 @@ if ($LASTEXITCODE -ne 1) { throw "map key eligibility validation should exit 1" 
 Assert-Equal 'map key not eligible' 'E0697 line 6: map key type must be int, str, bool, or a type with `impl Eq for <Type> {}`' ($mapKeyNotEligible -join "`n")
 
 $ordImpl = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_ord_impl.lume') 2>&1
-if ($LASTEXITCODE -ne 1) { throw "Ord impl validation should exit 1" }
-Assert-Equal 'Ord impl still rejected' 'E0258 line 6: unknown protocol `Ord` in implementation' ($ordImpl -join "`n")
+if ($LASTEXITCODE -ne 1) { throw "Ord impl missing method validation should exit 1" }
+Assert-Equal 'Ord impl missing method validation' 'E0262 line 6: implementation of `Ord` for `Point` is missing method `compare`' ($ordImpl -join "`n")
+
+$ordImplSignature = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_ord_impl_signature.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "Ord impl signature validation should exit 1" }
+Assert-Equal 'Ord impl signature validation' 'E0263 line 5: method `Money.compare` does not match protocol signature' ($ordImplSignature -join "`n")
+
+$orderedComparison = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_ordered_comparison.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "ordered comparison validation should exit 1" }
+Assert-Equal 'ordered comparison validation' 'E0615 line 9: ordered comparison requires int or a type with `impl Ord for <Type> {}`' ($orderedComparison -join "`n")
 
 $mapValueTypeMismatch = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_map_value_type_mismatch.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "map value type mismatch validation should exit 1" }

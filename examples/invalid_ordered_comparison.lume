@@ -1,0 +1,11 @@
+type Point {
+  x: int
+  y: int
+}
+
+fn main(args: [str]) -> int {
+  let a = Point(x: 1, y: 2)
+  let b = Point(x: 3, y: 4)
+  print(a < b)
+  return 0
+}

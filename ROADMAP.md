@@ -395,11 +395,32 @@ non-trivial benchmark in this file has met its own bar.**
   "Non-goals for the core language" below). This required no new
   validation: `==`/`!=` already compare any two values of the same
   declared type structurally, so the `impl` just lets the *constraint
-  system* recognize what the operator already allowed. `Ord` stays
-  restricted to `int`/`str` — `impl Ord for ...` is deliberately not
-  accepted, since ordered comparison's runtime implementation only
-  handles `int` today and would silently misbehave (not cleanly error)
-  on any other type if the constraint let it through.
+  system* recognize what the operator already allowed. `Ord` is now
+  extensible too, via `impl Ord for MyType { fn compare(a: MyType, b:
+  MyType) -> int { ... } }` — unlike `Eq`, ordered comparison has no
+  structural fallback, so `Ord` graduated from a hardcoded marker to a
+  synthetic real protocol (seeded into the same `protocolNames`/
+  `protocolSchemas`/`protocol_type` machinery every user-declared
+  protocol already gets), requiring a genuine three-way `compare`
+  method (negative/zero/positive, the `strcmp` convention) rather than
+  an empty marker body. `<`/`<=`/`>`/`>=` on a value with an `Ord` impl
+  dispatch to that method at runtime the same way `T.method()` protocol
+  dispatch already does (`findFunction` + a `callPure` call — always
+  through the pure interpreter regardless of caller, since a comparison
+  should not have IO side effects). `==`/`!=` needed no changes, exactly
+  like `Eq`. **A pre-existing, separate gap found while building this,
+  deliberately not fixed here**: a bare `T`-typed value inside *any*
+  generic function's own body cannot use `+`/`-`/`<`/etc. at all,
+  regardless of its constraint (`T: Ord`, `T: Number`, ...) — confirmed
+  for both, with plain `int` arguments, unaffected by which type
+  actually gets passed at the call site: type-checking a generic body
+  compares against the literal symbolic name `"T"`, which never equals
+  a concrete type. Only protocol *method* calls (`T.methodName(...)`,
+  via `generic_call`) work on a generic parameter today; a bare
+  operator does not. This makes `Number`/`Ord` constraints useful today
+  only for gating what concrete types a generic function's *callers*
+  may pass in, not for using the corresponding operators *inside* the
+  generic body itself — a real, separate limitation worth its own item.
 
 ### Collections
 
@@ -552,9 +573,10 @@ foundation — is next.
   "Shipped in the bootstrap" above);
 - ~~define equality support through constraints, extending `Map<K, V>`'s
   key type beyond `int`/`str`/`bool`~~ — shipped for `Eq` via explicit
-  `impl Eq for MyType {}` (see "Shipped in the bootstrap" above); `Ord`
-  for compound types remains deferred pending a real per-type comparison
-  implementation, not just a marker-based opt-in;
+  `impl Eq for MyType {}` (see "Shipped in the bootstrap" above);
+  ~~`Ord` for compound types~~ — shipped too, via a real per-type
+  `impl Ord for MyType { fn compare(a, b) -> int { ... } }` (see
+  "Shipped in the bootstrap" above);
 - keep collection operations deterministic and easy for AI to select.
 
 ### 2. Packages and dependency resolution
