@@ -1,0 +1,8 @@
+enum 1 {
+  on
+  off
+}
+
+fn main(args: [str]) -> int {
+  return 0
+}

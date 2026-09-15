@@ -460,6 +460,22 @@ $recordUpdateNoFields = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid
 if ($LASTEXITCODE -ne 1) { throw "record update no fields validation should exit 1" }
 Assert-Equal 'record update no fields validation' 'E0121 line 8: record update requires at least one field' ($recordUpdateNoFields -join "`n")
 
+$recordName = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_record_name.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "record name validation should exit 1" }
+Assert-Equal 'record name validation' 'E0230 line 1: expected record name' ($recordName -join "`n")
+
+$recordUnterminated = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_record_unterminated.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "record unterminated validation should exit 1" }
+Assert-Equal 'record unterminated validation' 'E0236 line 4: unterminated record `User`' ($recordUnterminated -join "`n")
+
+$enumName = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_enum_name.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "enum name validation should exit 1" }
+Assert-Equal 'enum name validation' 'E0240 line 1: expected enum name' ($enumName -join "`n")
+
+$enumUnterminated = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_enum_unterminated.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "enum unterminated validation should exit 1" }
+Assert-Equal 'enum unterminated validation' 'E0248 line 5: unterminated enum `State`' ($enumUnterminated -join "`n")
+
 $assignmentType = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_assignment_type.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "assignment type validation should exit 1" }
 Assert-Equal 'assignment type validation' 'E0611 line 3: cannot assign str to int' ($assignmentType -join "`n")

@@ -275,13 +275,15 @@ false.**
   its own function despite the informal name) are done too; `E0120`
   ("unterminated record update") needed no extra fix, since it doesn't
   go through `blockEnd` and PR #58 had already removed the shared
-  crash risk. Still open: the remaining ~21-26 scattered codes across
-  `scanRecords`, `scanEnums`, and the statement/declaration parser body
-  — no single choke point exists for any of them (unlike fixes 3/4/6
-  above), so each remaining site needs its own line captured and
-  verified individually — large enough (many call sites, spread across
-  ~7 functions) to warrant further, smaller passes rather than one large
-  change.
+  crash risk. `scanRecords`/`scanEnums` turned out to be mostly already
+  done by an earlier, unrelated pass — only 4 codes were still bare
+  (`E0230`/`E0236` in `scanRecords`, `E0240`/`E0248` in `scanEnums`); all
+  four now fixed, same pattern, no crash risk (neither "unterminated"
+  loop goes through `blockEnd` or has an unconditional trailing call).
+  Still open: the remaining ~17-22 scattered codes in the
+  statement/declaration parser body — no single choke point exists for
+  them (unlike fixes 3/4/6 above), so each remaining site needs its own
+  line captured and verified individually.
 - ~~Keep the complete smoke, test-runner, LSP, benchmark, and AI suites
   green~~ — the benchmark suite's crash is fixed (see BENCHMARKS.md's
   "Fixing `lume benchmark`'s out-of-memory crash" section): the in-process

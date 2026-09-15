@@ -1404,7 +1404,7 @@ fn scanRecords(tokens: List<Token>): RecordScan = {
         val declarationName = recordName.text ++ (if Text.eq(parameters, "") then "" else "<" ++ parameters ++ ">")
         var braceIndex = index + 2
         while not Text.eq(at(tokens, braceIndex).text, "{") and not Text.eq(at(tokens, braceIndex).kind, "eof") { braceIndex = braceIndex + 1 }
-        if not Text.eq(recordName.kind, "name") then { problem = "E0230 expected record name" }
+        if not Text.eq(recordName.kind, "name") then { problem = "E0230 line " ++ intToText(recordName.line) ++ ": expected record name" }
         else if containsGenericName(names, recordName.text) then { problem = "E0231 line " ++ intToText(recordName.line) ++ ": duplicate record `" ++ recordName.text ++ "`" }
         else if not Text.eq(at(tokens, braceIndex).text, "{") then { problem = "E0232 line " ++ intToText(recordName.line) ++ ": expected `{` after record name" }
         else {
@@ -1425,7 +1425,7 @@ fn scanRecords(tokens: List<Token>): RecordScan = {
               index = skipNewlines(tokens, index)
             }
           }
-          if Text.eq(problem, "") and Text.eq(at(tokens, index).kind, "eof") then { problem = "E0236 unterminated record `" ++ recordName.text ++ "`" }
+          if Text.eq(problem, "") and Text.eq(at(tokens, index).kind, "eof") then { problem = "E0236 line " ++ intToText(at(tokens, index).line) ++ ": unterminated record `" ++ recordName.text ++ "`" }
           else if Text.eq(problem, "") then {
             names = List.push(names, declarationName)
             schemas = List.push(schemas, Text.join(fields, ";"))
@@ -1459,7 +1459,7 @@ fn scanEnums(tokens: List<Token>): EnumScan = {
         val declarationName = enumName.text ++ (if Text.eq(parameters, "") then "" else "<" ++ parameters ++ ">")
         var braceIndex = index + 2
         while not Text.eq(at(tokens, braceIndex).text, "{") and not Text.eq(at(tokens, braceIndex).kind, "eof") { braceIndex = braceIndex + 1 }
-        if not Text.eq(enumName.kind, "name") then { problem = "E0240 expected enum name" }
+        if not Text.eq(enumName.kind, "name") then { problem = "E0240 line " ++ intToText(enumName.line) ++ ": expected enum name" }
         else if containsGenericName(names, enumName.text) or Text.eq(enumName.text, "Option") or Text.eq(enumName.text, "Result") then { problem = "E0241 line " ++ intToText(enumName.line) ++ ": duplicate enum `" ++ enumName.text ++ "`" }
         else if not Text.eq(at(tokens, braceIndex).text, "{") then { problem = "E0242 line " ++ intToText(enumName.line) ++ ": expected `{` after enum name" }
         else {
@@ -1498,7 +1498,7 @@ fn scanEnums(tokens: List<Token>): EnumScan = {
               }
             }
           }
-          if Text.eq(problem, "") and Text.eq(at(tokens, index).kind, "eof") then { problem = "E0248 unterminated enum `" ++ enumName.text ++ "`" }
+          if Text.eq(problem, "") and Text.eq(at(tokens, index).kind, "eof") then { problem = "E0248 line " ++ intToText(at(tokens, index).line) ++ ": unterminated enum `" ++ enumName.text ++ "`" }
           else if Text.eq(problem, "") then {
             names = List.push(names, declarationName)
             schemas = List.push(schemas, Text.join(variants, ";"))
