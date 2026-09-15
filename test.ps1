@@ -74,6 +74,22 @@ $jsonEncodeEnum = & $Lume run (Join-Path $PSScriptRoot 'examples\json_encode_enu
 if ($LASTEXITCODE -ne 0) { throw "json encode enum exited $LASTEXITCODE" }
 Assert-Equal 'json encode enum' "true`n{`"variant`":`"waiting`"}`ntrue`n{`"variant`":`"done`",`"code`":7}`ntrue`n{`"variant`":`"Some`",`"value`":1}`ntrue`n{`"variant`":`"None`"}" ($jsonEncodeEnum -join "`n")
 
+$jsonDecodeEnum = & $Lume run (Join-Path $PSScriptRoot 'examples\json_decode_enum.lume')
+if ($LASTEXITCODE -ne 0) { throw "json decode enum exited $LASTEXITCODE" }
+Assert-Equal 'json decode enum' "0`n7`n7" ($jsonDecodeEnum -join "`n")
+
+$jsonDecodeEnumVariant = & $Lume run (Join-Path $PSScriptRoot 'examples\invalid_json_decode_enum_variant.lume')
+if ($LASTEXITCODE -ne 0) { throw "json decode enum unknown variant exited $LASTEXITCODE" }
+Assert-Equal 'json decode enum unknown variant' 'State has unknown variant `unknown` of `State`' ($jsonDecodeEnumVariant -join "`n")
+
+$jsonDecodeEnumField = & $Lume run (Join-Path $PSScriptRoot 'examples\invalid_json_decode_enum_field.lume')
+if ($LASTEXITCODE -ne 0) { throw "json decode enum missing field exited $LASTEXITCODE" }
+Assert-Equal 'json decode enum missing field' 'State is missing field `code`' ($jsonDecodeEnumField -join "`n")
+
+$jsonDecodeEnumShape = & $Lume run (Join-Path $PSScriptRoot 'examples\invalid_json_decode_enum_shape.lume')
+if ($LASTEXITCODE -ne 0) { throw "json decode enum wrong shape exited $LASTEXITCODE" }
+Assert-Equal 'json decode enum wrong shape' 'State must be State' ($jsonDecodeEnumShape -join "`n")
+
 $pathFunctions = & $Lume run (Join-Path $PSScriptRoot 'examples\path_functions.lume')
 if ($LASTEXITCODE -ne 0) { throw "path functions exited $LASTEXITCODE" }
 Assert-Equal 'path functions' "reports/2026`nsummary.csv`nreports/2026`nsummary`ncsv`nnone" ($pathFunctions -join "`n")

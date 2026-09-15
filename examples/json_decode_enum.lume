@@ -1,0 +1,24 @@
+enum State {
+  waiting
+  done(code: int)
+}
+
+fn code(state: State) -> int {
+  return match state {
+    waiting => 0
+    done(value) => value
+  }
+}
+
+fn main(args: [str]) -> int {
+  let waiting = result.value(State.from_json("{\"variant\":\"waiting\"}"))
+  print(code(waiting))
+
+  let finished = result.value(State.from_json("{\"variant\":\"done\",\"code\":7}"))
+  print(code(finished))
+
+  let encoded = result.value(json.encode(finished))
+  let roundTripped = result.value(State.from_json(encoded))
+  print(code(roundTripped))
+  return 0
+}

@@ -3312,7 +3312,8 @@ fn verifyTypes(code: List<Instruction>): Text = {
           stack = inputType.stack
           if not Text.eq(inputType.value, "str") then { problem = "E0638 line " ++ intToText(item.line) ++ ": `" ++ item.text ++ ".from_json` requires str, got " ++ inputType.value }
           else if let Some(schema) = findRecordSchema(code, item.text) { stack = List.push(stack, "result<" ++ item.text ++ ",str>") }
-          else { problem = "E0639 line " ++ intToText(item.line) ++ ": unknown record `" ++ item.text ++ "`" }
+          else if let Some(schema) = findEnumSchema(code, item.text) { stack = List.push(stack, "result<" ++ item.text ++ ",str>") }
+          else { problem = "E0639 line " ++ intToText(item.line) ++ ": unknown type `" ++ item.text ++ "`" }
         }
       } else if Text.eq(item.op, "neg") then {
         val valueType = pop(stack)
@@ -3735,6 +3736,32 @@ fn decodeJsonValue(code: List<Instruction>, json: JsonValue, expected: Text, pat
         fieldIndex = fieldIndex + 1
       }
       DecodeValue { value: if Text.eq(problem, "") then "o:" ++ Json.stringify(root) else "", problem: problem }
+    }
+  } else if let Some(enumSchema) = findEnumSchema(code, expected) {
+    if not JsonValue.isObject(json) then { DecodeValue { value: "", problem: path ++ " must be " ++ expected } }
+    else {
+      val variantName = JsonValue.asText(JsonValue.get(json, "variant"))
+      if let Some(payload) = variantPayloadSchema(enumSchema, variantName) {
+        val fields = if Text.eq(payload, "") then [] else Text.split(payload, ",")
+        val root = Json.object()
+        JsonValue.set(root, "$enum", Json.string(expected))
+        JsonValue.set(root, "$variant", Json.string(variantName))
+        var problem = ""
+        var fieldIndex = 0
+        while fieldIndex < List.len(fields) and Text.eq(problem, "") {
+          val field = List.getOrPanic(fields, fieldIndex)
+          val fieldName = schemaFieldName(field)
+          val fieldJson = JsonValue.get(json, fieldName)
+          if JsonValue.isNull(fieldJson) then { problem = path ++ " is missing field `" ++ fieldName ++ "`" }
+          else {
+            val decoded = decodeJsonValue(code, fieldJson, schemaFieldType(field), path ++ "." ++ fieldName)
+            if not Text.eq(decoded.problem, "") then { problem = decoded.problem }
+            else { JsonValue.set(root, fieldName, Json.string(decoded.value)) }
+          }
+          fieldIndex = fieldIndex + 1
+        }
+        DecodeValue { value: if Text.eq(problem, "") then "v:" ++ Json.stringify(root) else "", problem: problem }
+      } else { DecodeValue { value: "", problem: path ++ " has unknown variant `" ++ variantName ++ "` of `" ++ expected ++ "`" } }
     }
   } else { DecodeValue { value: "", problem: path ++ " has unsupported type `" ++ expected ++ "`" } }
 }
