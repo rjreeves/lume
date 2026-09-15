@@ -438,7 +438,7 @@ Assert-Equal 'match unterminated validation' 'E0113 line 11: unterminated match 
 
 $blockUnterminated = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_block_unterminated.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "unterminated block validation should exit 1" }
-Assert-Equal 'unterminated block validation' 'E0202 unterminated block' ($blockUnterminated -join "`n")
+Assert-Equal 'unterminated block validation' 'E0202 line 4: unterminated block' ($blockUnterminated -join "`n")
 
 $recordUpdateMissingBrace = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_record_update_missing_brace.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "record update missing brace validation should exit 1" }
@@ -475,6 +475,58 @@ Assert-Equal 'enum name validation' 'E0240 line 1: expected enum name' ($enumNam
 $enumUnterminated = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_enum_unterminated.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "enum unterminated validation should exit 1" }
 Assert-Equal 'enum unterminated validation' 'E0248 line 5: unterminated enum `State`' ($enumUnterminated -join "`n")
+
+$bindingName = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_binding_name.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "binding name validation should exit 1" }
+Assert-Equal 'binding name validation' 'E0203 line 2: expected binding name' ($bindingName -join "`n")
+
+$bindingEquals = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_binding_equals.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "binding equals validation should exit 1" }
+Assert-Equal 'binding equals validation' 'E0204 line 2: expected `=`' ($bindingEquals -join "`n")
+
+$printMissingParen = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_print_missing_paren.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "print missing paren validation should exit 1" }
+Assert-Equal 'print missing paren validation' 'E0205 line 2: expected `(`' ($printMissingParen -join "`n")
+
+$printMissingCloseParen = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_print_missing_close_paren.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "print missing close paren validation should exit 1" }
+Assert-Equal 'print missing close paren validation' 'E0206 line 2: expected `)`' ($printMissingCloseParen -join "`n")
+
+$unsupportedStatement = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_unsupported_statement.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "unsupported statement validation should exit 1" }
+Assert-Equal 'unsupported statement validation' 'E0207 line 2: unsupported statement `123`' ($unsupportedStatement -join "`n")
+
+$ifMissingBrace = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_if_missing_brace.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "if missing brace validation should exit 1" }
+Assert-Equal 'if missing brace validation' 'E0212 line 2: expected `{` after if condition' ($ifMissingBrace -join "`n")
+
+$elseMissingBrace = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_else_missing_brace.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "else missing brace validation should exit 1" }
+Assert-Equal 'else missing brace validation' 'E0213 line 4: expected `{` after else' ($elseMissingBrace -join "`n")
+
+$whileMissingBrace = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_while_missing_brace.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "while missing brace validation should exit 1" }
+Assert-Equal 'while missing brace validation' 'E0214 line 2: expected `{` after while condition' ($whileMissingBrace -join "`n")
+
+$functionName = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_function_name.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "function name validation should exit 1" }
+Assert-Equal 'function name validation' 'E0221 line 1: expected function name' ($functionName -join "`n")
+
+$implMethodNoBody = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_impl_method_no_body.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "impl method no body validation should exit 1" }
+Assert-Equal 'impl method no body validation' 'E0223 line 4: function `Widget.describe` has no body' ($implMethodNoBody -join "`n")
+
+$functionNoBody = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_function_no_body.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "function no body validation should exit 1" }
+Assert-Equal 'function no body validation' 'E0223 line 3: function `broken` has no body' ($functionNoBody -join "`n")
+
+$testNoBody = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_test_no_body.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "test no body validation should exit 1" }
+Assert-Equal 'test no body validation' 'E0225 line 3: test `sample` has no body' ($testNoBody -join "`n")
+
+$protocolName = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_protocol_name.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "protocol name validation should exit 1" }
+Assert-Equal 'protocol name validation' 'E0250 line 1: expected protocol name' ($protocolName -join "`n")
 
 $assignmentType = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_assignment_type.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "assignment type validation should exit 1" }

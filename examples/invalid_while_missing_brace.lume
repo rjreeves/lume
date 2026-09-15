@@ -1,0 +1,5 @@
+fn main(args: [str]) -> int {
+  while true
+    return 1
+  return 0
+}

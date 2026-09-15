@@ -200,9 +200,10 @@ false.**
   about *compile-time cost*, not the presence of this feature, and it no
   longer holds in either direction after this file's own performance fixes
   — see the "protocol-scan fix" section.)
-- *Stabilize diagnostics and bytecode serialization* — partially assessed,
-  seven issues found and fixed, one more (partially sliced) scoped for
-  later. Fixed: (1)
+- *Stabilize diagnostics and bytecode serialization* — assessed and
+  fixed: eight issues found and fixed, the last (the scattered
+  parser-level line-number cluster) landed across six PRs (#53, #57-#60,
+  and this one). Fixed: (1)
   `execute()`'s bytecode-dispatch loop had no catch-all for an
   unrecognized opcode — a structurally-valid but semantically-stale
   `.lbc` artifact (e.g. built by an incompatible `lume.exe`) silently
@@ -280,10 +281,16 @@ false.**
   (`E0230`/`E0236` in `scanRecords`, `E0240`/`E0248` in `scanEnums`); all
   four now fixed, same pattern, no crash risk (neither "unterminated"
   loop goes through `blockEnd` or has an unconditional trailing call).
-  Still open: the remaining ~17-22 scattered codes in the
-  statement/declaration parser body — no single choke point exists for
-  them (unlike fixes 3/4/6 above), so each remaining site needs its own
-  line captured and verified individually.
+  **The scattered cluster's last slice — the statement/declaration
+  parser body — is now done too**: `compileBlock`'s nine bare codes
+  (`E0202`-`E0207`, `E0212`-`E0214`) and `scanFunctions`' five remaining
+  declaration-level codes (`E0221`, `E0223` at both its call sites,
+  `E0225`, `E0250`) all now carry real line numbers, same pattern, no
+  crash risk. `E0201` ("missing `fn main`") was deliberately left bare —
+  it's a whole-program absence check with no natural source token to
+  anchor a line to, the same category as the bytecode-artifact codes
+  (`E0401`-`E0405`). Every parser-level diagnostic that has a meaningful
+  source position now reports one.
 - ~~Keep the complete smoke, test-runner, LSP, benchmark, and AI suites
   green~~ — the benchmark suite's crash is fixed (see BENCHMARKS.md's
   "Fixing `lume benchmark`'s out-of-memory crash" section): the in-process

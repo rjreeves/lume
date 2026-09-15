@@ -1,0 +1,4 @@
+fn main(args: [str]) -> int {
+  print(1 2)
+  return 0
+}
