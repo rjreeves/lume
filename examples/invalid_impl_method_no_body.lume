@@ -1,0 +1,2 @@
+impl Show for Widget {
+  fn describe(self: Widget): str

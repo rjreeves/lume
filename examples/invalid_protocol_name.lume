@@ -1,0 +1,7 @@
+protocol 1 {
+  fn describe(self: Widget): str
+}
+
+fn main(args: [str]) -> int {
+  return 0
+}

@@ -1059,14 +1059,14 @@ fn compileBlock(tokens: List<Token>, start: Int, initialNames: List<Text>, initi
       index = index + 1
       finished = true
     } else if Text.eq(current.kind, "eof") then {
-      problem = "E0202 unterminated block"
+      problem = "E0202 line " ++ intToText(current.line) ++ ": unterminated block"
     } else if Text.eq(current.kind, "error") then {
       problem = current.text
     } else if Text.eq(current.text, "let") or Text.eq(current.text, "var") then {
       val name = at(tokens, index + 1)
       val equals = at(tokens, index + 2)
-      if not Text.eq(name.kind, "name") then { problem = "E0203 expected binding name" }
-      else if not Text.eq(equals.text, "=") then { problem = "E0204 expected `=`" }
+      if not Text.eq(name.kind, "name") then { problem = "E0203 line " ++ intToText(name.line) ++ ": expected binding name" }
+      else if not Text.eq(equals.text, "=") then { problem = "E0204 line " ++ intToText(equals.line) ++ ": expected `=`" }
       else if bucketsContains(nameBuckets, name.text) then { problem = "E0211 line " ++ intToText(name.line) ++ ": duplicate binding `" ++ name.text ++ "`" }
       else {
         val value = parseComparison(tokens, index + 3)
@@ -1087,11 +1087,11 @@ fn compileBlock(tokens: List<Token>, start: Int, initialNames: List<Text>, initi
         }
       }
     } else if Text.eq(current.text, "print") or Text.eq(current.text, "eprint") then {
-      if not Text.eq(at(tokens, index + 1).text, "(") then { problem = "E0205 expected `(`" }
+      if not Text.eq(at(tokens, index + 1).text, "(") then { problem = "E0205 line " ++ intToText(at(tokens, index + 1).line) ++ ": expected `(`" }
       else {
         val value = parseComparison(tokens, index + 2)
         if not Text.eq(value.problem, "") then { problem = value.problem }
-        else if not Text.eq(at(tokens, value.next).text, ")") then { problem = "E0206 expected `)`" }
+        else if not Text.eq(at(tokens, value.next).text, ")") then { problem = "E0206 line " ++ intToText(at(tokens, value.next).line) ++ ": expected `)`" }
         else {
           val expressionProblem = validateExpression(value.code, nameBuckets, mutableBuckets, functionNames, functionCounts, genericNames)
           if not Text.eq(expressionProblem, "") then { problem = expressionProblem }
@@ -1118,14 +1118,14 @@ fn compileBlock(tokens: List<Token>, start: Int, initialNames: List<Text>, initi
       val expressionProblem = validateExpression(condition.code, nameBuckets, mutableBuckets, functionNames, functionCounts, genericNames)
       if not Text.eq(condition.problem, "") then { problem = condition.problem }
       else if not Text.eq(expressionProblem, "") then { problem = expressionProblem }
-      else if not Text.eq(at(tokens, condition.next).text, "{") then { problem = "E0212 expected `{` after if condition" }
+      else if not Text.eq(at(tokens, condition.next).text, "{") then { problem = "E0212 line " ++ intToText(at(tokens, condition.next).line) ++ ": expected `{` after if condition" }
       else {
         val thenBlock = compileBlock(tokens, condition.next + 1, names, mutables, functionNames, functionCounts, genericNames)
         if not Text.eq(thenBlock.problem, "") then { problem = thenBlock.problem }
         else {
           val afterThen = skipNewlines(tokens, thenBlock.next)
           if Text.eq(at(tokens, afterThen).text, "else") then {
-            if not Text.eq(at(tokens, afterThen + 1).text, "{") then { problem = "E0213 expected `{` after else" }
+            if not Text.eq(at(tokens, afterThen + 1).text, "{") then { problem = "E0213 line " ++ intToText(at(tokens, afterThen + 1).line) ++ ": expected `{` after else" }
             else {
               val elseBlock = compileBlock(tokens, afterThen + 2, names, mutables, functionNames, functionCounts, genericNames)
               if not Text.eq(elseBlock.problem, "") then { problem = elseBlock.problem }
@@ -1151,7 +1151,7 @@ fn compileBlock(tokens: List<Token>, start: Int, initialNames: List<Text>, initi
       val expressionProblem = validateExpression(condition.code, nameBuckets, mutableBuckets, functionNames, functionCounts, genericNames)
       if not Text.eq(condition.problem, "") then { problem = condition.problem }
       else if not Text.eq(expressionProblem, "") then { problem = expressionProblem }
-      else if not Text.eq(at(tokens, condition.next).text, "{") then { problem = "E0214 expected `{` after while condition" }
+      else if not Text.eq(at(tokens, condition.next).text, "{") then { problem = "E0214 line " ++ intToText(at(tokens, condition.next).line) ++ ": expected `{` after while condition" }
       else {
         val body = compileBlock(tokens, condition.next + 1, names, mutables, functionNames, functionCounts, genericNames)
         if not Text.eq(body.problem, "") then { problem = body.problem }
@@ -1188,7 +1188,7 @@ fn compileBlock(tokens: List<Token>, start: Int, initialNames: List<Text>, initi
         }
       }
     } else {
-      problem = "E0207 unsupported statement `" ++ current.text ++ "`"
+      problem = "E0207 line " ++ intToText(current.line) ++ ": unsupported statement `" ++ current.text ++ "`"
     }
   }
   BlockResult { next: index, code: code, problem: problem, names: names, mutables: mutables }
@@ -1535,7 +1535,7 @@ fn scanFunctions(tokens: List<Token>): FunctionScan = {
         val protocolName = at(tokens, index + 1)
         var brace = index + 2
         while not Text.eq(at(tokens, brace).text, "{") and not Text.eq(at(tokens, brace).kind, "eof") { brace = brace + 1 }
-        if not Text.eq(protocolName.kind, "name") then { problem = "E0250 expected protocol name" }
+        if not Text.eq(protocolName.kind, "name") then { problem = "E0250 line " ++ intToText(protocolName.line) ++ ": expected protocol name" }
         else if containsName(protocolNames, protocolName.text) then { problem = "E0251 line " ++ intToText(protocolName.line) ++ ": duplicate protocol `" ++ protocolName.text ++ "`" }
         else if not Text.eq(at(tokens, brace).text, "{") then { problem = "E0252 line " ++ intToText(protocolName.line) ++ ": expected `{` after protocol name" }
         else {
@@ -1584,7 +1584,7 @@ fn scanFunctions(tokens: List<Token>): FunctionScan = {
             else {
               var methodBrace = cursor + 2
               while not Text.eq(at(tokens, methodBrace).text, "{") and not Text.eq(at(tokens, methodBrace).kind, "eof") { methodBrace = methodBrace + 1 }
-              if Text.eq(at(tokens, methodBrace).kind, "eof") then { problem = "E0223 function `" ++ staticName ++ "` has no body" }
+              if Text.eq(at(tokens, methodBrace).kind, "eof") then { problem = "E0223 line " ++ intToText(at(tokens, methodBrace).line) ++ ": function `" ++ staticName ++ "` has no body" }
               else {
                 names = List.push(names, staticName)
                 counts = List.push(counts, List.len(parameterNames(tokens, methodHeader)))
@@ -1616,7 +1616,7 @@ fn scanFunctions(tokens: List<Token>): FunctionScan = {
           }
           if Text.eq(problem, "") then {
             while not Text.eq(at(tokens, index).text, "{") and not Text.eq(at(tokens, index).kind, "eof") { index = index + 1 }
-            if Text.eq(at(tokens, index).kind, "eof") then { problem = "E0225 test `" ++ label.text ++ "` has no body" }
+            if Text.eq(at(tokens, index).kind, "eof") then { problem = "E0225 line " ++ intToText(at(tokens, index).line) ++ ": test `" ++ label.text ++ "` has no body" }
             else {
               names = List.push(names, "__test_" ++ intToText(List.len(names)))
               counts = List.push(counts, 0)
@@ -1632,13 +1632,13 @@ fn scanFunctions(tokens: List<Token>): FunctionScan = {
       else {
         val header = index
         val name = at(tokens, index + 1)
-        if not Text.eq(name.kind, "name") then { problem = "E0221 expected function name" }
+        if not Text.eq(name.kind, "name") then { problem = "E0221 line " ++ intToText(name.line) ++ ": expected function name" }
         else if containsName(names, name.text) then { problem = "E0222 line " ++ intToText(name.line) ++ ": duplicate function `" ++ name.text ++ "`" }
         else {
           while not Text.eq(at(tokens, index).text, "(") and not Text.eq(at(tokens, index).kind, "eof") { index = index + 1 }
           val parameters = parameterNames(tokens, header)
           while not Text.eq(at(tokens, index).text, "{") and not Text.eq(at(tokens, index).kind, "eof") { index = index + 1 }
-          if Text.eq(at(tokens, index).kind, "eof") then { problem = "E0223 function `" ++ name.text ++ "` has no body" }
+          if Text.eq(at(tokens, index).kind, "eof") then { problem = "E0223 line " ++ intToText(at(tokens, index).line) ++ ": function `" ++ name.text ++ "` has no body" }
           else {
             val body = index + 1
             names = List.push(names, name.text)
