@@ -1,0 +1,4 @@
+fn main(args: [str]) -> int {
+  let f = fn(x: int y: int) -> int => x
+  return 0
+}

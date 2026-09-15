@@ -380,6 +380,34 @@ $missingCallComma = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_cal
 if ($LASTEXITCODE -ne 1) { throw "missing call comma validation should exit 1" }
 Assert-Equal 'missing comma in argument list validation' 'E0103 line 6: expected `,` or `)` in argument list' ($missingCallComma -join "`n")
 
+$closureMissingParen = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_closure_missing_paren.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "closure missing paren validation should exit 1" }
+Assert-Equal 'closure missing paren validation' 'E0122 line 2: expected `(` after `fn`' ($closureMissingParen -join "`n")
+
+$closureParamName = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_closure_param_name.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "closure param name validation should exit 1" }
+Assert-Equal 'closure param name validation' 'E0123 line 2: expected closure parameter name' ($closureParamName -join "`n")
+
+$closureDuplicateParam = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_closure_duplicate_param.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "closure duplicate param validation should exit 1" }
+Assert-Equal 'closure duplicate param validation' 'E0124 line 2: duplicate closure parameter `x`' ($closureDuplicateParam -join "`n")
+
+$closureMissingColon = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_closure_missing_colon.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "closure missing colon validation should exit 1" }
+Assert-Equal 'closure missing colon validation' 'E0125 line 2: expected `:` after closure parameter' ($closureMissingColon -join "`n")
+
+$closureMissingComma = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_closure_missing_comma.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "closure missing comma validation should exit 1" }
+Assert-Equal 'closure missing comma validation' 'E0126 line 2: expected `,` or `)` in closure parameters' ($closureMissingComma -join "`n")
+
+$closureMissingReturnType = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_closure_missing_return_type.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "closure missing return type validation should exit 1" }
+Assert-Equal 'closure missing return type validation' 'E0127 line 2: closure requires a return type' ($closureMissingReturnType -join "`n")
+
+$closureMissingArrow = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_closure_missing_arrow.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "closure missing arrow validation should exit 1" }
+Assert-Equal 'closure missing arrow validation' 'E0128 line 2: expected `=>` before closure body' ($closureMissingArrow -join "`n")
+
 $assignmentType = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_assignment_type.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "assignment type validation should exit 1" }
 Assert-Equal 'assignment type validation' 'E0611 line 3: cannot assign str to int' ($assignmentType -join "`n")
