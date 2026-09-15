@@ -432,6 +432,14 @@ $matchNoArms = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_match_no
 if ($LASTEXITCODE -ne 1) { throw "match no arms validation should exit 1" }
 Assert-Equal 'match no arms validation' 'E0114 line 8: match expression requires at least one arm' ($matchNoArms -join "`n")
 
+$matchUnterminated = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_match_unterminated.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "match unterminated validation should exit 1" }
+Assert-Equal 'match unterminated validation' 'E0113 line 11: unterminated match expression' ($matchUnterminated -join "`n")
+
+$blockUnterminated = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_block_unterminated.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "unterminated block validation should exit 1" }
+Assert-Equal 'unterminated block validation' 'E0202 unterminated block' ($blockUnterminated -join "`n")
+
 $assignmentType = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_assignment_type.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "assignment type validation should exit 1" }
 Assert-Equal 'assignment type validation' 'E0611 line 3: cannot assign str to int' ($assignmentType -join "`n")

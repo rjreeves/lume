@@ -1197,7 +1197,7 @@ fn compileBlock(tokens: List<Token>, start: Int, initialNames: List<Text>, initi
 fn blockEnd(tokens: List<Token>, body: Int): Int = {
   var index = body
   var depth = 1
-  while index < List.len(tokens) and depth > 0 {
+  while index < List.len(tokens) and depth > 0 and not Text.eq(at(tokens, index).kind, "eof") {
     if Text.eq(at(tokens, index).text, "{") then { depth = depth + 1 }
     else if Text.eq(at(tokens, index).text, "}") then { depth = depth - 1 }
     index = index + 1
