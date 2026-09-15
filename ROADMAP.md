@@ -594,7 +594,11 @@ into every compilation.
 
 - recursively discover test files with explicit ignore rules — deferred:
   blocked on the same missing `isDirectory`/`stat` primitive as `dir.list`'s
-  own recursive traversal (see "4. Standard scripting APIs" below);
+  own recursive traversal (see "4. Standard scripting APIs" below); filed
+  upstream as Certo BACKLOG item 329, which also confirmed the underlying
+  `stat`/`S_ISDIR` mechanism already exists internally in Certo's C
+  runtime (used by its own recursive-delete helper), just isn't exposed
+  as a callable builtin — likely a small, bounded fix once picked up;
 - ~~provide temporary-directory and environment fixtures~~ — shipped as
   `fixture.temp_dir()`/`fixture.cleanup(path)` and `env.set`/`env.unset`
   (see "Shipped in the bootstrap" above); no automatic cleanup, matching
@@ -640,7 +644,8 @@ into every compilation.
   from a file without an indirect, extra-syscall `listDir`-probing
   workaround, and no inode-based cycle detection is possible without one
   either, so "controlled" (a real depth or cycle bound) needs more design
-  than a thin wrapper;
+  than a thin wrapper; same upstream blocker as recursive test discovery
+  above, filed as Certo BACKLOG item 329;
 - ~~typed time and duration values~~ — partially shipped: `time.now() ->
   int` (Unix epoch seconds), `time.to_iso(seconds) -> str` (fixed UTC
   ISO-8601), `time.year`/`month`/`day`/`hour`/`minute`/
@@ -664,7 +669,8 @@ into every compilation.
   working-directory-aware process call (`Process.spawnDetached`) is
   fire-and-forget with no output capture, and no timeout/cancellation
   primitive exists anywhere in Certo's process stdlib, so both need new
-  C-level work in Certo itself, not just a Lume-side wrapper;
+  C-level work in Certo itself, not just a Lume-side wrapper; filed as
+  Certo BACKLOG item 330;
 - ~~HTTP requests with typed results and bounded response handling~~ —
   partially shipped: `http.get`/`http.post`/`http.put`/`http.delete`/
   `http.request` (arbitrary methods and headers via `Map<str,str>`),
@@ -675,7 +681,8 @@ into every compilation.
   NUL-safe `Bytes` type would need a change to Lume's runtime value
   representation, out of scope for now. True request-time (rather than
   post-download) response bounding remains deferred — it needs a
-  streaming primitive that doesn't exist in Certo yet;
+  streaming primitive that doesn't exist in Certo yet; filed as Certo
+  BACKLOG item 331;
 - ~~JSON encoding to complement typed decoding~~ — shipped as
   `json.encode(value) -> Result<str, str>` (see "Shipped in the
   bootstrap" above); supports the same shapes decoding does
