@@ -172,7 +172,11 @@ Assert-Equal 'explicit Eq implementation' "0`nhome`nfalse" ($eqImpl -join "`n")
 
 $ordImplRun = & $Lume run (Join-Path $PSScriptRoot 'examples\ord_impl.lume')
 if ($LASTEXITCODE -ne 0) { throw "ord impl exited $LASTEXITCODE" }
-Assert-Equal 'explicit Ord implementation' "true`ntrue`nfalse`nfalse`n250`n100" ($ordImplRun -join "`n")
+Assert-Equal 'explicit Ord implementation' "true`ntrue`nfalse`nfalse`n250`n100`n250" ($ordImplRun -join "`n")
+
+$genericOperators = & $Lume run (Join-Path $PSScriptRoot 'examples\generic_operators.lume')
+if ($LASTEXITCODE -ne 0) { throw "generic operators exited $LASTEXITCODE" }
+Assert-Equal 'generic operators on a constrained type parameter' "5`nfoobar`n2" ($genericOperators -join "`n")
 
 $closures = & $Lume run (Join-Path $PSScriptRoot 'examples\closures.lume')
 if ($LASTEXITCODE -ne 0) { throw "closures exited $LASTEXITCODE" }
@@ -663,6 +667,10 @@ Assert-Equal 'generic substitution validation' 'E0609 line 6: argument type mism
 $genericConstraint = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_generic_constraint.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "generic constraint validation should exit 1" }
 Assert-Equal 'generic constraint validation' 'E0680 line 6: type `str` does not satisfy `Number` for `T` calling `requires_number`' ($genericConstraint -join "`n")
+
+$genericOperatorConstraint = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_generic_operator.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "generic operator constraint validation should exit 1" }
+Assert-Equal 'generic operator constraint validation' 'E0613 line 2: incompatible operand types T and T' ($genericOperatorConstraint -join "`n")
 
 $genericConstraintName = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_generic_constraint_name.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "unknown generic constraint should exit 1" }

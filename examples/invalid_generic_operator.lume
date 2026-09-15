@@ -1,0 +1,8 @@
+fn addPair<T: Eq>(a: T, b: T) -> T {
+  return a + b
+}
+
+fn main(args: [str]) -> int {
+  print(addPair(1, 2))
+  return 0
+}

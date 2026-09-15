@@ -408,19 +408,27 @@ non-trivial benchmark in this file has met its own bar.**
   dispatch already does (`findFunction` + a `callPure` call — always
   through the pure interpreter regardless of caller, since a comparison
   should not have IO side effects). `==`/`!=` needed no changes, exactly
-  like `Eq`. **A pre-existing, separate gap found while building this,
-  deliberately not fixed here**: a bare `T`-typed value inside *any*
-  generic function's own body cannot use `+`/`-`/`<`/etc. at all,
-  regardless of its constraint (`T: Ord`, `T: Number`, ...) — confirmed
-  for both, with plain `int` arguments, unaffected by which type
-  actually gets passed at the call site: type-checking a generic body
-  compares against the literal symbolic name `"T"`, which never equals
-  a concrete type. Only protocol *method* calls (`T.methodName(...)`,
-  via `generic_call`) work on a generic parameter today; a bare
-  operator does not. This makes `Number`/`Ord` constraints useful today
-  only for gating what concrete types a generic function's *callers*
-  may pass in, not for using the corresponding operators *inside* the
-  generic body itself — a real, separate limitation worth its own item.
+  like `Eq` — they already worked for a bare, even *unconstrained*,
+  generic `T`, since that check only ever required both operand types
+  to match, never a specific type. A bare `T`-typed value inside a
+  generic function's own body can now also use `+`/`-`/`*`/`/`/`%`/
+  `<`/`<=`/`>`/`>=` when `T` carries the matching constraint (`Number`
+  for arithmetic, plus `Text` for `+` specifically mirroring the
+  existing `str + str` case; `Ord` for ordered comparison) — found
+  broken while building `Ord` above (confirmed for both `T: Ord` and
+  `T: Number`, with plain `int` arguments, so it was unrelated to which
+  concrete type a caller passed in: type-checking a generic body
+  compared against the literal symbolic name `"T"`, which never equalled
+  a concrete type). Fixed with **no runtime changes at all** — both
+  `binary()` and `compare()`/`dispatchCompare()` already dispatch purely
+  on the runtime value's own tag, never the static type label
+  `verifyTypes` used, so the fix is entirely in `verifyTypes`: recognize
+  `T` as the *current* function's own generic parameter (via the
+  already-tracked `currentGenericConstraints`) and check its declared
+  constraint instead of demanding a concrete type. A plain unconstrained
+  `T` (or one constrained only by `Eq`/`Ord` when attempting arithmetic)
+  still correctly fails — the checks are relaxed for the matching
+  constraint, not removed.
 
 ### Collections
 
