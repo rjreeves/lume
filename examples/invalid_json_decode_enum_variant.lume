@@ -1,0 +1,10 @@
+enum State {
+  waiting
+  done(code: int)
+}
+
+fn main(args: [str]) -> int {
+  let decoded = State.from_json("{\"variant\":\"unknown\"}")
+  print(result.error(decoded))
+  return 0
+}

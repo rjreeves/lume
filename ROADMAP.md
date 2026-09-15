@@ -736,7 +736,15 @@ into every compilation.
   `json.encode(value) -> Result<str, str>` (see "Shipped in the
   bootstrap" above); supports the same shapes decoding does
   (`str`/`int`/`bool`/records/lists, recursively), plus enum values
-  (`Option<T>`/`Result<T,E>` included), which decoding still doesn't.
+  (`Option<T>`/`Result<T,E>` included). ~~Typed JSON decoding into enum
+  values~~ — shipped too: `EnumName.from_json(text)` decodes the same
+  `{"variant": "Name", ...fields}` shape `json.encode` already produces,
+  reusing every schema helper `encodeJsonTree`/`bindVariantPayload`
+  already established (`findEnumSchema`, `variantPayloadSchema`) —
+  purely a new branch in the existing `decodeJsonValue`, no parser,
+  runtime-instruction, or type-checker restructuring beyond widening
+  the `.from_json` dispatch's own type-name check to accept an enum
+  name alongside a record name.
 
 Each API should keep the `noun.verb` naming convention and return explicit
 `Option` or `Result` values rather than throwing exceptions.
