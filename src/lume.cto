@@ -476,12 +476,12 @@ fn parseMatch(tokens: List<Token>, start: Int): ExprResult = {
   var index = subject.next
   var names: List<Text> = []
   var arms: List<List<Instruction>> = []
-  if Text.eq(problem, "") and not Text.eq(at(tokens, index).text, "{") then { problem = "E0110 expected `{` after match value" }
+  if Text.eq(problem, "") and not Text.eq(at(tokens, index).text, "{") then { problem = "E0110 line " ++ intToText(at(tokens, index).line) ++ ": expected `{` after match value" }
   else if Text.eq(problem, "") then {
     index = skipNewlines(tokens, index + 1)
     while not Text.eq(at(tokens, index).text, "}") and not Text.eq(at(tokens, index).kind, "eof") and Text.eq(problem, "") {
       val variant = at(tokens, index)
-      if not Text.eq(variant.kind, "name") then { problem = "E0111 expected variant name in match arm" }
+      if not Text.eq(variant.kind, "name") then { problem = "E0111 line " ++ intToText(variant.line) ++ ": expected variant name in match arm" }
       else {
         var patternIndex = index + 1
         var bindings: List<Text> = []
@@ -491,18 +491,18 @@ fn parseMatch(tokens: List<Token>, start: Int): ExprResult = {
           patternIndex = patternIndex + 1
           while not Text.eq(at(tokens, patternIndex).text, ")") and Text.eq(bindingProblem, "") {
             val binding = at(tokens, patternIndex)
-            if not Text.eq(binding.kind, "name") then { bindingProblem = "E0115 expected payload binding name" }
+            if not Text.eq(binding.kind, "name") then { bindingProblem = "E0115 line " ++ intToText(binding.line) ++ ": expected payload binding name" }
             else {
               bindings = List.push(bindings, binding.text)
               patternIndex = patternIndex + 1
               if Text.eq(at(tokens, patternIndex).text, ",") then { patternIndex = patternIndex + 1 }
-              else if not Text.eq(at(tokens, patternIndex).text, ")") then { bindingProblem = "E0116 expected `,` or `)` in variant pattern" }
+              else if not Text.eq(at(tokens, patternIndex).text, ")") then { bindingProblem = "E0116 line " ++ intToText(at(tokens, patternIndex).line) ++ ": expected `,` or `)` in variant pattern" }
             }
           }
           if Text.eq(bindingProblem, "") then { patternIndex = patternIndex + 1 }
         }
         if not Text.eq(bindingProblem, "") then { problem = bindingProblem }
-        else if not Text.eq(at(tokens, patternIndex).text, "=>") then { problem = "E0112 expected `=>` after match variant" }
+        else if not Text.eq(at(tokens, patternIndex).text, "=>") then { problem = "E0112 line " ++ intToText(at(tokens, patternIndex).line) ++ ": expected `=>` after match variant" }
         val arm = parseComparison(tokens, patternIndex + 1)
         if not Text.eq(arm.problem, "") then { problem = arm.problem }
         else if Text.eq(problem, "") then {
@@ -513,8 +513,8 @@ fn parseMatch(tokens: List<Token>, start: Int): ExprResult = {
         }
       }
     }
-    if Text.eq(problem, "") and Text.eq(at(tokens, index).kind, "eof") then { problem = "E0113 unterminated match expression" }
-    else if Text.eq(problem, "") and List.len(names) == 0 then { problem = "E0114 match expression requires at least one arm" }
+    if Text.eq(problem, "") and Text.eq(at(tokens, index).kind, "eof") then { problem = "E0113 line " ++ intToText(at(tokens, index).line) ++ ": unterminated match expression" }
+    else if Text.eq(problem, "") and List.len(names) == 0 then { problem = "E0114 line " ++ intToText(at(tokens, index).line) ++ ": match expression requires at least one arm" }
   }
   var code = subject.code
   if Text.eq(problem, "") then {
@@ -1197,7 +1197,7 @@ fn compileBlock(tokens: List<Token>, start: Int, initialNames: List<Text>, initi
 fn blockEnd(tokens: List<Token>, body: Int): Int = {
   var index = body
   var depth = 1
-  while index < List.len(tokens) and depth > 0 {
+  while index < List.len(tokens) and depth > 0 and not Text.eq(at(tokens, index).kind, "eof") {
     if Text.eq(at(tokens, index).text, "{") then { depth = depth + 1 }
     else if Text.eq(at(tokens, index).text, "}") then { depth = depth - 1 }
     index = index + 1

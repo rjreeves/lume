@@ -251,17 +251,32 @@ false.**
   passed static checking by the time it would reach this path — so no
   existing test exercised this path at all; a new test now does, via the
   same byte-patching technique fix (1)'s test already established. (7)
-  the first two slices of the genuinely scattered parser-level cluster are
-  now done — `parseCallArguments`' three codes (`E0103`, `E0105`, `E0106`)
-  and `parseLambda`'s seven codes (`E0122`-`E0128`) — all now carry real
-  line numbers; every site already had the right token in scope, needing
-  no restructuring. Still open: the remaining ~33-38 scattered codes
-  across `parseMatch`, `parseRecordUpdate`, `scanRecords`, `scanEnums`,
-  and the statement/declaration parser body — no single choke point
-  exists for any of them (unlike fixes 3/4/6 above), so each remaining
-  site needs its own line captured and verified individually — large
-  enough (many call sites, spread across ~9 functions) to warrant
-  further, smaller passes rather than one large change.
+  the first three slices of the genuinely scattered parser-level cluster
+  are now done — `parseCallArguments`' three codes (`E0103`, `E0105`,
+  `E0106`), `parseLambda`'s seven codes (`E0122`-`E0128`), and all seven
+  of `parseMatch`'s codes (`E0110`-`E0116`) — all now carry real line
+  numbers; every site already had the right token in scope, needing no
+  restructuring. `parseMatch`'s `E0113` ("unterminated match expression")
+  needed one further fix first: any unterminated top-level function body
+  (`match`-related or not) crashed the compiler outright (`certo panic:
+  list index out of bounds`) rather than ever reaching a diagnostic,
+  because `blockEnd` (src/lume.cto, the brace-depth scanner `scanFunctions`
+  uses to find where each function/impl/type/test body ends) only
+  guarded its scan on `index < List.len(tokens)`, not on the lexer's own
+  EOF token — so an unclosed block scanned straight past EOF into
+  genuinely out-of-bounds territory, and `scanFunctions`' next `at()`
+  call (via `at`'s unchecked `List.getOrPanic`) panicked before
+  `compileBlock`'s existing `E0202 unterminated block` check or
+  `parseMatch`'s own `E0113` check ever ran. Fixed by also stopping
+  `blockEnd`'s scan at the EOF token; both now report cleanly
+  (`invalid_match_unterminated.lume`, `invalid_block_unterminated.lume`).
+  Still open: the remaining ~26-31 scattered codes across
+  `parseRecordUpdate`, `scanRecords`, `scanEnums`, and the
+  statement/declaration parser body — no single choke point exists for
+  any of them (unlike fixes 3/4/6 above), so each remaining site needs
+  its own line captured and verified individually — large enough (many
+  call sites, spread across ~8 functions) to warrant further, smaller
+  passes rather than one large change.
 - ~~Keep the complete smoke, test-runner, LSP, benchmark, and AI suites
   green~~ — the benchmark suite's crash is fixed (see BENCHMARKS.md's
   "Fixing `lume benchmark`'s out-of-memory crash" section): the in-process
