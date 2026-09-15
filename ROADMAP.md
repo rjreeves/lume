@@ -270,13 +270,18 @@ false.**
   `parseMatch`'s own `E0113` check ever ran. Fixed by also stopping
   `blockEnd`'s scan at the EOF token; both now report cleanly
   (`invalid_match_unterminated.lume`, `invalid_block_unterminated.lume`).
-  Still open: the remaining ~26-31 scattered codes across
-  `parseRecordUpdate`, `scanRecords`, `scanEnums`, and the
-  statement/declaration parser body — no single choke point exists for
-  any of them (unlike fixes 3/4/6 above), so each remaining site needs
-  its own line captured and verified individually — large enough (many
-  call sites, spread across ~8 functions) to warrant further, smaller
-  passes rather than one large change.
+  The record-update syntax's five codes (`E0117`-`E0121`, the `value with
+  { field: expr }` update expression — inline inside `parsePrimary`, not
+  its own function despite the informal name) are done too; `E0120`
+  ("unterminated record update") needed no extra fix, since it doesn't
+  go through `blockEnd` and PR #58 had already removed the shared
+  crash risk. Still open: the remaining ~21-26 scattered codes across
+  `scanRecords`, `scanEnums`, and the statement/declaration parser body
+  — no single choke point exists for any of them (unlike fixes 3/4/6
+  above), so each remaining site needs its own line captured and
+  verified individually — large enough (many call sites, spread across
+  ~7 functions) to warrant further, smaller passes rather than one large
+  change.
 - ~~Keep the complete smoke, test-runner, LSP, benchmark, and AI suites
   green~~ — the benchmark suite's crash is fixed (see BENCHMARKS.md's
   "Fixing `lume benchmark`'s out-of-memory crash" section): the in-process

@@ -606,13 +606,13 @@ fn parsePrimary(tokens: List<Token>, index: Int): ExprResult = {
     var problem = ""
     var labels: List<Text> = []
     var updates: List<Instruction> = result.code
-    if not Text.eq(at(tokens, cursor).text, "{") then { problem = "E0117 expected `{` after `with`" }
+    if not Text.eq(at(tokens, cursor).text, "{") then { problem = "E0117 line " ++ intToText(at(tokens, cursor).line) ++ ": expected `{` after `with`" }
     else {
       cursor = skipNewlines(tokens, cursor + 1)
       while not Text.eq(at(tokens, cursor).text, "}") and not Text.eq(at(tokens, cursor).kind, "eof") and Text.eq(problem, "") {
         val field = at(tokens, cursor)
-        if not Text.eq(field.kind, "name") then { problem = "E0118 expected field name in record update" }
-        else if not Text.eq(at(tokens, cursor + 1).text, ":") then { problem = "E0119 expected `:` after updated field" }
+        if not Text.eq(field.kind, "name") then { problem = "E0118 line " ++ intToText(field.line) ++ ": expected field name in record update" }
+        else if not Text.eq(at(tokens, cursor + 1).text, ":") then { problem = "E0119 line " ++ intToText(at(tokens, cursor + 1).line) ++ ": expected `:` after updated field" }
         else {
           val value = parseComparison(tokens, cursor + 2)
           if not Text.eq(value.problem, "") then { problem = value.problem }
@@ -624,8 +624,8 @@ fn parsePrimary(tokens: List<Token>, index: Int): ExprResult = {
           }
         }
       }
-      if Text.eq(problem, "") and Text.eq(at(tokens, cursor).kind, "eof") then { problem = "E0120 unterminated record update" }
-      else if Text.eq(problem, "") and List.len(labels) == 0 then { problem = "E0121 record update requires at least one field" }
+      if Text.eq(problem, "") and Text.eq(at(tokens, cursor).kind, "eof") then { problem = "E0120 line " ++ intToText(at(tokens, cursor).line) ++ ": unterminated record update" }
+      else if Text.eq(problem, "") and List.len(labels) == 0 then { problem = "E0121 line " ++ intToText(at(tokens, cursor).line) ++ ": record update requires at least one field" }
     }
     if Text.eq(problem, "") then {
       result = ExprResult { next: cursor + 1, code: List.push(updates, makeInstruction("update_record", Text.join(labels, ","), List.len(labels), withToken.line)), problem: "" }
