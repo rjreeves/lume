@@ -344,30 +344,30 @@ fn parseLambda(tokens: List<Token>, start: Int): ExprResult = {
   var problem = ""
   var names: List<Text> = []
   var types: List<Text> = []
-  if not Text.eq(at(tokens, index).text, "(") then { problem = "E0122 expected `(` after `fn`" }
+  if not Text.eq(at(tokens, index).text, "(") then { problem = "E0122 line " ++ intToText(at(tokens, index).line) ++ ": expected `(` after `fn`" }
   else {
     index = index + 1
     while not Text.eq(at(tokens, index).text, ")") and Text.eq(problem, "") {
       val parameter = at(tokens, index)
-      if not Text.eq(parameter.kind, "name") then { problem = "E0123 expected closure parameter name" }
-      else if containsName(names, parameter.text) then { problem = "E0124 duplicate closure parameter `" ++ parameter.text ++ "`" }
-      else if not Text.eq(at(tokens, index + 1).text, ":") then { problem = "E0125 expected `:` after closure parameter" }
+      if not Text.eq(parameter.kind, "name") then { problem = "E0123 line " ++ intToText(parameter.line) ++ ": expected closure parameter name" }
+      else if containsName(names, parameter.text) then { problem = "E0124 line " ++ intToText(parameter.line) ++ ": duplicate closure parameter `" ++ parameter.text ++ "`" }
+      else if not Text.eq(at(tokens, index + 1).text, ":") then { problem = "E0125 line " ++ intToText(at(tokens, index).line) ++ ": expected `:` after closure parameter" }
       else {
         names = List.push(names, parameter.text)
         types = List.push(types, typeAt(tokens, index + 2))
         index = typeNext(tokens, index + 2)
         if Text.eq(at(tokens, index).text, ",") then { index = index + 1 }
-        else if not Text.eq(at(tokens, index).text, ")") then { problem = "E0126 expected `,` or `)` in closure parameters" }
+        else if not Text.eq(at(tokens, index).text, ")") then { problem = "E0126 line " ++ intToText(at(tokens, index).line) ++ ": expected `,` or `)` in closure parameters" }
       }
     }
     if Text.eq(problem, "") then { index = index + 1 }
   }
-  if Text.eq(problem, "") and not Text.eq(at(tokens, index).text, "->") then { problem = "E0127 closure requires a return type" }
+  if Text.eq(problem, "") and not Text.eq(at(tokens, index).text, "->") then { problem = "E0127 line " ++ intToText(at(tokens, index).line) ++ ": closure requires a return type" }
   var returnType = "unknown"
   if Text.eq(problem, "") then {
     returnType = typeAt(tokens, index + 1)
     index = typeNext(tokens, index + 1)
-    if not Text.eq(at(tokens, index).text, "=>") then { problem = "E0128 expected `=>` before closure body" }
+    if not Text.eq(at(tokens, index).text, "=>") then { problem = "E0128 line " ++ intToText(at(tokens, index).line) ++ ": expected `=>` before closure body" }
   }
   if not Text.eq(problem, "") then { expressionError(index, problem) }
   else {
