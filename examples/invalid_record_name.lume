@@ -1,0 +1,7 @@
+type 1 {
+  name: str
+}
+
+fn main(args: [str]) -> int {
+  return 0
+}
