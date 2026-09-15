@@ -1659,6 +1659,18 @@ fn compile(tokens: List<Token>): CompileResult = {
   val records = scanRecords(tokens)
   val enums = scanEnums(tokens)
   val functions = scanFunctions(tokens)
+  // Ord is a synthetic protocol - unlike Eq (a pure marker, since == /
+  // != already compare any matching type structurally), ordered
+  // comparison has no structural fallback, so extending Ord to a
+  // compound type genuinely needs a user-supplied `compare(a, b): int`
+  // method. Appending it here (rather than a hardcoded escape hatch
+  // like Eq's own `not Text.eq(protocolName, "Eq")` at E0258 below)
+  // means `impl Ord for MyType { fn compare(...) }` flows through the
+  // exact same protocol-impl validation (E0262/E0263/E0264) and
+  // protocol_type/protocolBuckets machinery every user protocol already
+  // gets, for free.
+  val protocolNames = List.push(functions.protocolNames, "Ord")
+  val protocolSchemas = List.push(functions.protocolSchemas, "compare=Self,Self@int")
   val allNames = List.concat(functions.names, builtinNames())
   val allCounts = List.concat(functions.counts, builtinCounts())
   var code: List<Instruction> = [
@@ -1667,8 +1679,8 @@ fn compile(tokens: List<Token>): CompileResult = {
   ]
   var problem = if not Text.eq(records.problem, "") then records.problem else if not Text.eq(enums.problem, "") then enums.problem else functions.problem
   var protocolIndex = 0
-  while protocolIndex < List.len(functions.protocolNames) {
-    code = List.pushMut(code, makeInstruction("protocol_type", List.getOrPanic(functions.protocolNames, protocolIndex) ++ "|" ++ List.getOrPanic(functions.protocolSchemas, protocolIndex), 0, 0))
+  while protocolIndex < List.len(protocolNames) {
+    code = List.pushMut(code, makeInstruction("protocol_type", List.getOrPanic(protocolNames, protocolIndex) ++ "|" ++ List.getOrPanic(protocolSchemas, protocolIndex), 0, 0))
     protocolIndex = protocolIndex + 1
   }
   for implementation in functions.implementations {
@@ -1676,7 +1688,7 @@ fn compile(tokens: List<Token>): CompileResult = {
     val protocolName = List.getOrPanic(implementationParts, 0)
     val typeName = List.getOrPanic(implementationParts, 1)
     val implLine = if List.len(implementationParts) > 3 then (parseInt(List.getOrPanic(implementationParts, 3)) ?? 0) else 0
-    if Text.eq(problem, "") and not containsName(functions.protocolNames, protocolName) and not Text.eq(protocolName, "Eq") then { problem = "E0258 line " ++ intToText(implLine) ++ ": unknown protocol `" ++ protocolName ++ "` in implementation" }
+    if Text.eq(problem, "") and not containsName(protocolNames, protocolName) and not Text.eq(protocolName, "Eq") then { problem = "E0258 line " ++ intToText(implLine) ++ ": unknown protocol `" ++ protocolName ++ "` in implementation" }
     else if Text.eq(problem, "") and not Text.eq(typeName, "int") and not Text.eq(typeName, "str") and not Text.eq(typeName, "bool") and not containsGenericName(records.names, typeName) and not containsGenericName(enums.names, typeName) then { problem = "E0259 line " ++ intToText(implLine) ++ ": unknown type `" ++ typeName ++ "` in protocol implementation" }
     code = List.pushMut(code, makeInstruction("protocol_impl", implementation, 0, 0))
   }
@@ -1739,9 +1751,9 @@ fn compile(tokens: List<Token>): CompileResult = {
       val methodText = if List.len(implementationParts) > 2 then List.getOrPanic(implementationParts, 2) else ""
       val implLine = if List.len(implementationParts) > 3 then (parseInt(List.getOrPanic(implementationParts, 3)) ?? 0) else 0
       val methodNames = if Text.eq(methodText, "") then [] else Text.split(methodText, ",")
-      val protocolPosition = nameIndex(functions.protocolNames, protocolName)
+      val protocolPosition = nameIndex(protocolNames, protocolName)
       if protocolPosition >= 0 then {
-        val schema = List.getOrPanic(functions.protocolSchemas, protocolPosition)
+        val schema = List.getOrPanic(protocolSchemas, protocolPosition)
         val required = if Text.eq(schema, "") then [] else Text.split(schema, ";")
         for method in required {
           if Text.eq(problem, "") then {
@@ -1833,6 +1845,52 @@ fn compare(operator: Text, left: Text, right: Text): Text = {
   else if Text.eq(operator, "<=") then { boolValue(valueInt(left) <= valueInt(right)) }
   else if Text.eq(operator, ">") then { boolValue(valueInt(left) > valueInt(right)) }
   else { boolValue(valueInt(left) >= valueInt(right)) }
+}
+
+// Interprets an impl Ord for X's compare(a, b): int three-way result
+// (negative/zero/positive, the same convention as strcmp) against an
+// ordered-comparison operator, mirroring compare()'s own boolValue
+// return shape for the four ordered operators.
+fn orderResult(operator: Text, n: Int): Text = {
+  if Text.eq(operator, "<") then { boolValue(n < 0) }
+  else if Text.eq(operator, "<=") then { boolValue(n <= 0) }
+  else if Text.eq(operator, ">") then { boolValue(n > 0) }
+  else { boolValue(n >= 0) }
+}
+
+// True when compare()'s own <, <=, >, >= already handle this value
+// directly (int only - str/bool never reach an ordered comparison at
+// all, gated by E0615 at compile time unless a record/enum has an Ord
+// impl, which dispatchCompare below routes through instead of here).
+fn isOrderedByBuiltin(value: Text): Bool = Text.eq(valueKind(value), "i:")
+
+// Shared by both interpreter loops' "compare" instruction handling
+// (callPure and execute), the same way binary() is shared for
+// add/sub/mul/div/mod - avoids duplicating this dispatch twice.
+// == / != and int's own <, <=, >, >= go straight to compare() as
+// before; anything else reaching here is a record/enum value that
+// verifyTypes already proved has an impl Ord for X (E0615), so its
+// own compare(a, b): int is looked up and called exactly the way
+// generic_call's own runtime dispatch already does (findFunction +
+// callPure), then the three-way result is interpreted via
+// orderResult. Always runs the compare() method through the pure
+// interpreter regardless of which loop is dispatching - a comparison
+// should not have IO side effects, so this is a deliberate choice,
+// not a workaround for execute()'s own ip-jump calling convention
+// (which has no way to run a nested call and post-process its result
+// inline the way this needs to).
+fn dispatchCompare(code: List<Instruction>, operator: Text, left: Text, right: Text, line: Int, deadlineMs: Int, timeoutMs: Int): Result<Text, Text> = {
+  if Text.eq(operator, "==") or Text.eq(operator, "!=") or isOrderedByBuiltin(left) then { Ok(compare(operator, left, right)) }
+  else {
+    val concreteName = runtimeTypeName(left) ++ ".compare"
+    val target = findFunction(code, concreteName)
+    if target < 0 then { Err("E0726 line " ++ intToText(line) ++ ": no `Ord` implementation for `" ++ runtimeTypeName(left) ++ "`") }
+    else {
+      val called = callPure(code, "f:" ++ concreteName, [left, right], deadlineMs, timeoutMs)
+      if not Text.eq(called.problem, "") then { Err(called.problem) }
+      else { Ok(orderResult(operator, valueInt(called.value))) }
+    }
+  }
 }
 
 fn findBinding(bindings: Bindings, name: Text): Int = {
@@ -2135,7 +2193,7 @@ fn satisfiesGenericConstraint(protocolImplBuckets: List<List<Text>>, valueType: 
   if Text.eq(requirement, "Eq") then {
     Text.eq(valueType, "int") or Text.eq(valueType, "str") or Text.eq(valueType, "bool") or hasProtocolImplementation(protocolImplBuckets, "Eq", valueType)
   } else if Text.eq(requirement, "Ord") then {
-    Text.eq(valueType, "int") or Text.eq(valueType, "str")
+    Text.eq(valueType, "int") or Text.eq(valueType, "str") or hasProtocolImplementation(protocolImplBuckets, "Ord", valueType)
   } else if Text.eq(requirement, "Number") then {
     Text.eq(valueType, "int")
   } else if Text.eq(requirement, "Text") then {
@@ -3072,7 +3130,7 @@ fn verifyTypes(code: List<Instruction>): Text = {
         val left = pop(right.stack)
         stack = List.push(left.stack, "bool")
         if not Text.eq(left.value, right.value) then { problem = "E0614 line " ++ intToText(item.line) ++ ": comparison operands must have the same type" }
-        else if not Text.eq(item.text, "==") and not Text.eq(item.text, "!=") and not Text.eq(left.value, "int") then { problem = "E0615 line " ++ intToText(item.line) ++ ": ordered comparison requires int" }
+        else if not Text.eq(item.text, "==") and not Text.eq(item.text, "!=") and not Text.eq(left.value, "int") and not hasProtocolImplementation(protocolImplBuckets, "Ord", left.value) then { problem = "E0615 line " ++ intToText(item.line) ++ ": ordered comparison requires int or a type with `impl Ord for <Type> {}`" }
       } else if Text.eq(item.op, "return") then {
         val actual = pop(stack)
         stack = actual.stack
@@ -3897,7 +3955,8 @@ fn callPure(code: List<Instruction>, callable: Text, arguments: List<Text>, dead
     } else if Text.eq(current.op, "compare") then {
       val right = pop(stack)
       val left = pop(right.stack)
-      stack = List.push(left.stack, compare(current.text, left.value, right.value))
+      if let Ok(value) = dispatchCompare(code, current.text, left.value, right.value, current.line, deadlineMs, timeoutMs) { stack = List.push(left.stack, value) }
+      else if let Err(message) = dispatchCompare(code, current.text, left.value, right.value, current.line, deadlineMs, timeoutMs) { problem = message }
     } else if Text.eq(current.op, "get_field") then {
       val item = pop(stack)
       stack = item.stack
@@ -4673,7 +4732,8 @@ fn execute(code: List<Instruction>): RunResult [io] = {
     } else if Text.eq(current.op, "compare") then {
       val right = pop(stack)
       val left = pop(right.stack)
-      stack = List.push(left.stack, compare(current.text, left.value, right.value))
+      if let Ok(value) = dispatchCompare(code, current.text, left.value, right.value, current.line, 0, 0) { stack = List.push(left.stack, value) }
+      else if let Err(message) = dispatchCompare(code, current.text, left.value, right.value, current.line, 0, 0) { problem = message }
     } else if Text.eq(current.op, "jump_false") then {
       val item = pop(stack)
       stack = item.stack

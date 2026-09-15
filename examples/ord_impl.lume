@@ -1,0 +1,34 @@
+type Money {
+  cents: int
+}
+
+impl Ord for Money {
+  fn compare(a: Money, b: Money) -> int {
+    return a.cents - b.cents
+  }
+}
+
+fn biggest(a: Money, b: Money) -> Money {
+  if a < b {
+    return b
+  }
+  return a
+}
+
+fn keep_ord<T: Ord>(value: T) -> T {
+  return value
+}
+
+fn main(args: [str]) -> int {
+  let a = Money(cents: 100)
+  let b = Money(cents: 250)
+  print(a < b)
+  print(a <= b)
+  print(a > b)
+  print(a >= b)
+  let winner = biggest(a, b)
+  print(winner.cents)
+  let kept = keep_ord(a)
+  print(kept.cents)
+  return 0
+}
