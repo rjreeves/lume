@@ -548,10 +548,18 @@ non-trivial benchmark in this file has met its own bar.**
   existed. No registry, no semver ranges, no content-hash caching yet
   — see "2. Packages and dependency resolution" below for what's still
   open and why;
-- formatter and format checking;
-- language-server support;
-- a machine-readable API manifest, compact AI generation contract, and fixed
-  AI evaluation tasks.
+- ~~formatter and format checking~~ — shipped as `lume fmt <file>
+  [--check]` (see "Shipped in the bootstrap" above's `--json` convention
+  note, which already assumes `fmt`'s existence);
+- language-server support — still genuinely open; no `lume lsp` or
+  equivalent exists for `.lume` files (Certo has its own `certo-lsp`,
+  but that's for `.cto` files, unrelated);
+- ~~a machine-readable API manifest, compact AI generation contract, and
+  fixed AI evaluation tasks~~ — shipped: `lume api`/`ai-reference`
+  generate the manifest (used by `build.ps1` to write
+  `ai/lume-api.json` on every build), and `ai/tasks.json` was expanded
+  to exactly 100 fixed tasks, closed per the "Status report" section
+  above (~line 158).
 
 ## Now: production scripting foundation
 
