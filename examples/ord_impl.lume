@@ -19,6 +19,13 @@ fn keep_ord<T: Ord>(value: T) -> T {
   return value
 }
 
+fn biggerGeneric<T: Ord>(a: T, b: T) -> T {
+  if a < b {
+    return b
+  }
+  return a
+}
+
 fn main(args: [str]) -> int {
   let a = Money(cents: 100)
   let b = Money(cents: 250)
@@ -30,5 +37,7 @@ fn main(args: [str]) -> int {
   print(winner.cents)
   let kept = keep_ord(a)
   print(kept.cents)
+  let generic_winner = biggerGeneric(a, b)
+  print(generic_winner.cents)
   return 0
 }

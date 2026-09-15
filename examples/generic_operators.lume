@@ -1,0 +1,21 @@
+fn addPair<T: Number>(a: T, b: T) -> T {
+  return a + b
+}
+
+fn concatPair<T: Text>(a: T, b: T) -> T {
+  return a + b
+}
+
+fn bigger<T: Ord>(a: T, b: T) -> T {
+  if a < b {
+    return b
+  }
+  return a
+}
+
+fn main(args: [str]) -> int {
+  print(addPair(2, 3))
+  print(concatPair("foo", "bar"))
+  print(bigger(1, 2))
+  return 0
+}

@@ -3124,13 +3124,14 @@ fn verifyTypes(code: List<Instruction>): Text = {
         stack = left.stack
         if Text.eq(item.op, "add") and Text.eq(left.value, "str") and Text.eq(right.value, "str") then { stack = List.push(stack, "str") }
         else if Text.eq(left.value, "int") and Text.eq(right.value, "int") then { stack = List.push(stack, "int") }
+        else if Text.eq(left.value, right.value) and (containsName(constraintNames(genericConstraintFor(currentGenericConstraints, left.value)), "Number") or (Text.eq(item.op, "add") and containsName(constraintNames(genericConstraintFor(currentGenericConstraints, left.value)), "Text"))) then { stack = List.push(stack, left.value) }
         else { problem = "E0613 line " ++ intToText(item.line) ++ ": incompatible operand types " ++ left.value ++ " and " ++ right.value }
       } else if Text.eq(item.op, "compare") then {
         val right = pop(stack)
         val left = pop(right.stack)
         stack = List.push(left.stack, "bool")
         if not Text.eq(left.value, right.value) then { problem = "E0614 line " ++ intToText(item.line) ++ ": comparison operands must have the same type" }
-        else if not Text.eq(item.text, "==") and not Text.eq(item.text, "!=") and not Text.eq(left.value, "int") and not hasProtocolImplementation(protocolImplBuckets, "Ord", left.value) then { problem = "E0615 line " ++ intToText(item.line) ++ ": ordered comparison requires int or a type with `impl Ord for <Type> {}`" }
+        else if not Text.eq(item.text, "==") and not Text.eq(item.text, "!=") and not Text.eq(left.value, "int") and not hasProtocolImplementation(protocolImplBuckets, "Ord", left.value) and not containsName(constraintNames(genericConstraintFor(currentGenericConstraints, left.value)), "Ord") then { problem = "E0615 line " ++ intToText(item.line) ++ ": ordered comparison requires int or a type with `impl Ord for <Type> {}`" }
       } else if Text.eq(item.op, "return") then {
         val actual = pop(stack)
         stack = actual.stack
