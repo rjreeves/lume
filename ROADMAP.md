@@ -561,7 +561,18 @@ non-trivial benchmark in this file has met its own bar.**
   note, which already assumes `fmt`'s existence);
 - language-server support — still genuinely open; no `lume lsp` or
   equivalent exists for `.lume` files (Certo has its own `certo-lsp`,
-  but that's for `.cto` files, unrelated);
+  but that's for `.cto` files, unrelated). Scoped and found to have a
+  hard blocker: LSP's stdio transport frames each message as
+  `Content-Length: N\r\n\r\n` followed by exactly `N` bytes of JSON, but
+  Certo's stdlib has no way to read an exact byte count from stdin —
+  only `readLine` (stops at `\n`) and `readAll` (blocks until EOF,
+  which never comes on a persistent LSP pipe) exist. Filed as Certo
+  BACKLOG item 332. A second, smaller gap for later: `lume.cto`'s own
+  compile pipeline only ever reports one error (a single `problem: Text`
+  field with first-error-short-circuit throughout, not a list), so a
+  real multi-diagnostic LSP would also need that refactored — an
+  MVP could ship reporting only the first error per file in the
+  meantime;
 - ~~a machine-readable API manifest, compact AI generation contract, and
   fixed AI evaluation tasks~~ — shipped: `lume api`/`ai-reference`
   generate the manifest (used by `build.ps1` to write
