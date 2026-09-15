@@ -1,0 +1,15 @@
+enum State {
+  ready
+  completed(code: int, extra: int)
+}
+
+fn value(state: State) -> int {
+  return match state {
+    ready => 0
+    completed(code extra more) => code
+  }
+}
+
+fn main(args: [str]) -> int {
+  return 0
+}
