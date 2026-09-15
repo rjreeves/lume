@@ -440,6 +440,26 @@ $blockUnterminated = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_bl
 if ($LASTEXITCODE -ne 1) { throw "unterminated block validation should exit 1" }
 Assert-Equal 'unterminated block validation' 'E0202 unterminated block' ($blockUnterminated -join "`n")
 
+$recordUpdateMissingBrace = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_record_update_missing_brace.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "record update missing brace validation should exit 1" }
+Assert-Equal 'record update missing brace validation' 'E0117 line 7: expected `{` after `with`' ($recordUpdateMissingBrace -join "`n")
+
+$recordUpdateFieldName = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_record_update_field_name.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "record update field name validation should exit 1" }
+Assert-Equal 'record update field name validation' 'E0118 line 8: expected field name in record update' ($recordUpdateFieldName -join "`n")
+
+$recordUpdateMissingColon = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_record_update_missing_colon.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "record update missing colon validation should exit 1" }
+Assert-Equal 'record update missing colon validation' 'E0119 line 8: expected `:` after updated field' ($recordUpdateMissingColon -join "`n")
+
+$recordUpdateUnterminated = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_record_update_unterminated.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "record update unterminated validation should exit 1" }
+Assert-Equal 'record update unterminated validation' 'E0120 line 10: unterminated record update' ($recordUpdateUnterminated -join "`n")
+
+$recordUpdateNoFields = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_record_update_no_fields.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "record update no fields validation should exit 1" }
+Assert-Equal 'record update no fields validation' 'E0121 line 8: record update requires at least one field' ($recordUpdateNoFields -join "`n")
+
 $assignmentType = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_assignment_type.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "assignment type validation should exit 1" }
 Assert-Equal 'assignment type validation' 'E0611 line 3: cannot assign str to int' ($assignmentType -join "`n")

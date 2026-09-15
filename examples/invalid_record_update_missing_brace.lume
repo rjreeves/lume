@@ -1,0 +1,10 @@
+type User {
+  name: str
+}
+
+fn main(args: [str]) -> int {
+  let base = User(name: "Ada")
+  let updated = base with
+    name: "Grace"
+  return 0
+}
