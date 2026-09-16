@@ -102,6 +102,19 @@ $invalidDirList = & $Lume run (Join-Path $PSScriptRoot 'examples\invalid_dir_lis
 if ($LASTEXITCODE -ne 0) { throw "invalid dir list exited $LASTEXITCODE" }
 Assert-Equal 'directory listing missing path' 'false' ($invalidDirList -join "`n")
 
+$dirWalk = & $Lume run (Join-Path $PSScriptRoot 'examples\dir_walk.lume')
+if ($LASTEXITCODE -ne 0) { throw "dir walk exited $LASTEXITCODE" }
+Assert-Equal 'recursive directory walk' "1`n2`n3" ($dirWalk -join "`n")
+
+$dirWalkMissing = & $Lume run (Join-Path $PSScriptRoot 'examples\invalid_dir_walk_missing.lume')
+if ($LASTEXITCODE -ne 0) { throw "dir walk missing path exited $LASTEXITCODE" }
+Assert-Equal 'dir walk missing path' 'cannot list directory `examples/does_not_exist_at_all`' ($dirWalkMissing -join "`n")
+
+$nestedSuite = & $Lume test (Join-Path $PSScriptRoot 'examples\native_suite_nested')
+if ($LASTEXITCODE -ne 0) { throw "recursive test discovery exited $LASTEXITCODE" }
+Assert-Contains 'recursive test discovery finds top-level test' 'PASS top level works' ($nestedSuite -join "`n")
+Assert-Contains 'recursive test discovery finds nested test' 'PASS nested works' ($nestedSuite -join "`n")
+
 $timeFunctions = & $Lume run (Join-Path $PSScriptRoot 'examples\time_functions.lume')
 if ($LASTEXITCODE -ne 0) { throw "time functions exited $LASTEXITCODE" }
 Assert-Equal 'time functions' "true`n1970-01-01T00:00:00Z`n2023-11-14T22:13:20Z" ($timeFunctions -join "`n")

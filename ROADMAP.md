@@ -641,13 +641,17 @@ into every compilation.
 
 ### 3. Stronger test tooling
 
-- recursively discover test files with explicit ignore rules — deferred:
-  blocked on the same missing `isDirectory`/`stat` primitive as `dir.list`'s
-  own recursive traversal (see "4. Standard scripting APIs" below); filed
-  upstream as Certo BACKLOG item 329, which also confirmed the underlying
-  `stat`/`S_ISDIR` mechanism already exists internally in Certo's C
-  runtime (used by its own recursive-delete helper), just isn't exposed
-  as a callable builtin — likely a small, bounded fix once picked up;
+- ~~recursively discover test files~~ with explicit ignore rules —
+  partially shipped: `lume test <dir>` now finds `*_test.lume` files in
+  subdirectories too, not just the given directory (a fixed internal
+  32-level depth bound, not user-configurable), once Certo shipped
+  `isDirectory` closing BACKLOG item 329 (which also confirmed the
+  underlying `stat`/`S_ISDIR` mechanism already existed internally in
+  Certo's C runtime, used by its own recursive-delete helper, just
+  wasn't exposed as a callable builtin) — verified directly against a
+  freshly built `certo.exe` before wiring it in. Explicit ignore rules
+  (e.g. skipping `node_modules`-style directories) remain unimplemented
+  — a real, smaller, separate gap, not blocked on anything upstream;
 - ~~provide temporary-directory and environment fixtures~~ — shipped as
   `fixture.temp_dir()`/`fixture.cleanup(path)` and `env.set`/`env.unset`
   (see "Shipped in the bootstrap" above); no automatic cleanup, matching
@@ -688,13 +692,16 @@ into every compilation.
 - ~~directory enumeration~~ — shipped as `dir.list(path) -> Result<[str],
   str>` (see "Shipped in the bootstrap" above), one level, unsorted,
   names only;
-- controlled recursive traversal — deferred: no `isDirectory`/`stat`
-  primitive exists anywhere in Certo's stdlib to tell a directory entry
-  from a file without an indirect, extra-syscall `listDir`-probing
-  workaround, and no inode-based cycle detection is possible without one
-  either, so "controlled" (a real depth or cycle bound) needs more design
-  than a thin wrapper; same upstream blocker as recursive test discovery
-  above, filed as Certo BACKLOG item 329;
+- ~~controlled recursive traversal~~ — shipped as `dir.walk(path,
+  maxDepth) -> result<[str],str>` (see "Shipped in the bootstrap"
+  above), same upstream unblock (Certo BACKLOG item 329) as recursive
+  test discovery above. A real depth bound, per this bullet's own
+  original "depth *or* cycle" wording — true inode-based cycle
+  detection would need a `stat` primitive beyond `isDirectory` (which
+  only classifies file-vs-directory, not inode identity), so a
+  symlink loop is still only bounded by `maxDepth`, not detected as a
+  cycle; explicitly out of scope, unchanged from this bullet's own
+  original assessment;
 - ~~typed time and duration values~~ — partially shipped: `time.now() ->
   int` (Unix epoch seconds), `time.to_iso(seconds) -> str` (fixed UTC
   ISO-8601), `time.year`/`month`/`day`/`hour`/`minute`/
