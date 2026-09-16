@@ -1,0 +1,5 @@
+fn main(args: [str]) -> int {
+  let walked = dir.walk("examples/does_not_exist_at_all", 5)
+  print(result.error(walked))
+  return 0
+}

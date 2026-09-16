@@ -1,0 +1,11 @@
+fn main(args: [str]) -> int {
+  let noRecursion = result.value(dir.walk("examples/dir_walk_fixture", 0))
+  print(list.len(noRecursion))
+
+  let oneLevel = result.value(dir.walk("examples/dir_walk_fixture", 1))
+  print(list.len(oneLevel))
+
+  let fullTree = result.value(dir.walk("examples/dir_walk_fixture", 10))
+  print(list.len(fullTree))
+  return 0
+}

@@ -906,7 +906,7 @@ fn builtinNames(): List<Text> = [
   "str.contains", "str.starts_with", "str.ends_with",
   "json.valid", "json.get", "json.encode",
   "path.join", "path.basename", "path.dirname", "path.extension", "path.stem",
-  "dir.list",
+  "dir.list", "dir.walk",
   "time.now", "time.to_iso", "time.year", "time.month", "time.day", "time.hour", "time.minute", "time.second", "time.format", "time.in_timezone", "time.format_in_timezone",
   "duration.seconds", "duration.minutes", "duration.hours", "duration.days",
   "http.get", "http.post", "http.put", "http.delete", "http.request", "http.request_bytes", "http.status", "http.body", "http.content_type", "http.ok", "http.body_bytes",
@@ -928,7 +928,7 @@ fn builtinCounts(): List<Int> = [
   2, 2, 2,
   1, 2, 1,
   2, 1, 1, 1, 1,
-  1,
+  1, 2,
   0, 1, 1, 1, 1, 1, 1, 1, 2, 2, 3,
   1, 1, 1, 1,
   1, 3, 3, 1, 4, 4, 1, 1, 1, 1, 1,
@@ -2627,6 +2627,12 @@ fn checkBuiltinTypes(code: List<Instruction>, name: Text, stackInput: List<Text>
     stack = valueType.stack
     if not Text.eq(valueType.value, "str") then { problem = "E0608 builtin `dir.list` requires str" }
     resultType = "result<list<str>,str>"
+  } else if Text.eq(name, "dir.walk") then {
+    val maxDepthType = pop(stack)
+    val pathType = pop(maxDepthType.stack)
+    stack = pathType.stack
+    if not Text.eq(pathType.value, "str") or not Text.eq(maxDepthType.value, "int") then { problem = "E0728 line " ++ intToText(line) ++ ": builtin `dir.walk` requires (str, int)" }
+    resultType = "result<list<str>,str>"
   } else if Text.eq(name, "time.now") then { resultType = "int" }
   else if Text.eq(name, "fixture.temp_dir") then { resultType = "str" }
   else if Text.eq(name, "time.to_iso") then {
@@ -4085,6 +4091,30 @@ fn callPure(code: List<Instruction>, callable: Text, arguments: List<Text>, dead
   DecodeValue { value: result, problem: problem }
 }
 
+// Recursively collects full paths of files (not directories - a
+// directory is recursed into via isDirectory, never added to the
+// result itself) under path, up to maxDepth levels of subdirectory
+// recursion. maxDepth 0 means no recursion at all - only path's own
+// files. A listDir failure partway through the walk (an unreadable
+// subdirectory) is silently skipped rather than aborting the whole
+// walk; the root path's own listDir failure is the caller's error to
+// report (see dir.walk/the recursive test-file discovery below, which
+// both check listDir(path) themselves before ever calling this).
+fn walkDir(path: Text, depth: Int, maxDepth: Int): List<Text> [io] = {
+  var results: List<Text> = []
+  if let Some(entries) = listDir(path) {
+    for entry in entries {
+      val fullPath = Path.join(path, entry)
+      if isDirectory(fullPath) then {
+        if depth < maxDepth then { results = List.concat(results, walkDir(fullPath, depth + 1, maxDepth)) }
+      } else {
+        results = List.push(results, fullPath)
+      }
+    }
+  }
+  results
+}
+
 fn callBuiltin(code: List<Instruction>, name: Text, input: List<Text>, deadlineMs: Int, timeoutMs: Int, line: Int): BuiltinResult [io] = {
   var stack = input
   var problem = ""
@@ -4430,6 +4460,21 @@ fn callBuiltin(code: List<Instruction>, name: Text, input: List<Text>, deadlineM
         result = resultOk(encodeList(tagged))
       } else { result = resultErr("cannot list directory `" ++ value ++ "`") }
     } else if let Err(message) = requireText(one.value, name) { problem = message }
+  } else if Text.eq(name, "dir.walk") then {
+    val maxDepthArg = pop(stack)
+    val pathArg = pop(maxDepthArg.stack)
+    stack = pathArg.stack
+    if not Text.eq(valueKind(pathArg.value), "s:") then { problem = "E0728 line " ++ intToText(line) ++ ": builtin `dir.walk` requires (str, int)" }
+    else if not Text.eq(valueKind(maxDepthArg.value), "i:") then { problem = "E0728 line " ++ intToText(line) ++ ": builtin `dir.walk` requires (str, int)" }
+    else {
+      val path = valueBody(pathArg.value)
+      if let Some(entries) = listDir(path) {
+        val files = walkDir(path, 0, valueInt(maxDepthArg.value))
+        var tagged: List<Text> = []
+        for file in files { tagged = List.push(tagged, textValue(file)) }
+        result = resultOk(encodeList(tagged))
+      } else { result = resultErr("cannot list directory `" ++ path ++ "`") }
+    }
   } else if Text.eq(name, "time.now") then {
     result = intValue(DateTime.toUnix(DateTime.now()))
   } else if Text.eq(name, "fixture.temp_dir") then {
@@ -5316,6 +5361,7 @@ fn aiReference(): Text = {
   "Encode with `json.encode(value)`, which returns `result<str,str>`; supports int/str/bool/lists/records recursively. An enum (including Option<T>/Result<T,E>) encodes as its variant name under a \"variant\" key, with any payload fields flattened alongside it - e.g. `State.done(code: 0)` becomes `{\"variant\":\"done\",\"code\":0}`. " ++
   "Path helpers: path.join/basename/dirname/stem(text) -> str, path.extension(text) -> Option<str>. " ++
   "List a directory with dir.list(path) -> result<[str],str>; entries are names only, unsorted. " ++
+  "Recursively walk a directory with dir.walk(path, maxDepth) -> result<[str],str>; unlike dir.list, entries are full paths and files only (a subdirectory is recursed into, never included in the result itself), unsorted; maxDepth 0 means no recursion (only path's own files), and an unreadable subdirectory partway through the walk is silently skipped rather than failing the whole call. lume test <dir> uses the same mechanism internally (a fixed 32-level bound, not user-configurable) to discover *_test.lume files in subdirectories, not just the given directory. " ++
   "time.now() -> int gives the current Unix epoch seconds; time.to_iso(seconds) -> str formats it as UTC ISO-8601. " ++
   "time.year/month/day/hour/minute/second(seconds) -> int read UTC calendar components from epoch seconds. " ++
   "time.format(seconds, pattern) -> str formats epoch seconds with a strftime-style pattern (e.g. \"%Y-%m-%d\"), evaluated against UTC. " ++
@@ -5435,10 +5481,12 @@ fn main(): Unit [io] = {
     } else {
       val filter = flagValue("--filter") ?? ""
       var files = 0
-      for entry in entries {
-        if Text.endsWith(entry, "_test.lume") then {
+      // 32 levels is a fixed, generous internal bound - not a --max-depth
+      // CLI flag, since none was requested; deep enough for any real
+      // project layout while still bounding a pathological/looping tree.
+      for testPath in walkDir(path, 0, 32) {
+        if Text.endsWith(testPath, "_test.lume") then {
           files = files + 1
-          val testPath = Path.join(path, entry)
           if testJson then { println(testFileJson(testPath)) } else { println("TEST " ++ testPath) }
           val program = loadProgram(testPath)
           if not Text.eq(program.problem, "") then {

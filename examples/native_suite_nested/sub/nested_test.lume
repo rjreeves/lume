@@ -1,0 +1,7 @@
+test "nested works" {
+  expect.equal(2 + 2, 4)
+}
+
+fn main(args: [str]) -> int {
+  return 0
+}
