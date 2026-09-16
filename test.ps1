@@ -339,6 +339,12 @@ $httpJson = & $Lume run (Join-Path $PSScriptRoot 'examples\http_json.lume')
 if ($LASTEXITCODE -ne 0) { throw "http json example exited $LASTEXITCODE" }
 Assert-Equal 'http json decode' "Yours Truly`nSample Slide Show" ($httpJson -join "`n")
 
+# The sixth network-dependent check: a request-time-bounded fetch of example.com's
+# own stable page, once with a tiny limit (proving truncation) and once unlimited.
+$httpLimit = & $Lume run (Join-Path $PSScriptRoot 'examples\http_request_with_limit.lume')
+if ($LASTEXITCODE -ne 0) { throw "http request with limit example exited $LASTEXITCODE" }
+Assert-Equal 'http request with limit' "true`ntrue`nfalse`ntrue" ($httpLimit -join "`n")
+
 $fixtures = & $Lume run (Join-Path $PSScriptRoot 'examples\fixtures.lume')
 if ($LASTEXITCODE -ne 0) { throw "fixtures example exited $LASTEXITCODE" }
 Assert-Equal 'test fixtures' "true`nhello fixture`ntrue`nfalse`nfalse`ntrue`nabc`nfalse" ($fixtures -join "`n")
@@ -688,6 +694,10 @@ Assert-Equal 'http post argument validation' 'E0710 line 2: builtin `http.post` 
 $httpRequestArgs = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_http_request_args.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "http request argument validation should exit 1" }
 Assert-Equal 'http request argument validation' 'E0711 line 2: http.request requires (str, str, Map<str,str>, str)' ($httpRequestArgs -join "`n")
+
+$httpRequestWithLimitArgs = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_http_request_with_limit_args.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "http request with limit argument validation should exit 1" }
+Assert-Equal 'http request with limit argument validation' 'E0729 line 2: http.request_with_limit requires (str, str, Map<str,str>, str, int)' ($httpRequestWithLimitArgs -join "`n")
 
 $envSetArgs = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_env_set_args.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "env set argument validation should exit 1" }

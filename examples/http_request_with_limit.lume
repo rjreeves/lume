@@ -1,0 +1,21 @@
+fn main(args: [str]) -> int {
+  let headers = map.remove(map.set(map.new(), "placeholder", "value"), "placeholder")
+  let limited = http.request_with_limit("GET", "http://example.com", headers, "", 10)
+  if result.is_ok(limited) {
+    let response = result.value(limited)
+    print(http.truncated(response))
+    print(str.len(http.body(response)) <= 10)
+  } else {
+    print(result.error(limited))
+  }
+
+  let unlimited = http.request_with_limit("GET", "http://example.com", headers, "", 0)
+  if result.is_ok(unlimited) {
+    let response = result.value(unlimited)
+    print(http.truncated(response))
+    print(str.contains(http.body(response), "Example Domain"))
+  } else {
+    print(result.error(unlimited))
+  }
+  return 0
+}
