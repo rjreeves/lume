@@ -1560,3 +1560,40 @@ in-process command itself is unchanged and still unsafe for many
 iterations on large/realistic workloads - any future large-program
 benchmark script should follow `benchmark-10000-features.ps1`'s
 fresh-process pattern rather than `benchmark-10000.ps1`'s in-process one.
+
+## Checkpoint after the diagnostic-line-numbers/Ord/generic-operator/JSON-enum-decoding PR series (2026-09-17)
+
+A clean sweep of all three standard benchmark scripts at `2aad4ea`
+(after PRs #53-#67: the full scattered-parser-level line-number cluster,
+`Ord` for compound types, allowing operators on a constrained generic
+parameter's own body, and enum support for typed JSON decoding), run
+against a freshly rebuilt `dist/lume.exe`. None of these PRs touched a
+hot compile-time path - the diagnostic work only widened error-message
+strings with a line number, and `Ord`/generic-operators/JSON-decode only
+added new branches reached exclusively by their own new syntax
+(`impl Ord for X`, an operator on a constrained generic parameter,
+`EnumName.from_json`) - so this is a stability check, not a change
+expected to move the numbers:
+
+| Benchmark | Mean | Lines/second | Target | Result |
+| --- | ---: | ---: | ---: | --- |
+| Trivial (`functions.lume`, `lume check`, 100 iterations) | 9.69 ms | - | - | consistent with every prior run in this file |
+| Trivial 10,000-line (`benchmark-10000.ps1`, 20 iterations) | 48.45 ms | 206,398 | 10,000 | `TargetMet: True`, ~21x over target |
+| Feature-mix (`benchmark-10000-features.ps1`, 30 fresh-process samples) | 202.44 ms (median 202.29, p95 208.22, stddev 3.86) | 49,397 | 10,000 | `TargetMet: True`, ~4.9x over target |
+
+Both real benchmarks land within ordinary run-to-run noise of the last
+recorded figures in this file for the same scripts (216,920 and 48,418
+lines/second respectively, measured mid-session immediately after PR
+#61) - no regression. Also worth noting for anyone reading this file's
+compile-time numbers going forward: Certo itself picked up a real
+type-checker fix in this same window (Certo BACKLOG.md item 327,
+`UnionFind::apply` no longer cloning its whole substitution map on every
+call - a ~9x speedup building `lume.cto` itself, 181s -> 20s on a full
+`certo check` of this file) and a second issue was filed
+un-fixed (item 328). That fix changes how long it takes to *build*
+`lume.exe` from `lume.cto`; it has no bearing on these benchmarks, which
+measure the already-built `lume.exe`'s own behavior compiling ordinary
+`.lume` programs - included here only so the two kinds of "compile
+speed" this project cares about (Certo compiling Lume's own source, vs.
+Lume compiling a user's `.lume` program) aren't conflated by a future
+reader of this file.
