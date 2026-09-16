@@ -711,15 +711,22 @@ into every compilation.
   `int`-returning functions — remains deferred; Certo's stdlib already
   has one (a full `DateTime`/`Duration`/`Timezone`/`Date` API), so this
   is purely a scoping choice, not a feasibility gap;
-- ~~richer process configuration~~ — partially shipped: stdin
-  (`process.run_with_input`) and environment overrides
-  (`process.run_with_env`) are done (see "Shipped in the bootstrap"
-  above); working directory and timeout remain deferred — Certo's only
-  working-directory-aware process call (`Process.spawnDetached`) is
-  fire-and-forget with no output capture, and no timeout/cancellation
-  primitive exists anywhere in Certo's process stdlib, so both need new
-  C-level work in Certo itself, not just a Lume-side wrapper; filed as
-  Certo BACKLOG item 330;
+- ~~richer process configuration~~ — shipped: stdin
+  (`process.run_with_input`), environment overrides
+  (`process.run_with_env`), and now working directory and a real
+  timeout (`process.run_with_options(exe, args, workingDir, timeoutMs)`,
+  see "Shipped in the bootstrap" above) are all done. The last two were
+  blocked on Certo BACKLOG item 330 (Certo's only working-directory-aware
+  call, `Process.spawnDetached`, had no output capture, and no exec
+  variant had a timeout/cancellation handle) until Certo shipped
+  `Process.run` to close it — verified directly (output capture, working
+  directory, and a real ~5.5s command cut off at exactly the requested
+  timeout, all confirmed against a freshly built `certo.exe`) before
+  wiring it in. A timed-out and a failed-to-spawn process are currently
+  indistinguishable from Lume (`process.code(result) == -1` for both,
+  since `CertoProcessResult` has no separate timed-out flag) — a known,
+  documented limitation, not something Lume can resolve without a
+  further upstream change;
 - ~~HTTP requests with typed results and bounded response handling~~ —
   partially shipped: `http.get`/`http.post`/`http.put`/`http.delete`/
   `http.request` (arbitrary methods and headers via `Map<str,str>`),
