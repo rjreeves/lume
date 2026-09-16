@@ -735,17 +735,27 @@ into every compilation.
   documented limitation, not something Lume can resolve without a
   further upstream change;
 - ~~HTTP requests with typed results and bounded response handling~~ —
-  partially shipped: `http.get`/`http.post`/`http.put`/`http.delete`/
+  shipped: `http.get`/`http.post`/`http.put`/`http.delete`/
   `http.request` (arbitrary methods and headers via `Map<str,str>`),
-  and now `http.request_bytes`/`http.body_bytes` (see "Shipped in the
+  and `http.request_bytes`/`http.body_bytes` (see "Shipped in the
   bootstrap" above), are done; binary bodies shipped in a text-safe
   form — a Lume `bytes` value is represented exactly like `str`
   (embedded NUL bytes truncate on round-trip), since a genuinely
   NUL-safe `Bytes` type would need a change to Lume's runtime value
-  representation, out of scope for now. True request-time (rather than
-  post-download) response bounding remains deferred — it needs a
-  streaming primitive that doesn't exist in Certo yet; filed as Certo
-  BACKLOG item 331;
+  representation, out of scope for now. Request-time (rather than
+  post-download) response bounding is now real too, once Certo shipped
+  `Http.requestWithLimit`/`HttpResponse.truncated` closing BACKLOG item
+  331: the five functions above now stop reading at a fixed 10 MiB
+  instead of downloading further before rejecting an oversized
+  response (same observable `Err` behavior as before, verified
+  unchanged against a live endpoint), and a new
+  `http.request_with_limit(method, url, headers, body, maxBytes) ->
+  result<http,str>` lets a caller choose their own limit — unlike the
+  five fixed functions, it never auto-errors on truncation; a new
+  `http.truncated(response) -> bool` reports whether the body was cut
+  off, so the caller decides. `http.request_bytes` is unaffected — the
+  new Certo function's body parameter is `Text`, not `Bytes`, an honest
+  scope boundary, not an oversight;
 - ~~JSON encoding to complement typed decoding~~ — shipped as
   `json.encode(value) -> Result<str, str>` (see "Shipped in the
   bootstrap" above); supports the same shapes decoding does

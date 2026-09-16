@@ -909,7 +909,7 @@ fn builtinNames(): List<Text> = [
   "dir.list", "dir.walk",
   "time.now", "time.to_iso", "time.year", "time.month", "time.day", "time.hour", "time.minute", "time.second", "time.format", "time.in_timezone", "time.format_in_timezone",
   "duration.seconds", "duration.minutes", "duration.hours", "duration.days",
-  "http.get", "http.post", "http.put", "http.delete", "http.request", "http.request_bytes", "http.status", "http.body", "http.content_type", "http.ok", "http.body_bytes",
+  "http.get", "http.post", "http.put", "http.delete", "http.request", "http.request_with_limit", "http.request_bytes", "http.status", "http.body", "http.content_type", "http.ok", "http.body_bytes", "http.truncated",
   "list.len", "list.get", "list.push", "list.map", "list.filter", "list.find", "list.fold",
   "map.new", "map.len", "map.get", "map.has", "map.set", "map.remove", "map.keys", "map.values", "map.map", "map.filter", "map.fold",
   "result.ok", "result.err", "result.is_ok", "result.value", "result.error",
@@ -931,7 +931,7 @@ fn builtinCounts(): List<Int> = [
   1, 2,
   0, 1, 1, 1, 1, 1, 1, 1, 2, 2, 3,
   1, 1, 1, 1,
-  1, 3, 3, 1, 4, 4, 1, 1, 1, 1, 1,
+  1, 3, 3, 1, 4, 5, 4, 1, 1, 1, 1, 1, 1,
   1, 2, 2, 2, 2, 2, 3,
   0, 1, 2, 2, 3, 2, 1, 1, 2, 2, 3,
   1, 1, 1, 1, 1,
@@ -2689,6 +2689,15 @@ fn checkBuiltinTypes(code: List<Instruction>, name: Text, stackInput: List<Text>
     stack = method.stack
     if not Text.eq(method.value, "str") or not Text.eq(url.value, "str") or not Text.eq(body.value, "str") or not Text.startsWith(headers.value, "Map<") or not Text.eq(mapKeyType(headers.value), "str") or not Text.eq(mapValueType(headers.value), "str") then { problem = "E0711 http.request requires (str, str, Map<str,str>, str)" }
     resultType = "result<http,str>"
+  } else if Text.eq(name, "http.request_with_limit") then {
+    val maxBytes = pop(stack)
+    val body = pop(maxBytes.stack)
+    val headers = pop(body.stack)
+    val url = pop(headers.stack)
+    val method = pop(url.stack)
+    stack = method.stack
+    if not Text.eq(method.value, "str") or not Text.eq(url.value, "str") or not Text.eq(body.value, "str") or not Text.startsWith(headers.value, "Map<") or not Text.eq(mapKeyType(headers.value), "str") or not Text.eq(mapValueType(headers.value), "str") or not Text.eq(maxBytes.value, "int") then { problem = "E0729 http.request_with_limit requires (str, str, Map<str,str>, str, int)" }
+    resultType = "result<http,str>"
   } else if Text.eq(name, "http.request_bytes") then {
     val body = pop(stack)
     val headers = pop(body.stack)
@@ -2708,12 +2717,12 @@ fn checkBuiltinTypes(code: List<Instruction>, name: Text, stackInput: List<Text>
     stack = path.stack
     if not Text.eq(path.value, "str") or not Text.eq(data.value, "bytes") then { problem = "E0713 fs.write_bytes requires (str, bytes)" }
     resultType = "bool"
-  } else if Text.eq(name, "http.status") or Text.eq(name, "http.body") or Text.eq(name, "http.content_type") or Text.eq(name, "http.ok") or Text.eq(name, "http.body_bytes") then {
+  } else if Text.eq(name, "http.status") or Text.eq(name, "http.body") or Text.eq(name, "http.content_type") or Text.eq(name, "http.ok") or Text.eq(name, "http.body_bytes") or Text.eq(name, "http.truncated") then {
     val valueType = pop(stack)
     stack = valueType.stack
     if not Text.eq(valueType.value, "http") then { problem = "E0703 http accessor requires http result" }
     if Text.eq(name, "http.status") then { resultType = "int" }
-    else if Text.eq(name, "http.ok") then { resultType = "bool" }
+    else if Text.eq(name, "http.ok") or Text.eq(name, "http.truncated") then { resultType = "bool" }
     else if Text.eq(name, "http.body_bytes") then { resultType = "bytes" }
     else { resultType = "str" }
   } else {
@@ -3542,6 +3551,7 @@ fn httpValue(response: HttpResponse): Text = {
   JsonValue.set(root, "status", Json.int(HttpResponse.status(response)))
   JsonValue.set(root, "body", Json.string(HttpResponse.body(response)))
   JsonValue.set(root, "content_type", Json.string(HttpResponse.contentType(response)))
+  JsonValue.set(root, "truncated", Json.bool(HttpResponse.truncated(response)))
   "h:" ++ Json.stringify(root)
 }
 
@@ -3551,7 +3561,8 @@ fn httpField(value: Text, field: Text): Text = {
   else if Text.eq(field, "ok") then {
     val status = JsonValue.asInt(JsonValue.get(root, "status"))
     boolValue(status >= 200 and status < 300)
-  } else { textValue(JsonValue.asText(JsonValue.get(root, field))) }
+  } else if Text.eq(field, "truncated") then { boolValue(JsonValue.asBool(JsonValue.get(root, "truncated"))) }
+  else { textValue(JsonValue.asText(JsonValue.get(root, field))) }
 }
 
 fn tempDirPath(): Text = {
@@ -4540,10 +4551,11 @@ fn callBuiltin(code: List<Instruction>, name: Text, input: List<Text>, deadlineM
     val one = pop(stack)
     stack = one.stack
     if let Ok(url) = requireText(one.value, name) {
-      val response = if Text.eq(name, "http.get") then Http.get(url) else Http.delete(url)
+      val method = if Text.eq(name, "http.get") then "GET" else "DELETE"
+      val response = Http.requestWithLimit(method, url, [], "", 10485760)
       val status = HttpResponse.status(response)
       if status == 0 then { result = resultErr(name ++ " failed to reach `" ++ url ++ "`") }
-      else if HttpResponse.bodyLength(response) > 10485760 then { result = resultErr(name ++ " response exceeds the 10 MiB limit") }
+      else if HttpResponse.truncated(response) then { result = resultErr(name ++ " response exceeds the 10 MiB limit") }
       else { result = resultOk(httpValue(response)) }
     } else if let Err(message) = requireText(one.value, name) { problem = message }
   } else if Text.eq(name, "http.post") or Text.eq(name, "http.put") then {
@@ -4554,10 +4566,11 @@ fn callBuiltin(code: List<Instruction>, name: Text, input: List<Text>, deadlineM
     if let Ok(urlText) = requireText(url.value, name) {
       if let Ok(bodyText) = requireText(body.value, name) {
         if let Ok(contentTypeText) = requireText(contentType.value, name) {
-          val response = if Text.eq(name, "http.post") then Http.post(urlText, bodyText, contentTypeText) else Http.put(urlText, bodyText, contentTypeText)
+          val method = if Text.eq(name, "http.post") then "POST" else "PUT"
+          val response = Http.requestWithLimit(method, urlText, [["Content-Type", contentTypeText]], bodyText, 10485760)
           val status = HttpResponse.status(response)
           if status == 0 then { result = resultErr(name ++ " failed to reach `" ++ urlText ++ "`") }
-          else if HttpResponse.bodyLength(response) > 10485760 then { result = resultErr(name ++ " response exceeds the 10 MiB limit") }
+          else if HttpResponse.truncated(response) then { result = resultErr(name ++ " response exceeds the 10 MiB limit") }
           else { result = resultOk(httpValue(response)) }
         } else if let Err(message) = requireText(contentType.value, name) { problem = message }
       } else if let Err(message) = requireText(body.value, name) { problem = message }
@@ -4577,11 +4590,37 @@ fn callBuiltin(code: List<Instruction>, name: Text, input: List<Text>, deadlineM
               headers = List.push(headers, [valueBody(taggedKey), valueBody(taggedValue)])
             }
           }
-          val response = Http.request(methodText, urlText, headers, bodyText)
+          val response = Http.requestWithLimit(methodText, urlText, headers, bodyText, 10485760)
           val status = HttpResponse.status(response)
           if status == 0 then { result = resultErr(name ++ " failed to reach `" ++ urlText ++ "`") }
-          else if HttpResponse.bodyLength(response) > 10485760 then { result = resultErr(name ++ " response exceeds the 10 MiB limit") }
+          else if HttpResponse.truncated(response) then { result = resultErr(name ++ " response exceeds the 10 MiB limit") }
           else { result = resultOk(httpValue(response)) }
+        } else if let Err(message) = requireText(bodyArg.value, name) { problem = message }
+      } else if let Err(message) = requireText(urlArg.value, name) { problem = message }
+    } else if let Err(message) = requireText(methodArg.value, name) { problem = message }
+  } else if Text.eq(name, "http.request_with_limit") then {
+    val maxBytesArg = pop(stack)
+    val bodyArg = pop(maxBytesArg.stack)
+    val headersArg = pop(bodyArg.stack)
+    val urlArg = pop(headersArg.stack)
+    val methodArg = pop(urlArg.stack)
+    stack = methodArg.stack
+    if let Ok(methodText) = requireText(methodArg.value, name) {
+      if let Ok(urlText) = requireText(urlArg.value, name) {
+        if let Ok(bodyText) = requireText(bodyArg.value, name) {
+          if not Text.eq(valueKind(maxBytesArg.value), "i:") then { problem = "E0729 http.request_with_limit requires (str, str, Map<str,str>, str, int)" }
+          else {
+            var headers: List<List<Text>> = []
+            for taggedKey in mapKeysList(headersArg.value) {
+              if let Some(taggedValue) = mapGetValue(headersArg.value, taggedKey) {
+                headers = List.push(headers, [valueBody(taggedKey), valueBody(taggedValue)])
+              }
+            }
+            val response = Http.requestWithLimit(methodText, urlText, headers, bodyText, valueInt(maxBytesArg.value))
+            val status = HttpResponse.status(response)
+            if status == 0 then { result = resultErr(name ++ " failed to reach `" ++ urlText ++ "`") }
+            else { result = resultOk(httpValue(response)) }
+          }
         } else if let Err(message) = requireText(bodyArg.value, name) { problem = message }
       } else if let Err(message) = requireText(urlArg.value, name) { problem = message }
     } else if let Err(message) = requireText(methodArg.value, name) { problem = message }
@@ -4623,7 +4662,7 @@ fn callBuiltin(code: List<Instruction>, name: Text, input: List<Text>, deadlineM
       if not Text.eq(valueKind(dataArg.value), "y:") then { problem = "E0713 fs.write_bytes requires (str, bytes)" }
       else { result = boolValue(writeFileBytes(path, Bytes.fromText(valueBody(dataArg.value)))) }
     } else if let Err(message) = requireText(pathArg.value, name) { problem = message }
-  } else if Text.eq(name, "http.status") or Text.eq(name, "http.body") or Text.eq(name, "http.content_type") or Text.eq(name, "http.ok") or Text.eq(name, "http.body_bytes") then {
+  } else if Text.eq(name, "http.status") or Text.eq(name, "http.body") or Text.eq(name, "http.content_type") or Text.eq(name, "http.ok") or Text.eq(name, "http.body_bytes") or Text.eq(name, "http.truncated") then {
     val one = pop(stack)
     stack = one.stack
     if not Text.eq(valueKind(one.value), "h:") then { problem = "E0704 http accessor requires http result" }
@@ -4631,6 +4670,7 @@ fn callBuiltin(code: List<Instruction>, name: Text, input: List<Text>, deadlineM
     else if Text.eq(name, "http.body") then { result = httpField(one.value, "body") }
     else if Text.eq(name, "http.content_type") then { result = httpField(one.value, "content_type") }
     else if Text.eq(name, "http.body_bytes") then { result = bytesValue(valueBody(httpField(one.value, "body"))) }
+    else if Text.eq(name, "http.truncated") then { result = httpField(one.value, "truncated") }
     else { result = httpField(one.value, "ok") }
   } else {
     val right = pop(stack)
@@ -5370,7 +5410,7 @@ fn aiReference(): Text = {
   "Run a process with stdin piped in: process.run_with_input(exe, args, input) -> process, same accessors as process.run. " ++
   "Run a process with environment overrides: process.run_with_env(exe, args, envMap: Map<str,str>) -> process; variables are restored to their prior value after the call returns. " ++
   "Run a process with a working directory and/or timeout: process.run_with_options(exe, args, workingDir: str, timeoutMs: int) -> process; workingDir \"\" means don't change directory, timeoutMs <= 0 means no timeout (block until the process exits). A timed-out process is killed and its process.code(result) is -1 - the same value a failed-to-spawn process reports, since the underlying result carries no separate timed-out flag; don't rely on -1 alone to distinguish the two. " ++
-  "Make requests with http.get(url)/http.delete(url), http.post(url, body, content_type)/http.put(url, body, content_type), or http.request(method, url, headers: Map<str,str>, body) for custom headers, all -> result<http,str>; read with http.status/body/content_type/ok(response); responses over 10 MiB return an error instead of the body. Windows only. " ++
+  "Make requests with http.get(url)/http.delete(url), http.post(url, body, content_type)/http.put(url, body, content_type), or http.request(method, url, headers: Map<str,str>, body) for custom headers, all -> result<http,str>; read with http.status/body/content_type/ok(response); a response is now bounded at request time (Certo stops reading once the limit is hit, not after downloading past it) - these five all use a fixed 10 MiB limit and return an error instead of the body if hit. For a caller-chosen limit, http.request_with_limit(method, url, headers, body, maxBytes) -> result<http,str> does not error on hitting the limit - it returns Ok with a truncated body, and http.truncated(response) -> bool reports whether that happened (false for every ordinary response, including the fixed-limit functions above); maxBytes <= 0 means unlimited. Windows only. " ++
   "bytes is a type distinct from str but represented identically at runtime (a deliberate scope reduction, not a NUL-safe binary type); bytes.from_str(text) -> bytes, bytes.to_str(data) -> str, bytes.length(data) -> int; content with an embedded NUL byte truncates at the NUL on round-trip. fs.read_bytes(path) -> result<bytes,str> and fs.write_bytes(path, data) -> bool mirror the str file APIs. http.request_bytes(method, url, headers, data) -> result<http,str> and http.body_bytes(response) -> bytes mirror http.request/http.body with a bytes body. " ++
   "Test fixtures: fixture.temp_dir() -> str creates a fresh unique directory (call fixture.cleanup(path) -> bool to remove it, no automatic cleanup); env.set(name, value) -> bool and env.unset(name) -> bool mutate the process environment directly. " ++
   "Declare enums with `enum State { waiting, done(code: int) }`; construct `State.waiting()` or `State.done(code: 0)`. " ++
