@@ -285,6 +285,14 @@ $processConfig = & $Lume run (Join-Path $PSScriptRoot 'examples\process_config.l
 if ($LASTEXITCODE -ne 0) { throw "process config example exited $LASTEXITCODE" }
 Assert-Equal 'richer process configuration' "HELLO LUME`nhello_from_lume`nfalse" ($processConfig -join "`n")
 
+$processOptions = & $Lume run (Join-Path $PSScriptRoot 'examples\process_run_with_options.lume')
+if ($LASTEXITCODE -ne 0) { throw "process run_with_options exited $LASTEXITCODE" }
+Assert-Equal 'process run_with_options (working directory and timeout)' "C:\Users`n0`n-1" ($processOptions -join "`n")
+
+$processOptionsArgs = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_process_run_with_options_args.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "process run_with_options argument validation should exit 1" }
+Assert-Equal 'process run_with_options argument validation' 'E0727 line 2: process.run_with_options requires (str, [str], str, int)' ($processOptionsArgs -join "`n")
+
 # The first of two network-dependent checks in this suite: a live GET against
 # http://example.com, chosen because its content has been stable for over a decade.
 $httpGet = & $Lume run (Join-Path $PSScriptRoot 'examples\http_get.lume')

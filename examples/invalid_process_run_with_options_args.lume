@@ -1,0 +1,4 @@
+fn main(args: [str]) -> int {
+  let command = process.run_with_options("cmd.exe", ["/c", "echo"], 1, "not an int")
+  return process.code(command)
+}

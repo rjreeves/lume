@@ -901,7 +901,7 @@ fn builtinNames(): List<Text> = [
   "args.count", "args.get",
   "fs.exists", "fs.read_text", "fs.write_text", "fs.try_read_text", "fs.try_write_text", "fs.read_bytes", "fs.write_bytes",
   "env.get", "env.has", "env.set", "env.unset",
-  "process.run", "process.run_with_input", "process.run_with_env", "process.code", "process.stdout", "process.stderr", "process.ok",
+  "process.run", "process.run_with_input", "process.run_with_env", "process.run_with_options", "process.code", "process.stdout", "process.stderr", "process.ok",
   "str.len", "str.trim", "str.upper", "str.lower",
   "str.contains", "str.starts_with", "str.ends_with",
   "json.valid", "json.get", "json.encode",
@@ -923,7 +923,7 @@ fn builtinCounts(): List<Int> = [
   0, 1,
   1, 1, 2, 1, 2, 1, 2,
   1, 1, 2, 1,
-  2, 3, 3, 1, 1, 1, 1,
+  2, 3, 3, 4, 1, 1, 1, 1,
   1, 1, 1, 1,
   2, 2, 2,
   1, 2, 1,
@@ -2574,6 +2574,14 @@ fn checkBuiltinTypes(code: List<Instruction>, name: Text, stackInput: List<Text>
     stack = executable.stack
     if not Text.eq(executable.value, "str") or (not Text.eq(arguments.value, "list<str>") and not Text.eq(arguments.value, "list<any>")) or not Text.startsWith(envType.value, "Map<") or not Text.eq(mapKeyType(envType.value), "str") or not Text.eq(mapValueType(envType.value), "str") then { problem = "E0700 process.run_with_env requires (str, [str], Map<str,str>)" }
     resultType = "process"
+  } else if Text.eq(name, "process.run_with_options") then {
+    val timeoutArg = pop(stack)
+    val workingDir = pop(timeoutArg.stack)
+    val arguments = pop(workingDir.stack)
+    val executable = pop(arguments.stack)
+    stack = executable.stack
+    if not Text.eq(executable.value, "str") or (not Text.eq(arguments.value, "list<str>") and not Text.eq(arguments.value, "list<any>")) or not Text.eq(workingDir.value, "str") or not Text.eq(timeoutArg.value, "int") then { problem = "E0727 process.run_with_options requires (str, [str], str, int)" }
+    resultType = "process"
   } else if Text.eq(name, "process.code") or Text.eq(name, "process.stdout") or Text.eq(name, "process.stderr") or Text.eq(name, "process.ok") then {
     val valueType = pop(stack)
     stack = valueType.stack
@@ -4212,6 +4220,18 @@ fn callBuiltin(code: List<Instruction>, name: Text, input: List<Text>, deadlineM
         index = index + 1
       }
     }
+  } else if Text.eq(name, "process.run_with_options") then {
+    val timeoutArg = pop(stack)
+    val workingDir = pop(timeoutArg.stack)
+    val arguments = pop(workingDir.stack)
+    val executable = pop(arguments.stack)
+    stack = executable.stack
+    if not Text.eq(valueKind(executable.value), "s:") then { problem = "E0322 process.run executable must be str" }
+    else if not Text.eq(valueKind(arguments.value), "l:") then { problem = "E0323 process.run arguments must be [str]" }
+    else {
+      val processResult = Process.run(valueBody(executable.value), listTextValues(arguments.value), valueBody(workingDir.value), valueInt(timeoutArg.value))
+      result = processValue(processResult)
+    }
   } else if Text.eq(name, "list.map") or Text.eq(name, "list.filter") or Text.eq(name, "list.find") then {
     val callback = pop(stack)
     val source = pop(callback.stack)
@@ -5303,6 +5323,7 @@ fn aiReference(): Text = {
   "duration.seconds/minutes/hours/days(n) -> int convert a named unit into a plain epoch-second count for readable arithmetic, e.g. `time.now() + duration.minutes(5)` instead of `time.now() + 300`. " ++
   "Run a process with stdin piped in: process.run_with_input(exe, args, input) -> process, same accessors as process.run. " ++
   "Run a process with environment overrides: process.run_with_env(exe, args, envMap: Map<str,str>) -> process; variables are restored to their prior value after the call returns. " ++
+  "Run a process with a working directory and/or timeout: process.run_with_options(exe, args, workingDir: str, timeoutMs: int) -> process; workingDir \"\" means don't change directory, timeoutMs <= 0 means no timeout (block until the process exits). A timed-out process is killed and its process.code(result) is -1 - the same value a failed-to-spawn process reports, since the underlying result carries no separate timed-out flag; don't rely on -1 alone to distinguish the two. " ++
   "Make requests with http.get(url)/http.delete(url), http.post(url, body, content_type)/http.put(url, body, content_type), or http.request(method, url, headers: Map<str,str>, body) for custom headers, all -> result<http,str>; read with http.status/body/content_type/ok(response); responses over 10 MiB return an error instead of the body. Windows only. " ++
   "bytes is a type distinct from str but represented identically at runtime (a deliberate scope reduction, not a NUL-safe binary type); bytes.from_str(text) -> bytes, bytes.to_str(data) -> str, bytes.length(data) -> int; content with an embedded NUL byte truncates at the NUL on round-trip. fs.read_bytes(path) -> result<bytes,str> and fs.write_bytes(path, data) -> bool mirror the str file APIs. http.request_bytes(method, url, headers, data) -> result<http,str> and http.body_bytes(response) -> bytes mirror http.request/http.body with a bytes body. " ++
   "Test fixtures: fixture.temp_dir() -> str creates a fresh unique directory (call fixture.cleanup(path) -> bool to remove it, no automatic cleanup); env.set(name, value) -> bool and env.unset(name) -> bool mutate the process environment directly. " ++

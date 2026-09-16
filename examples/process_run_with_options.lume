@@ -1,0 +1,9 @@
+fn main(args: [str]) -> int {
+  let withDir = process.run_with_options("powershell.exe", ["-NoProfile", "-Command", "(Get-Location).Path"], "C:/Users", 5000)
+  print(str.trim(process.stdout(withDir)))
+  print(process.code(withDir))
+
+  let withTimeout = process.run_with_options("powershell.exe", ["-NoProfile", "-Command", "Start-Sleep -Seconds 5"], "", 300)
+  print(process.code(withTimeout))
+  return 0
+}
