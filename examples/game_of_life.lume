@@ -1,0 +1,170 @@
+// Conway's Game of Life on a toroidal (wrap-around) grid.
+
+fn intText(n: int) -> str {
+  return result.value(json.encode(n))
+}
+
+fn seedAlive(row: int, col: int) -> bool {
+  // A glider drifting toward the bottom-right...
+  if row == 1 {
+    if col == 2 {
+      return true
+    }
+  }
+  if row == 2 {
+    if col == 3 {
+      return true
+    }
+  }
+  if row == 3 {
+    if col == 1 {
+      return true
+    }
+    if col == 2 {
+      return true
+    }
+    if col == 3 {
+      return true
+    }
+  }
+  // ...plus a blinker oscillating on its own in a corner.
+  if row == 8 {
+    if col == 10 {
+      return true
+    }
+    if col == 11 {
+      return true
+    }
+    if col == 12 {
+      return true
+    }
+  }
+  return false
+}
+
+fn buildRow(row: int, width: int) -> [bool] {
+  var cols = [seedAlive(row, 0)]
+  var col = 1
+  while col < width {
+    cols = list.push(cols, seedAlive(row, col))
+    col = col + 1
+  }
+  return cols
+}
+
+fn buildGrid(width: int, height: int) -> [[bool]] {
+  var grid = [buildRow(0, width)]
+  var row = 1
+  while row < height {
+    grid = list.push(grid, buildRow(row, width))
+    row = row + 1
+  }
+  return grid
+}
+
+fn countNeighbors(grid: [[bool]], row: int, col: int, width: int, height: int) -> int {
+  let deltaRows = [-1, -1, -1, 0, 0, 1, 1, 1]
+  let deltaCols = [-1, 0, 1, -1, 1, -1, 0, 1]
+  var count = 0
+  var i = 0
+  while i < 8 {
+    let neighborRow = (row + list.get(deltaRows, i) + height) % height
+    let neighborCol = (col + list.get(deltaCols, i) + width) % width
+    if list.get(list.get(grid, neighborRow), neighborCol) {
+      count = count + 1
+    }
+    i = i + 1
+  }
+  return count
+}
+
+fn willLive(alive: bool, neighbors: int) -> bool {
+  if alive {
+    if neighbors == 2 {
+      return true
+    }
+    if neighbors == 3 {
+      return true
+    }
+    return false
+  }
+  if neighbors == 3 {
+    return true
+  }
+  return false
+}
+
+fn nextRowFor(grid: [[bool]], row: int, width: int, height: int) -> [bool] {
+  let firstAlive = list.get(list.get(grid, row), 0)
+  let firstNeighbors = countNeighbors(grid, row, 0, width, height)
+  var nextRow = [willLive(firstAlive, firstNeighbors)]
+  var col = 1
+  while col < width {
+    let alive = list.get(list.get(grid, row), col)
+    let neighbors = countNeighbors(grid, row, col, width, height)
+    nextRow = list.push(nextRow, willLive(alive, neighbors))
+    col = col + 1
+  }
+  return nextRow
+}
+
+fn step(grid: [[bool]], width: int, height: int) -> [[bool]] {
+  var nextGrid = [nextRowFor(grid, 0, width, height)]
+  var row = 1
+  while row < height {
+    nextGrid = list.push(nextGrid, nextRowFor(grid, row, width, height))
+    row = row + 1
+  }
+  return nextGrid
+}
+
+fn addIfAlive(total: int, cell: bool) -> int {
+  if cell {
+    return total + 1
+  }
+  return total
+}
+
+fn countAliveInRow(row: [bool]) -> int {
+  return list.fold(row, 0, fn(total: int, cell: bool) -> int => addIfAlive(total, cell))
+}
+
+fn countAlive(grid: [[bool]]) -> int {
+  return list.fold(grid, 0, fn(total: int, row: [bool]) -> int => total + countAliveInRow(row))
+}
+
+fn renderGrid(grid: [[bool]], width: int, height: int) -> str {
+  var output = ""
+  var row = 0
+  while row < height {
+    var line = ""
+    var col = 0
+    while col < width {
+      if list.get(list.get(grid, row), col) {
+        line = line + "#"
+      } else {
+        line = line + "."
+      }
+      col = col + 1
+    }
+    output = output + line + "\n"
+    row = row + 1
+  }
+  return output
+}
+
+fn main(args: [str]) -> int {
+  let width = 16
+  let height = 12
+  let generations = 10
+  var grid = buildGrid(width, height)
+  var gen = 0
+  while gen < generations {
+    print("Generation " + intText(gen) + " (" + intText(countAlive(grid)) + " alive)")
+    print(renderGrid(grid, width, height))
+    grid = step(grid, width, height)
+    gen = gen + 1
+  }
+  print("Ran " + intText(generations) + " generations on a " + intText(width) + "x" + intText(height) + " toroidal grid.")
+  return 0
+}
