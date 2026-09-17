@@ -104,6 +104,16 @@ type MatchContextPop = {
   value: MatchContext
 }
 
+type IfExprContext = {
+  baseStack: List<Text>
+  resultType: Text
+}
+
+type IfExprContextPop = {
+  stack: List<IfExprContext>
+  value: IfExprContext
+}
+
 type ClosureTypeContext = {
   stack: List<Text>
   bindings: Bindings
@@ -538,9 +548,65 @@ fn parseMatch(tokens: List<Token>, start: Int): ExprResult = {
   ExprResult { next: if Text.eq(problem, "") then index + 1 else index, code: code, problem: problem }
 }
 
+// if/else as an expression - mirrors the statement form's own jump_false/
+// jump codegen (compileBlock's "if" handling) for real branching at
+// runtime, but needs three dedicated instructions (if_expr_start/
+// if_expr_then_end/if_expr_finish) rather than bare jump_false/jump, since
+// the two branches can be any (matching) type, not always bool the way
+// and/or's branches are - verifyTypes' linear, jump-blind walk can't
+// otherwise tell which branch's pushed value is the real result. Mirrors
+// match's own MatchContext mechanism, just simpler (two branches, no
+// variant/exhaustiveness bookkeeping). Statement-context only, same as
+// match: no changes to callPure, so an if-expression inside a closure
+// hits that interpreter's existing generic "unsupported operation"
+// fallback, exactly like match already does there.
+fn parseIfExpr(tokens: List<Token>, index: Int): ExprResult = {
+  val ifToken = at(tokens, index)
+  val condition = parseOr(tokens, index + 1)
+  if not Text.eq(condition.problem, "") then { condition }
+  else {
+    val afterCondition = skipNewlines(tokens, condition.next)
+    if not Text.eq(at(tokens, afterCondition).text, "{") then { expressionError(afterCondition, "E0731 line " ++ intToText(at(tokens, afterCondition).line) ++ ": expected `{` after if-expression condition") }
+    else {
+      val thenExpr = parseOr(tokens, skipNewlines(tokens, afterCondition + 1))
+      if not Text.eq(thenExpr.problem, "") then { thenExpr }
+      else {
+        val afterThen = skipNewlines(tokens, thenExpr.next)
+        if not Text.eq(at(tokens, afterThen).text, "}") then { expressionError(afterThen, "E0732 line " ++ intToText(at(tokens, afterThen).line) ++ ": expected `}` after if-expression then-branch") }
+        else {
+          val afterThenBrace = skipNewlines(tokens, afterThen + 1)
+          if not Text.eq(at(tokens, afterThenBrace).text, "else") then { expressionError(afterThenBrace, "E0733 line " ++ intToText(at(tokens, afterThenBrace).line) ++ ": if-expression requires `else`") }
+          else {
+            val afterElse = skipNewlines(tokens, afterThenBrace + 1)
+            if not Text.eq(at(tokens, afterElse).text, "{") then { expressionError(afterElse, "E0734 line " ++ intToText(at(tokens, afterElse).line) ++ ": expected `{` after `else` in if-expression") }
+            else {
+              val elseExpr = parseOr(tokens, skipNewlines(tokens, afterElse + 1))
+              if not Text.eq(elseExpr.problem, "") then { elseExpr }
+              else {
+                val afterElseExpr = skipNewlines(tokens, elseExpr.next)
+                if not Text.eq(at(tokens, afterElseExpr).text, "}") then { expressionError(afterElseExpr, "E0735 line " ++ intToText(at(tokens, afterElseExpr).line) ++ ": expected `}` after if-expression else-branch") }
+                else {
+                  var code = condition.code
+                  code = List.push(code, makeInstruction("if_expr_start", "", List.len(thenExpr.code) + 2, ifToken.line))
+                  code = appendCode(code, thenExpr.code)
+                  code = List.push(code, makeInstruction("if_expr_then_end", "", List.len(elseExpr.code) + 1, ifToken.line))
+                  code = appendCode(code, elseExpr.code)
+                  code = List.push(code, makeInstruction("if_expr_finish", "", 0, ifToken.line))
+                  ExprResult { next: afterElseExpr + 1, code: code, problem: "" }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
 fn parseAtom(tokens: List<Token>, index: Int): ExprResult = {
   val current = at(tokens, index)
   if Text.eq(current.text, "match") then { parseMatch(tokens, index) }
+  else if Text.eq(current.text, "if") then { parseIfExpr(tokens, index) }
   else if Text.eq(current.text, "fn") then { parseLambda(tokens, index) }
   else if Text.eq(current.text, "&") and Text.eq(at(tokens, index + 1).kind, "name") then {
     ExprResult { next: index + 2, code: [makeInstruction("fn_ref", at(tokens, index + 1).text, 0, current.line)], problem: "" }
@@ -1877,6 +1943,11 @@ fn popMatchContext(stack: List<MatchContext>): MatchContextPop = {
   MatchContextPop { stack: List.slice(stack, 0, end), value: List.getOrPanic(stack, end) }
 }
 
+fn popIfExprContext(stack: List<IfExprContext>): IfExprContextPop = {
+  val end = List.len(stack) - 1
+  IfExprContextPop { stack: List.slice(stack, 0, end), value: List.getOrPanic(stack, end) }
+}
+
 fn popClosureTypeContext(stack: List<ClosureTypeContext>): ClosureTypeContextPop = {
   val end = List.len(stack) - 1
   ClosureTypeContextPop { stack: List.slice(stack, 0, end), value: List.getOrPanic(stack, end) }
@@ -3161,6 +3232,7 @@ fn checkRecordUpdateTypes(code: List<Instruction>, instruction: Instruction, sta
 fn verifyTypes(code: List<Instruction>): Text = {
   var stack: List<Text> = []
   var matches: List<MatchContext> = []
+  var ifExprs: List<IfExprContext> = []
   var closures: List<ClosureTypeContext> = []
   var bindings = Bindings { names: [], values: [] }
   var bindingBuckets = emptyBuckets()
@@ -3401,6 +3473,25 @@ fn verifyTypes(code: List<Instruction>): Text = {
           if Text.eq(problem, "") then { stack = List.push(matchState.baseStack, matchState.resultType) }
           bindings = matchState.baseBindings
         }
+      } else if Text.eq(item.op, "if_expr_start") then {
+        val conditionType = pop(stack)
+        stack = conditionType.stack
+        if not Text.eq(conditionType.value, "bool") then { problem = "E0617 line " ++ intToText(item.line) ++ ": condition must be bool, got " ++ conditionType.value }
+        else { ifExprs = List.push(ifExprs, IfExprContext { baseStack: stack, resultType: "" }) }
+      } else if Text.eq(item.op, "if_expr_then_end") then {
+        val result = pop(stack)
+        val popped = popIfExprContext(ifExprs)
+        ifExprs = popped.stack
+        val ifState = popped.value
+        ifExprs = List.push(ifExprs, IfExprContext { baseStack: ifState.baseStack, resultType: result.value })
+        stack = ifState.baseStack
+      } else if Text.eq(item.op, "if_expr_finish") then {
+        val result = pop(stack)
+        val popped = popIfExprContext(ifExprs)
+        ifExprs = popped.stack
+        val ifState = popped.value
+        if not typesCompatible(ifState.resultType, result.value) then { problem = "E0736 line " ++ intToText(item.line) ++ ": if-expression branches must return one type; expected " ++ ifState.resultType ++ ", got " ++ result.value }
+        else { stack = List.push(ifState.baseStack, ifState.resultType) }
       } else if Text.eq(item.op, "decode_json") then {
         if item.number != 1 then { problem = "E0637 line " ++ intToText(item.line) ++ ": `" ++ item.text ++ ".from_json` expects 1 argument" }
         else {
@@ -4978,6 +5069,21 @@ fn execute(code: List<Instruction>): RunResult [io] = {
     } else if Text.eq(current.op, "jump") then {
       ip = ip + current.number
       advance = false
+    } else if Text.eq(current.op, "if_expr_start") then {
+      val item = pop(stack)
+      stack = item.stack
+      if not Text.eq(valueKind(item.value), "b:") then {
+        problem = "E0305 line " ++ intToText(current.line) ++ ": condition must be bool"
+      } else if Text.eq(valueBody(item.value), "false") then {
+        ip = ip + current.number
+        advance = false
+      }
+    } else if Text.eq(current.op, "if_expr_then_end") then {
+      ip = ip + current.number
+      advance = false
+    } else if Text.eq(current.op, "if_expr_finish") then {
+      // no-op: whichever branch ran already left exactly one result value
+      // on the stack; both real execution paths converge here.
     } else if Text.eq(current.op, "print") or Text.eq(current.op, "eprint") then {
       val item = pop(stack)
       stack = item.stack

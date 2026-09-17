@@ -786,11 +786,17 @@ Each API should keep the `noun.verb` naming convention and return explicit
 
 ### 5. Core language ergonomics
 
-Three real gaps found while writing a non-trivial example program
-(`examples/game_of_life.lume`, a Conway's Game of Life on a toroidal
-grid) — not blocked on anything upstream, all genuinely bounded
-compiler-only changes, each confirmed by a direct empirical test
-against the real compiler rather than assumed from the grammar:
+Started as three real gaps found while writing a non-trivial example
+program (`examples/game_of_life.lume`, a Conway's Game of Life on a
+toroidal grid), later joined by two more found while writing the full
+user manual (`docs/using-lume-the-fast-one.md`) — none blocked on
+anything upstream, each confirmed by a direct empirical test against
+the real compiler rather than assumed from the grammar. Not every one
+turned out to be small: `and`/`or`/`not` and `if`/`else`-as-expression
+are now shipped (the latter needed real new instructions, not just a
+parser tweak — see its own entry below for why); the `Result`/`Option`
+asymmetry and the no-chained-field-access limitation are confirmed,
+real, and filed, but are design questions rather than bounded fixes:
 
 - ~~no boolean `and`/`or`/`not` operators exist at all~~ — shipped,
   with genuine short-circuit evaluation (deliberately verified with a
@@ -809,15 +815,30 @@ against the real compiler rather than assumed from the grammar:
   "the top-level expression parser". `verifyTypes`'s existing
   `jump_false` handling already required and popped a `bool`, so
   operand-type checking (`E0617`) came for free;
-- **no `if`/`else` expression form** — confirmed via a live `E0101
-  expected expression` compiling `if cell { rowTotal + 1 } else {
-  rowTotal }` as a closure body. `if`/`else` is statement-only; a
-  conditional *value* needs a small helper function with early
-  `return`s in each branch instead of `let x = if ... else ...`. Note
-  this file's own "Core language" bullet above (~line 339) already
-  lists "`if`/`else`... expressions", which this finding shows is not
-  accurate as written — worth a follow-up correction once this gap
-  itself is resolved or the wording is otherwise fixed;
+- ~~no `if`/`else` expression form~~ — shipped, in statement context
+  only (`let x = if cond { a } else { b }` now works; using the same
+  shape inside a closure body compiles but fails at runtime with
+  "unsupported operation", exactly like `match` already does there —
+  a deliberate scope match, not an oversight, confirmed with the
+  user before implementing). Turned out to need much more than the
+  `and`/`or`/`not` precedent: those got away with zero new
+  instructions because both branches are always `bool`, so the type
+  checker's linear, jump-blind walk (`for item in code` in
+  `verifyTypes`, no jump-following) harmlessly over-counts a
+  correctly-typed `bool` that's never popped by anything (verified
+  directly with adversarial cross-type tests before trusting it). A
+  general if-expression can't get that free ride — `if cond { 5 }
+  else { "text" }` must be rejected — so this needed the same
+  mechanism `match` already uses to solve exactly that problem: three
+  new instructions (`if_expr_start`/`if_expr_then_end`/
+  `if_expr_finish`, mirroring `match_start`/`match_arm_end`/
+  `match_finish`) backed by a new `IfExprContext` that captures a
+  stack baseline before branching, resets between the two branches,
+  and explicitly compares their types (new `E0736`) before pushing
+  one merged result. `callPure` needed no changes at all - leaving
+  the three new op names unhandled there routes straight into its
+  existing generic "unsupported operation" fallback, the same free
+  ride `match` already gets;
 - ~~no way to convert an `int` to `str`~~ — shipped as
   `str.from_int(n) -> str`, mirroring `time.to_iso`'s own `(int) ->
   str` shape exactly (same 3-site builtin pattern: `builtinNames`/

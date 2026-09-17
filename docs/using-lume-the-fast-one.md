@@ -218,20 +218,32 @@ while index < list.len(entries) {
 There is also no `break`/`continue` — express early exit with a boolean
 flag checked in the loop condition.
 
-**Two real, easy-to-trip gotchas, worth stating plainly:**
+`if`/`else` can also be used directly as an expression, not just a
+statement — both branches must produce the same type, and `else` is
+required (every path must produce a value):
 
-- **`if`/`else` is a statement, not an expression.** `let x = if cond { a }
-  else { b }` is a compile error (`E0101 expected expression`). Write a
-  small helper function with an early `return` in each branch instead:
+```lume
+let label = if score >= 90 { "A" } else { "B" }
+print(if count > 0 { "found " + str.from_int(count) } else { "none" })
+```
 
-  ```lume
-  fn clamp_or_zero(value: int, limit: int) -> int {
-    if value > limit {
-      return limit
-    }
-    return value
+**One real, easy-to-trip gotcha, worth stating plainly**: an
+if-expression only works in statement context — inside a closure body
+(the `fn(x) -> T => ...` form passed to `list.map`/`filter`/`find`/
+`fold`), it compiles fine but fails at *runtime* with "callback uses
+unsupported operation", exactly like `match` already does inside a
+closure (section 6). Write a small helper function with an early
+`return` in each branch instead when the value is needed inside a
+closure:
+
+```lume
+fn clamp_or_zero(value: int, limit: int) -> int {
+  if value > limit {
+    return limit
   }
-  ```
+  return value
+}
+```
 
 - **`and`/`or`/`not` are keywords, not symbols** — there is no `&&`/`||`/`!`
   for boolean logic (`!` is reserved for `Result`/`Option` propagation, see
@@ -1148,8 +1160,9 @@ becomes an explicit exit code.
 Real, current limitations — not aspirational roadmap items from other
 documents in this repository:
 
-- **No `if`/`else` expression form.** Use a helper function with early
-  `return`s (section 4).
+- **`if`/`else` expressions don't work inside closures** — same
+  restriction `match` already has there; use a helper function with
+  early `return`s instead (section 4).
 - **No `??` operator** — that is Certo syntax, not Lume's (section 3).
 - **No `for` loop of any kind** — not a range loop, and not `for x in
   list` either. `while` with a manually managed index is the only loop
