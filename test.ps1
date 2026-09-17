@@ -115,6 +115,16 @@ if ($LASTEXITCODE -ne 0) { throw "recursive test discovery exited $LASTEXITCODE"
 Assert-Contains 'recursive test discovery finds top-level test' 'PASS top level works' ($nestedSuite -join "`n")
 Assert-Contains 'recursive test discovery finds nested test' 'PASS nested works' ($nestedSuite -join "`n")
 
+$ignoreSuiteDir = Join-Path $PSScriptRoot 'examples\native_suite_with_ignore'
+$unignoredSuite = & $Lume test $ignoreSuiteDir 2>&1
+if ($LASTEXITCODE -ne 1) { throw "unignored suite with a failing nested test should exit 1" }
+Assert-Contains 'without --ignore, node_modules is still walked' 'FAIL should never run' ($unignoredSuite -join "`n")
+
+$ignoredSuite = & $Lume test $ignoreSuiteDir --ignore node_modules
+if ($LASTEXITCODE -ne 0) { throw "--ignore node_modules should skip the failing nested test, exited $LASTEXITCODE" }
+Assert-Contains '--ignore node_modules runs the top-level test' 'PASS real test passes' ($ignoredSuite -join "`n")
+Assert-Contains '--ignore node_modules skips the subdirectory entirely' '1 passed; 0 failed' ($ignoredSuite -join "`n")
+
 $timeFunctions = & $Lume run (Join-Path $PSScriptRoot 'examples\time_functions.lume')
 if ($LASTEXITCODE -ne 0) { throw "time functions exited $LASTEXITCODE" }
 Assert-Equal 'time functions' "true`n1970-01-01T00:00:00Z`n2023-11-14T22:13:20Z" ($timeFunctions -join "`n")

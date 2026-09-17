@@ -1,0 +1,7 @@
+test "real test passes" {
+  expect.equal(1 + 1, 2)
+}
+
+fn main(args: [str]) -> int {
+  return 0
+}

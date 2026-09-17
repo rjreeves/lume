@@ -4126,6 +4126,27 @@ fn walkDir(path: Text, depth: Int, maxDepth: Int): List<Text> [io] = {
   results
 }
 
+// Mirrors walkDir exactly, skipping recursion into a subdirectory whose own
+// name (not full path) is in `ignore` - used only by `lume test`'s directory
+// discovery, not the public dir.walk builtin, whose documented behavior
+// shouldn't change for callers who never asked for ignore semantics.
+fn walkDirIgnoring(path: Text, depth: Int, maxDepth: Int, ignore: List<Text>): List<Text> [io] = {
+  var results: List<Text> = []
+  if let Some(entries) = listDir(path) {
+    for entry in entries {
+      val fullPath = Path.join(path, entry)
+      if isDirectory(fullPath) then {
+        if depth < maxDepth and not containsName(ignore, entry) then {
+          results = List.concat(results, walkDirIgnoring(fullPath, depth + 1, maxDepth, ignore))
+        }
+      } else {
+        results = List.push(results, fullPath)
+      }
+    }
+  }
+  results
+}
+
 fn callBuiltin(code: List<Instruction>, name: Text, input: List<Text>, deadlineMs: Int, timeoutMs: Int, line: Int): BuiltinResult [io] = {
   var stack = input
   var problem = ""
@@ -5548,7 +5569,7 @@ fn aiReference(): Text = {
   "Encode with `json.encode(value)`, which returns `result<str,str>`; supports int/str/bool/lists/records recursively. An enum (including Option<T>/Result<T,E>) encodes as its variant name under a \"variant\" key, with any payload fields flattened alongside it - e.g. `State.done(code: 0)` becomes `{\"variant\":\"done\",\"code\":0}`. " ++
   "Path helpers: path.join/basename/dirname/stem(text) -> str, path.extension(text) -> Option<str>. " ++
   "List a directory with dir.list(path) -> result<[str],str>; entries are names only, unsorted. " ++
-  "Recursively walk a directory with dir.walk(path, maxDepth) -> result<[str],str>; unlike dir.list, entries are full paths and files only (a subdirectory is recursed into, never included in the result itself), unsorted; maxDepth 0 means no recursion (only path's own files), and an unreadable subdirectory partway through the walk is silently skipped rather than failing the whole call. lume test <dir> uses the same mechanism internally (a fixed 32-level bound, not user-configurable) to discover *_test.lume files in subdirectories, not just the given directory. " ++
+  "Recursively walk a directory with dir.walk(path, maxDepth) -> result<[str],str>; unlike dir.list, entries are full paths and files only (a subdirectory is recursed into, never included in the result itself), unsorted; maxDepth 0 means no recursion (only path's own files), and an unreadable subdirectory partway through the walk is silently skipped rather than failing the whole call. lume test <dir> uses the same mechanism internally (a fixed 32-level bound, not user-configurable) to discover *_test.lume files in subdirectories, not just the given directory; --ignore name1,name2 skips recursing into any subdirectory whose own name exactly matches one in the comma-separated list (e.g. --ignore node_modules,.git), with no default ignore list. " ++
   "time.now() -> int gives the current Unix epoch seconds; time.to_iso(seconds) -> str formats it as UTC ISO-8601. " ++
   "time.year/month/day/hour/minute/second(seconds) -> int read UTC calendar components from epoch seconds. " ++
   "time.format(seconds, pattern) -> str formats epoch seconds with a strftime-style pattern (e.g. \"%Y-%m-%d\"), evaluated against UTC. " ++
@@ -5579,7 +5600,7 @@ fn usage(): Unit [io] = {
   println("       lume build <file.lume> [output.lbc]")
   println("       lume exec <file.lbc>")
   println("       lume benchmark <file.lume> [iterations]")
-  println("       lume test <file.lume> [--filter text]")
+  println("       lume test <file.lume|dir> [--filter text] [--ignore names]")
   println("       lume fmt <file.lume> [--check]")
   println("       lume install <dir>")
   println("       lume lsp")
@@ -5671,11 +5692,16 @@ fn main(): Unit [io] = {
       Process.quit(1)
     } else {
       val filter = flagValue("--filter") ?? ""
+      val rawIgnore = flagValue("--ignore") ?? ""
+      var ignoreNames: List<Text> = []
+      if not Text.eq(rawIgnore, "") then {
+        for name in Text.split(rawIgnore, ",") { ignoreNames = List.push(ignoreNames, Text.trim(name)) }
+      }
       var files = 0
       // 32 levels is a fixed, generous internal bound - not a --max-depth
       // CLI flag, since none was requested; deep enough for any real
       // project layout while still bounding a pathological/looping tree.
-      for testPath in walkDir(path, 0, 32) {
+      for testPath in walkDirIgnoring(path, 0, 32, ignoreNames) {
         if Text.endsWith(testPath, "_test.lume") then {
           files = files + 1
           if testJson then { println(testFileJson(testPath)) } else { println("TEST " ++ testPath) }
