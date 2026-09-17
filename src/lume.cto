@@ -371,7 +371,7 @@ fn parseLambda(tokens: List<Token>, start: Int): ExprResult = {
   }
   if not Text.eq(problem, "") then { expressionError(index, problem) }
   else {
-    val body = parseComparison(tokens, index + 1)
+    val body = parseOr(tokens, index + 1)
     if not Text.eq(body.problem, "") then { body }
     else {
       var code: List<Instruction> = []
@@ -411,7 +411,7 @@ fn parseCallArguments(tokens: List<Token>, start: Int): CallArgsResult = {
       index = index + 2
     } else if sawNamed then { problem = "E0105 line " ++ intToText(at(tokens, index).line) ++ ": positional argument cannot follow named argument" }
     else { sawPositional = true }
-    val argument = parseComparison(tokens, index)
+    val argument = parseOr(tokens, index)
     if not Text.eq(argument.problem, "") then { problem = argument.problem }
     else if Text.eq(problem, "") then {
       code = appendCode(code, argument.code)
@@ -439,7 +439,7 @@ fn parseListItems(tokens: List<Token>, start: Int): CallArgsResult = {
     finished = true
   }
   while not finished and Text.eq(problem, "") {
-    val item = parseComparison(tokens, index)
+    val item = parseOr(tokens, index)
     if not Text.eq(item.problem, "") then { problem = item.problem }
     else {
       code = appendCode(code, item.code)
@@ -471,7 +471,7 @@ fn loadPath(path: Text, line: Int): List<Instruction> = {
 
 fn parseMatch(tokens: List<Token>, start: Int): ExprResult = {
   val matchToken = at(tokens, start)
-  val subject = parseComparison(tokens, start + 1)
+  val subject = parseOr(tokens, start + 1)
   var problem = subject.problem
   var index = subject.next
   var names: List<Text> = []
@@ -503,7 +503,7 @@ fn parseMatch(tokens: List<Token>, start: Int): ExprResult = {
         }
         if not Text.eq(bindingProblem, "") then { problem = bindingProblem }
         else if not Text.eq(at(tokens, patternIndex).text, "=>") then { problem = "E0112 line " ++ intToText(at(tokens, patternIndex).line) ++ ": expected `=>` after match variant" }
-        val arm = parseComparison(tokens, patternIndex + 1)
+        val arm = parseOr(tokens, patternIndex + 1)
         if not Text.eq(arm.problem, "") then { problem = arm.problem }
         else if Text.eq(problem, "") then {
           names = List.push(names, variant.text ++ "|" ++ (if hasDestructuring then Text.join(bindings, ",") else "*"))
@@ -574,7 +574,7 @@ fn parseAtom(tokens: List<Token>, index: Int): ExprResult = {
   } else if Text.eq(current.kind, "name") then {
     ExprResult { next: index + 1, code: loadPath(current.text, current.line), problem: "" }
   } else if Text.eq(current.text, "(") then {
-    val inner = parseComparison(tokens, index + 1)
+    val inner = parseOr(tokens, index + 1)
     if not Text.eq(inner.problem, "") then { inner }
     else if not Text.eq(at(tokens, inner.next).text, ")") then {
       expressionError(inner.next, "E0102 expected `)`")
@@ -614,7 +614,7 @@ fn parsePrimary(tokens: List<Token>, index: Int): ExprResult = {
         if not Text.eq(field.kind, "name") then { problem = "E0118 line " ++ intToText(field.line) ++ ": expected field name in record update" }
         else if not Text.eq(at(tokens, cursor + 1).text, ":") then { problem = "E0119 line " ++ intToText(at(tokens, cursor + 1).line) ++ ": expected `:` after updated field" }
         else {
-          val value = parseComparison(tokens, cursor + 2)
+          val value = parseOr(tokens, cursor + 2)
           if not Text.eq(value.problem, "") then { problem = value.problem }
           else {
             labels = List.push(labels, field.text)
@@ -686,6 +686,74 @@ fn parseComparison(tokens: List<Token>, index: Int): ExprResult = {
       }
     } else { left }
   }
+}
+
+// Boolean and/or/not, compiled entirely with the same jump_false/jump/
+// const_bool instructions if/else already uses (see compileBlock's "if"
+// handling) - an instruction's own `number` is a PC-relative offset
+// (`ip = ip + current.number` in execute()), so `offset = N` means "skip
+// forward N-1 instructions". No new instruction types or verifyTypes
+// changes: jump_false already requires and pops a bool, and since these
+// are strict boolean operators (no truthiness), a short-circuited branch
+// only ever needs the left operand's already-known truth value, never its
+// original value - so no stack-duplication primitive is needed either.
+fn parseNot(tokens: List<Token>, index: Int): ExprResult = {
+  val current = at(tokens, index)
+  if Text.eq(current.text, "not") then {
+    val operand = parseNot(tokens, index + 1)
+    if not Text.eq(operand.problem, "") then { operand }
+    else {
+      var negated = List.push(operand.code, makeInstruction("jump_false", "", 3, current.line))
+      negated = List.push(negated, makeInstruction("const_bool", "", 0, current.line))
+      negated = List.push(negated, makeInstruction("jump", "", 2, current.line))
+      negated = List.push(negated, makeInstruction("const_bool", "", 1, current.line))
+      ExprResult { next: operand.next, code: negated, problem: "" }
+    }
+  } else { parseComparison(tokens, index) }
+}
+
+fn parseAnd(tokens: List<Token>, index: Int): ExprResult = {
+  var result = parseNot(tokens, index)
+  var running = Text.eq(result.problem, "")
+  while running {
+    val operator = at(tokens, result.next)
+    if Text.eq(operator.text, "and") then {
+      val right = parseNot(tokens, result.next + 1)
+      if not Text.eq(right.problem, "") then {
+        result = right
+        running = false
+      } else {
+        var combined = List.push(result.code, makeInstruction("jump_false", "", List.len(right.code) + 2, operator.line))
+        combined = appendCode(combined, right.code)
+        combined = List.push(combined, makeInstruction("jump", "", 2, operator.line))
+        combined = List.push(combined, makeInstruction("const_bool", "", 0, operator.line))
+        result = ExprResult { next: right.next, code: combined, problem: "" }
+      }
+    } else { running = false }
+  }
+  result
+}
+
+fn parseOr(tokens: List<Token>, index: Int): ExprResult = {
+  var result = parseAnd(tokens, index)
+  var running = Text.eq(result.problem, "")
+  while running {
+    val operator = at(tokens, result.next)
+    if Text.eq(operator.text, "or") then {
+      val right = parseAnd(tokens, result.next + 1)
+      if not Text.eq(right.problem, "") then {
+        result = right
+        running = false
+      } else {
+        var combined = List.push(result.code, makeInstruction("jump_false", "", 3, operator.line))
+        combined = List.push(combined, makeInstruction("const_bool", "", 1, operator.line))
+        combined = List.push(combined, makeInstruction("jump", "", List.len(right.code) + 1, operator.line))
+        combined = appendCode(combined, right.code)
+        result = ExprResult { next: right.next, code: combined, problem: "" }
+      }
+    } else { running = false }
+  }
+  result
 }
 
 fn skipNewlines(tokens: List<Token>, start: Int): Int = {
@@ -1069,7 +1137,7 @@ fn compileBlock(tokens: List<Token>, start: Int, initialNames: List<Text>, initi
       else if not Text.eq(equals.text, "=") then { problem = "E0204 line " ++ intToText(equals.line) ++ ": expected `=`" }
       else if bucketsContains(nameBuckets, name.text) then { problem = "E0211 line " ++ intToText(name.line) ++ ": duplicate binding `" ++ name.text ++ "`" }
       else {
-        val value = parseComparison(tokens, index + 3)
+        val value = parseOr(tokens, index + 3)
         if not Text.eq(value.problem, "") then { problem = value.problem }
         else {
           val expressionProblem = validateExpression(value.code, nameBuckets, mutableBuckets, functionNames, functionCounts, genericNames)
@@ -1089,7 +1157,7 @@ fn compileBlock(tokens: List<Token>, start: Int, initialNames: List<Text>, initi
     } else if Text.eq(current.text, "print") or Text.eq(current.text, "eprint") then {
       if not Text.eq(at(tokens, index + 1).text, "(") then { problem = "E0205 line " ++ intToText(at(tokens, index + 1).line) ++ ": expected `(`" }
       else {
-        val value = parseComparison(tokens, index + 2)
+        val value = parseOr(tokens, index + 2)
         if not Text.eq(value.problem, "") then { problem = value.problem }
         else if not Text.eq(at(tokens, value.next).text, ")") then { problem = "E0206 line " ++ intToText(at(tokens, value.next).line) ++ ": expected `)`" }
         else {
@@ -1103,7 +1171,7 @@ fn compileBlock(tokens: List<Token>, start: Int, initialNames: List<Text>, initi
         }
       }
     } else if Text.eq(current.text, "return") then {
-      val value = parseComparison(tokens, index + 1)
+      val value = parseOr(tokens, index + 1)
       if not Text.eq(value.problem, "") then { problem = value.problem }
       else {
         val expressionProblem = validateExpression(value.code, nameBuckets, mutableBuckets, functionNames, functionCounts, genericNames)
@@ -1114,7 +1182,7 @@ fn compileBlock(tokens: List<Token>, start: Int, initialNames: List<Text>, initi
         }
       }
     } else if Text.eq(current.text, "if") then {
-      val condition = parseComparison(tokens, index + 1)
+      val condition = parseOr(tokens, index + 1)
       val expressionProblem = validateExpression(condition.code, nameBuckets, mutableBuckets, functionNames, functionCounts, genericNames)
       if not Text.eq(condition.problem, "") then { problem = condition.problem }
       else if not Text.eq(expressionProblem, "") then { problem = expressionProblem }
@@ -1147,7 +1215,7 @@ fn compileBlock(tokens: List<Token>, start: Int, initialNames: List<Text>, initi
         }
       }
     } else if Text.eq(current.text, "while") then {
-      val condition = parseComparison(tokens, index + 1)
+      val condition = parseOr(tokens, index + 1)
       val expressionProblem = validateExpression(condition.code, nameBuckets, mutableBuckets, functionNames, functionCounts, genericNames)
       if not Text.eq(condition.problem, "") then { problem = condition.problem }
       else if not Text.eq(expressionProblem, "") then { problem = expressionProblem }
@@ -1164,7 +1232,7 @@ fn compileBlock(tokens: List<Token>, start: Int, initialNames: List<Text>, initi
         }
       }
     } else if Text.startsWith(current.text, "expect.") then {
-      val value = parseComparison(tokens, index)
+      val value = parseOr(tokens, index)
       if not Text.eq(value.problem, "") then { problem = value.problem }
       else {
         val expressionProblem = validateExpression(value.code, nameBuckets, mutableBuckets, functionNames, functionCounts, genericNames)
@@ -1175,7 +1243,7 @@ fn compileBlock(tokens: List<Token>, start: Int, initialNames: List<Text>, initi
         }
       }
     } else if Text.eq(current.kind, "name") and Text.eq(at(tokens, index + 1).text, "=") then {
-      val value = parseComparison(tokens, index + 2)
+      val value = parseOr(tokens, index + 2)
       if not bucketsContains(nameBuckets, current.text) then { problem = "E0210 line " ++ intToText(current.line) ++ ": undefined binding `" ++ current.text ++ "`" }
       else if not bucketsContains(mutableBuckets, current.text) then { problem = "E0215 line " ++ intToText(current.line) ++ ": cannot assign to immutable `" ++ current.text ++ "`" }
       else if not Text.eq(value.problem, "") then { problem = value.problem }
@@ -5597,7 +5665,7 @@ fn aiReference(): Text = {
   "Map<K,V> via map.new/len/get/set/has/remove/keys/values; map.get returns Option<V>; keys must be int, str, or bool. " ++
   "Transform maps with map.map/filter/fold, same callback convention as list.*, operating on values only (keys pass through unchanged). " ++
   "Match every variant with `match state { waiting => \"wait\", done(code) => \"done\" }`; payload bindings are typed and arm-local. " ++
-  "Record construction requires every field exactly once and is statically checked. Operators: + - * / % == != < <= > >=. " ++
+  "Record construction requires every field exactly once and is statically checked. Operators: + - * / % == != < <= > >=, plus the boolean keyword-operators and/or/not (short-circuiting: and/or's right operand is only evaluated when the left doesn't already determine the result; not binds tighter than and, which binds tighter than or; both operands of and/or and not's own operand must be bool). " ++
   "Builtins and arities are returned by `lume api`. main signature: fn main(args: [str]) -> int. " ++
   "Use two-space indentation, braces, one statement per line, and no semicolons. " ++
   "lume lsp runs a diagnostics-only Language Server Protocol server over stdio (Content-Length-framed JSON-RPC, full-document sync): initialize/shutdown/exit are handled, and textDocument/didOpen/didChange/didClose each publish at most one diagnostic (compileSource, like every Lume compile path, reports only the first problem it finds)."
