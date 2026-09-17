@@ -820,11 +820,42 @@ against the real compiler rather than assumed from the grammar:
   that motivated this fix to a direct `str.from_int(n)` call, with
   identical output confirmed before and after.
 
-None of these blocked the example program, but they're real ergonomic
-gaps for a language whose own stated top-level principle (see "Product
-principles" above) is "reliable AI generation" — an AI generating Lume
-code has to already know these three specific workarounds rather than
-writing the obvious thing.
+Two more real gaps found while writing a full user manual
+(`docs/using-lume-the-fast-one.md`), each confirmed by a live compile/
+run against the real compiler, not assumed:
+
+- **there are two separate, non-interchangeable `Result` conventions,
+  and nothing in this repository documented the split before now** —
+  the `Result<T, E>` enum a program constructs by hand with
+  `Result.Ok(...)`/`Result.Err(...)` (matchable with `match`), versus
+  the lowercase `result<T, E>` every `fs.try_read_text`/`fs.read_bytes`/
+  `dir.list`/`dir.walk`/`http.*`/`Type.from_json`/`EnumName.from_json`
+  builtin actually returns (readable only via `result.is_ok`/
+  `result.value`/`result.error`, never `match`, and not assignable to
+  or returnable from a signature declared with the capitalized type).
+  Confirmed directly: `match` on a builtin's return is `E0650 match
+  requires an enum`; returning a builtin's `result<T,E>` from a function
+  declared `-> Result<T, E>` is `E0618 type mismatch`; and
+  `result.is_ok` on a hand-constructed `Result.Ok(...)` value is `E0622
+  result operation requires result value`. `Option<T>` has no such
+  split — every source of an `Option` (`list.find`, `map.get`, or a
+  hand-declared `-> Option<T>` function) interoperates freely with
+  `match`. This asymmetry is confirmed, not yet designed around or
+  fixed — filing it here since a consumer (this manual, and presumably
+  any AI generating Lume from a prompt) needs to know it exists, even
+  before deciding whether the two conventions should be unified;
+- **a function call's return value cannot have a field accessed
+  directly** — `result.value(decoded).name` is a syntax error (`E0206
+  expected )`); the call's result must be bound to a `let` first, then
+  the field read off that binding. Confirmed as a real parser gap, not
+  a type error — same call bound to a `let` first compiles and runs
+  correctly.
+
+None of these blocked the manual's own examples once corrected, but
+they're real ergonomic gaps for a language whose own stated top-level
+principle (see "Product principles" above) is "reliable AI generation"
+— an AI generating Lume code has to already know these five specific
+things rather than writing the obvious thing.
 
 ## Later: ecosystem readiness
 

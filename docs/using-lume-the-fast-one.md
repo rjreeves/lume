@@ -7,8 +7,16 @@ but does not need a large application stack. It combines short programs,
 static checking, structured data, explicit errors, fast compilation, and a
 small API surface that is easy for people and AI systems to learn.
 
-This book describes the language that exists today. Its examples are designed
-to be copied, checked, and adapted.
+This book describes the language **as the current bootstrap compiler
+(`src/lume.cto`) actually implements it**, verified against a real built
+`dist/lume.exe` rather than assumed from design documents. Where this
+repository's other documents (`README.md`, `SPEC.md`) describe a larger,
+aspirational design — string interpolation, bracket-generic JSON decoding,
+`value ! error` return types, bare `use fs`-style imports — none of that
+exists in the bootstrap today; this book does not use it. Its examples are
+designed to be copied, checked, and run exactly as written. The
+machine-readable source of truth for exact builtin names and arities is
+always [`ai/lume-api.json`](../ai/lume-api.json), regenerated on every build.
 
 ---
 
@@ -17,21 +25,28 @@ to be copied, checked, and adapted.
 1. Why Lume
 2. Your first program
 3. Values, bindings, and expressions
-4. Control flow
+4. Control flow — and what Lume deliberately leaves out
 5. Functions and recursion
 6. Lists and transformations
 7. Records and immutable updates
 8. Enums and exhaustive matching
-9. Generics
+9. Generics, constraints, and protocols
 10. Option and Result
-11. JSON and files
-12. Processes and environment values
-13. Modules
-14. Building, bytecode, and performance
-15. Editor and AI tooling
-16. A complete automation program
-17. Design habits
-18. Current boundaries
+11. Typed maps
+12. JSON: encoding and decoding
+13. Files and paths
+14. Processes and environment values
+15. HTTP requests
+16. Bytes
+17. Time and duration
+18. Modules
+19. Packages
+20. Testing
+21. Building, bytecode, and performance
+22. Editor and AI tooling
+23. A complete automation program
+24. Design habits
+25. Current boundaries and known gotchas
 
 ---
 
@@ -49,14 +64,14 @@ Lume occupies the space between them:
 
 - concise enough for scripts;
 - statically checked before execution;
-- structured around records, enums, lists, and results;
+- structured around records, enums, lists, maps, and results;
 - compiled to compact, validated bytecode;
 - intentionally small enough to describe to an AI model;
 - designed around a 10,000-source-lines-per-second compilation target.
 
-The current 10,000-line benchmark runs at roughly 31,000 lines per second on
-the development machine. Treat that as a local measurement, not a universal
-hardware-independent promise.
+See [`BENCHMARKS.md`](../BENCHMARKS.md) for actual, dated measurements —
+treat any single number as a local measurement on one machine, not a
+universal promise.
 
 ## 2. Your first program
 
@@ -64,8 +79,11 @@ Create `hello.lume`:
 
 ```lume
 fn main(args: [str]) -> int {
-  let name = list.get(args, 0) ?? "world"
-  print("Hello, " + name)
+  var name = "world"
+  if list.len(args) > 0 {
+    name = list.get(args, 0)
+  }
+  print("hello, " + name)
   return 0
 }
 ```
@@ -80,23 +98,27 @@ Every program has a `main` function. It receives command-line arguments as a
 list of strings and returns an integer exit code. Zero conventionally means
 success.
 
-Useful front-door commands are:
+The full command surface:
 
 ```text
-lume run program.lume
-lume check program.lume
-lume tokens program.lume
-lume bytecode program.lume
-lume build program.lume program.lbc
-lume exec program.lbc
-lume benchmark program.lume 100
-lume fmt program.lume
+lume run <file.lume> [args...]
+lume check <file.lume>
+lume tokens <file.lume>
+lume bytecode <file.lume>
+lume build <file.lume> [output.lbc]
+lume exec <file.lbc>
+lume benchmark <file.lume> [iterations]
+lume test <file.lume|dir> [--filter text] [--ignore names]
+lume fmt <file.lume> [--check]
+lume install <dir>
+lume lsp
 lume api
 lume ai-reference
 ```
 
 Use `check` in fast feedback loops: it validates a program without running its
-effects.
+effects. Add `--json` to `check`/`fmt --check`/`test` for machine-readable
+output (see section 20).
 
 ## 3. Values, bindings, and expressions
 
@@ -116,6 +138,15 @@ var total = 0
 total = total + 1
 ```
 
+**`let`/`var` have no type-annotation syntax at all** — `let name = expr` is
+the only form; `let name: Type = expr` is a compile error (`E0204 expected
+=`). A binding's type is always inferred from its initializer. This matters
+for an empty collection literal: `var items = []` infers an unusable
+placeholder element type that later assignments will reject — seed it with a
+real first element instead (`var items = [firstValue]`, then `list.push` the
+rest), the same way `map.new()` alone doesn't carry concrete key/value types
+until a real `map.set` call establishes them.
+
 The compiler rejects assignment to `let`, inconsistent reassignment, unknown
 names, invalid operands, and calls with the wrong arity.
 
@@ -127,13 +158,28 @@ let ready = retries < 3
 let same = left == right
 ```
 
-String concatenation uses `+`:
+The full operator set is `+ - * / % == != < <= > >=`. String concatenation
+overloads `+`:
 
 ```lume
 let message = "service=" + service
 ```
 
-## 4. Control flow
+**There is no `int`-to-`str` interpolation or formatting operator.** Convert
+a number to text explicitly with `str.from_int(n)`:
+
+```lume
+let message = "retry " + str.from_int(retries) + " of 3"
+```
+
+There is no string-interpolation syntax (`"{expr}"` is printed completely
+literally, braces and all — it is not a template), and **there is no `??`
+null-coalescing operator** — that is Certo syntax (the separate language
+this bootstrap compiler is itself written in), not Lume. Get a value out of
+an `Option<T>` or a builtin's `Result`-shaped return with `match` or a
+plain `if`/`var`, as shown in sections 6 and 10.
+
+## 4. Control flow — and what Lume deliberately leaves out
 
 Conditions must be boolean:
 
@@ -155,8 +201,57 @@ while index < list.len(items) {
 }
 ```
 
-The checker prevents integers, strings, or records from being used as accidental
-conditions.
+**There is no `for` loop at all — not a range loop, and not a `for x in
+list` iteration loop either.** `while` is the only loop construct. Every
+example in this book that walks a list uses a manually incremented index:
+
+```lume
+var index = 0
+while index < list.len(entries) {
+  print(list.get(entries, index))
+  index = index + 1
+}
+```
+
+There is also no `break`/`continue` — express early exit with a boolean
+flag checked in the loop condition.
+
+**Two real, easy-to-trip gotchas, worth stating plainly:**
+
+- **`if`/`else` is a statement, not an expression.** `let x = if cond { a }
+  else { b }` is a compile error (`E0101 expected expression`). Write a
+  small helper function with an early `return` in each branch instead:
+
+  ```lume
+  fn clamp_or_zero(value: int, limit: int) -> int {
+    if value > limit {
+      return limit
+    }
+    return value
+  }
+  ```
+
+- **There are no `and`/`or`/`not` boolean operators, in any spelling** (no
+  keywords, no `&&`/`||`/`!` for boolean logic — `!` is reserved for
+  `Result`/`Option` propagation, see section 10). Every compound condition
+  needs nested `if`s:
+
+  ```lume
+  // instead of: if a and b { ... }
+  if a {
+    if b {
+      // ...
+    }
+  }
+  ```
+
+  For an "or" shape, use two separate `if` blocks that both lead to the same
+  outcome, or a `var` flag set by either branch before a single check. When a
+  condition has many cases, prefer restructuring it as a small boolean-typed
+  helper function (as above) — it reads far better than deep `if` nesting.
+
+The checker prevents integers, strings, or records from being used as
+accidental conditions.
 
 ## 5. Functions and recursion
 
@@ -191,49 +286,52 @@ let ports = [5432, 5433, 5434]
 let names = ["api", "worker", "scheduler"]
 ```
 
+Nested list types are written `[[int]]`, `[[str]]`, and so on.
+
 The basic immutable list operations are:
 
 ```lume
 list.len(values)
-list.get(values, 0)
+list.get(values, index)
 list.push(values, new_value)
 ```
 
-`list.push` returns a new list. It does not change the original.
+`list.push` returns a new list; it does not change the original. There is no
+`list.set`/update-at-index, no removal function (`pop`/`remove`), and no
+range-check that returns an `Option` — `list.get` on an out-of-range index is
+a runtime failure, not a safe `None`.
 
-Lume also provides typed transformations. A function reference uses `&name`:
+Typed transformations take a named function reference (`&name`) or an inline
+closure:
 
 ```lume
-fn double(value: int) -> int {
-  return value * 2
-}
-
-fn even(value: int) -> bool {
-  return value % 2 == 0
-}
-
-fn add(total: int, value: int) -> int {
-  return total + value
-}
+fn double(value: int) -> int { return value * 2 }
+fn even(value: int) -> bool { return value % 2 == 0 }
+fn add(total: int, value: int) -> int { return total + value }
 
 let values = [1, 2, 3, 4]
 let doubled = list.map(values, &double)
 let evens = list.filter(values, &even)
-let first_even = list.find(values, &even)
+let first_even = list.find(values, &even)     // Option<int>
 let total = list.fold(values, 0, &add)
 ```
 
-Callback input and output types are checked at compile time. Inline closures use
-`fn(parameter: type) -> return_type => expression` and may capture immutable
-bindings:
+Callback input and output types are checked at compile time. Inline closures
+use `fn(parameter: type) -> return_type => expression` and may capture
+immutable (`let`) bindings by value — capturing a `var` is rejected:
 
 ```lume
 let offset = 10
 let shifted = list.map(values, fn(value: int) -> int => value + offset)
 ```
 
-Mutable captures are rejected. A closure can call ordinary functions and use
-the same expression operations as other Lume code.
+A closure or `&name` reference works only as the *direct, inline* argument to
+`list.map`/`filter`/`find`/`fold`/`map.map`/`filter`/`fold` — neither is a
+general first-class value; a closure cannot be bound to a `let` and called
+later. `match` is not supported anywhere in a closure's reachable call graph
+(it fails at runtime with "callback uses unsupported operation" if it is) —
+write logic that needs to pattern-match an enum as an ordinary function
+called directly instead of inside a callback.
 
 ## 7. Records and immutable updates
 
@@ -246,48 +344,29 @@ type Database {
   secure: bool
 }
 
-let database = Database(
-  host: "db.internal",
-  port: 5432,
-  secure: true
-)
-
+let database = Database(host: "db.internal", port: 5432, secure: true)
 print(database.host)
 ```
 
-Construction requires every field exactly once. Unknown fields, missing fields,
-duplicates, and incorrect values are rejected.
+Construction requires every field exactly once. Unknown fields, missing
+fields, duplicates, and incorrect values are rejected.
 
 Use `with` to create a changed copy:
 
 ```lume
-let local = database with {
-  host: "localhost"
-  secure: false
-}
+let local = database with { host: "localhost", secure: false }
 ```
 
 The original remains unchanged. Updates may be nested:
 
 ```lume
-type Preferences {
-  theme: str
-}
-
-type User {
-  name: str
-  preferences: Preferences
-}
+type Preferences { theme: str }
+type User { name: str, preferences: Preferences }
 
 let darker = user with {
-  preferences: user.preferences with {
-    theme: "dark"
-  }
+  preferences: user.preferences with { theme: "dark" }
 }
 ```
-
-Immutable updates reduce hidden state changes and make generated code easier to
-review.
 
 ## 8. Enums and exhaustive matching
 
@@ -304,7 +383,7 @@ enum JobState {
 let state = JobState.running(attempt: 2)
 ```
 
-`match` is an expression. Every variant must be handled exactly once:
+`match` is an expression and evaluates only its selected arm:
 
 ```lume
 fn describe(state: JobState) -> str {
@@ -317,11 +396,14 @@ fn describe(state: JobState) -> str {
 }
 ```
 
-Payload names exist only inside their arm and receive their types from the enum
-declaration. The compiler rejects missing arms, duplicate arms, unknown variants,
-incorrect destructuring, and incompatible arm results.
+Every variant must appear exactly once, and every arm must produce a
+compatible type. Non-enum subjects, impossible variants, duplicate arms,
+non-exhaustive matches, and inconsistent arm result types are compile
+errors. Payload names exist only inside their arm and receive their types
+from the enum declaration; a bare arm such as `completed => ...` explicitly
+ignores its payload.
 
-## 9. Generics
+## 9. Generics, constraints, and protocols
 
 Generics let one definition retain precise types across many uses:
 
@@ -337,35 +419,14 @@ let label = identity("primary")
 Generic records and enums use the same parameter syntax:
 
 ```lume
-type Box<T> {
-  value: T
-}
-
-enum Maybe<T> {
-  Some(value: T)
-  None
-}
-
-let boxed = Box(value: 42)
-let present = Maybe.Some(value: "ready")
+type Box<T> { value: T }
 ```
 
-The compiler infers substitutions from call and constructor arguments. Nested
-forms such as `Result<[User], str>` are parsed as structured types rather than
-unstructured text.
+The compiler infers substitutions from call and constructor arguments; a
+generic call site or constructor is not a general first-class value either.
 
-Generic callbacks work with list transformations:
-
-```lume
-fn keep<T>(value: T) -> T {
-  return value
-}
-
-let unchanged = list.map([1, 2, 3], &keep)
-```
-
-Constrain a generic function when its callers must supply a particular family
-of values:
+Constrain a generic function with one of four built-in markers: `Eq`, `Ord`,
+`Number`, or `Text`:
 
 ```lume
 fn keep_number<T: Number>(value: T) -> T {
@@ -373,26 +434,84 @@ fn keep_number<T: Number>(value: T) -> T {
 }
 ```
 
-The built-in constraints are `Eq` for equality-capable scalar values, `Ord` for
-ordered integers and strings, `Number` for integers, and `Text` for strings.
-They are checked after type inference and erased before execution.
+`Number` accepts `int`; `Text` accepts `str` (and allows `+` inside the
+constrained function's own body); `Eq`/`Ord` accept `int`/`str`/`bool`
+natively, and any record or enum type with an explicit `impl`:
+
+```lume
+type Point { x: int, y: int }
+
+impl Eq for Point {}
+```
+
+An `impl Eq for X {}` (empty body — this is opt-in *marking*, not derivation)
+makes `X` usable anywhere `T: Eq` is required, including as a `Map<K, V>`
+key. `Ord` needs a real method body for a compound type, since ordering isn't
+structurally obvious the way equality is:
+
+```lume
+impl Ord for Point {
+  fn compare(a: Point, b: Point) -> int {
+    if a.x != b.x { return a.x - b.x }
+    return a.y - b.y
+  }
+}
+```
+
+Once implemented, `<`/`<=`/`>`/`>=` (and `==`/`!=` via `Eq`) work directly on
+values of that type inside any function whose own generic parameter is
+constrained by the matching marker.
+
+Projects can also declare their own protocols with required methods:
+
+```lume
+protocol Named {
+  fn name(value: Self) -> str
+}
+
+impl Named for User {
+  fn name(value: User) -> str {
+    return value.name
+  }
+}
+
+fn keep_named<T: Named>(value: T) -> T {
+  return value
+}
+```
+
+Protocol methods compile to concrete functions and are called with qualified
+static syntax (`User.name(user)`) — there is no runtime method lookup or
+dynamic dispatch. The compiler rejects a missing, extra, duplicate, or
+incorrectly typed method, an unknown protocol, or a duplicate implementation
+for the same type.
 
 ## 10. Option and Result
 
-`Option<T>` represents a value that may be absent. `Result<T, E>` represents
-success or a typed failure. Both are available without a declaration.
-
-`list.find` returns an option:
+`Option<T>` and `Result<T, E>` are always available, without any
+declaration. `Option<T>` is a single, consistent enum: every function that
+produces one (`list.find`, `map.get`, or a function you declare yourself
+with `-> Option<T>`) can be read the same way, with `match`:
 
 ```lume
-let selected = list.find(values, &even)
+fn even(value: int) -> bool { return value % 2 == 0 }
+
+let selected = list.find([1, 3, 4], &even)      // Option<int>
 let display = match selected {
   Some(value) => value
   None => 0
 }
 ```
 
-Construct and match results explicitly:
+**`Result` is not this simple — there are two separate, non-interchangeable
+"Result" conventions in the current bootstrap, confirmed by direct testing
+against the real compiler, not documented anywhere else in this
+repository.** Getting this wrong produces confusing type-mismatch errors
+rather than a clear diagnostic, so it is worth learning as one fact rather
+than debugging by trial and error.
+
+**World 1 — the `Result` enum**, for a function *you* write and construct
+by hand:
 
 ```lume
 fn validate(port: int) -> Result<int, str> {
@@ -401,9 +520,13 @@ fn validate(port: int) -> Result<int, str> {
   }
   return Result.Err(error: "port must be positive")
 }
+
+print(match validate(5432) { Ok(value) => value, Err(message) => 0 })
 ```
 
-The `?` postfix operator extracts success and immediately returns failure:
+Read this kind with `match { Ok(x) => ..., Err(e) => ... }`, or with `?`/`!`
+to propagate out of another function that also declares `-> Result<T, E>`
+(capitalized):
 
 ```lume
 fn checked_port() -> Result<int, str> {
@@ -412,74 +535,334 @@ fn checked_port() -> Result<int, str> {
 }
 ```
 
-The compiler verifies that `?` appears inside a result-returning function and
-that the propagated error type matches. The older `!` spelling remains available
-for compatibility with existing Lume programs.
-
-## 11. JSON and files
-
-Decode JSON directly into a record schema:
+**World 2 — the lowercase `result<T, E>` builtins produce**: `fs.try_read_text`/
+`try_write_text`, `dir.list`, `dir.walk`, every `http.*` request function,
+`fs.read_bytes`, and `Type.from_json`/`EnumName.from_json` (section 12) all
+return this second kind, not the `Result` enum above — confirmed directly:
+a value from any of these **cannot be matched with `match { Ok(...) =>
+..., Err(...) => ... }`** (`E0650 match requires an enum`) and **cannot be
+returned from a function declared `-> Result<T, E>`** (capitalized —
+`E0618 type mismatch`), even though both "look like a Result." Read and
+build this kind exclusively through the plain `result.*` helper functions,
+and declare a wrapping function's own return type in **lowercase**:
 
 ```lume
-type User {
-  name: str
-  active: bool
+result.ok(value)          // wraps value as this kind's own Ok
+result.err(message)       // wraps message as this kind's own Err
+result.is_ok(outcome)     // -> bool
+result.value(outcome)     // unwraps Ok, panics on Err
+result.error(outcome)     // unwraps Err, panics on Ok
+```
+
+`?`/`!` still work for propagation, but only inside a function whose own
+declared return type is the matching lowercase `result<T, E>`:
+
+```lume
+type AppConfig { name: str }
+
+fn load_config(path: str) -> result<AppConfig, str> {
+  let source = fs.try_read_text(path)?
+  return AppConfig.from_json(source)
 }
 
-fn decode(input: str) -> result<User, str> {
-  let user = User.from_json(input)!
-  return result.ok(user)
+fn main(args: [str]) -> int {
+  let loaded = load_config("app.json")
+  if result.is_ok(loaded) {
+    let config = result.value(loaded)
+    print(config.name)
+  } else {
+    eprint(result.error(loaded))
+  }
+  return 0
 }
 ```
 
-Decoding checks schemas recursively, including nested records and lists.
-Errors contain the failing field path. Missing, unknown, and incorrectly typed
-fields are not silently accepted.
+**The practical rule**: if the value came from `fs.*`/`dir.*`/`http.*`/
+`.from_json(...)` at any point in its history, treat it as world 2 for the
+rest of its life — read it only with `result.*`, and if you wrap it in your
+own function, declare that function's return type in lowercase
+`result<T, E>` too. If you constructed it yourself with `Result.Ok(...)`/
+`Result.Err(...)`, it's world 1 — use `match`. Never mix the two: neither
+`result.is_ok` on a `Result.Ok(...)`-constructed value nor `match` on a
+builtin's return will type-check.
 
-Core file operations include:
+## 11. Typed maps
+
+`Map<K, V>` is a built-in key/value collection, constructed and read through
+`map.*` builtins rather than literal syntax. Keys are restricted to
+`int`/`str`/`bool` — or any record/enum type with an explicit `impl Eq`:
 
 ```lume
-fs.exists(path)
-fs.read_text(path)
-fs.write_text(path, content)
-fs.try_read_text(path)
-fs.try_write_text(path, content)
+fn sum(total: int, value: int) -> int { return total + value }
+
+let empty = map.new()
+let scores = map.set(map.set(empty, "Ada", 92), "Grace", 98)
+print(map.has(scores, "Ada"))
+print(map.len(scores))
+print(match map.get(scores, "Ada") { Some(score) => score, None => -1 })
+print(list.len(map.keys(scores)))
+
+let cleared = map.remove(scores, "Ada")
+let raised = map.map(scores, fn(value: int) -> int => value + 1)
+let passing = map.filter(scores, fn(value: int) -> bool => value >= 95)
+let total = map.fold(scores, 0, &sum)
 ```
 
-Prefer the `try_` forms when failure is expected and should remain data. The
-non-try forms are useful when failure should stop the program.
+Like `list.push`, every `map.*` mutation returns a new map. `map.map`/
+`filter` callbacks take the value only (`(V) -> ...`); keys pass through
+unchanged. There is no map literal syntax and no `(key, value)`
+two-parameter callback shape.
 
-## 12. Processes and environment values
+A bare `map.new()` alone does not carry a concrete key/value type — passing
+it straight into something that requires `Map<str, str>` before any real
+`map.set` establishes those types can fail to type-check. Establish the
+types with a real `set`/`get` first, or build-then-remove for a genuinely
+empty typed map:
+
+```lume
+let headers = map.remove(map.set(map.new(), "placeholder", "value"), "placeholder")
+```
+
+## 12. JSON: encoding and decoding
+
+Decode JSON directly into a record schema — `Type.from_json(text)` returns
+the lowercase `result<Type, str>` builtin convention from section 10, not
+the `Result` enum, so read it with `result.*`, never `match`:
+
+```lume
+type User { name: str, active: bool }
+
+let decoded = User.from_json(text)
+if result.is_ok(decoded) {
+  let user = result.value(decoded)
+  print(user.name)
+} else {
+  eprint(result.error(decoded))
+}
+```
+
+(Bind the call's result to a `let` before accessing a field on it, as
+above — a function call's return value cannot have a field chained directly
+onto it, e.g. `result.value(decoded).name` is a syntax error, `expected
+)`.)
+
+Decoding checks schemas recursively, including nested records, lists, and
+enums. Errors contain the failing field path (`User.address.city must be
+str`). Missing, unknown, and incorrectly typed fields are all rejected.
+
+`EnumName.from_json(text)` decodes the same `{"variant": "Name", ...}` shape
+`json.encode` (below) produces, matching an unknown variant or a missing/
+mistyped payload field with its own clear error.
+
+`json.encode(value) -> result<str, str>` (section 10's builtin convention
+again — unwrap with `result.value`, don't `print` it directly, or you'll
+see its raw internal tagging rather than the JSON text) goes the other
+direction and needs no schema — every value already carries its own
+runtime type tag, so it works on any `str`/`int`/`bool`/record/list/enum,
+recursively:
+
+```lume
+print(result.value(json.encode(user)))                 // {"name":"Ada","active":true}
+print(result.value(json.encode(State.waiting())))       // {"variant":"waiting"}
+print(result.value(json.encode(State.done(code: 7))))   // {"variant":"done","code":7}
+print(result.value(json.encode(Option.Some(value: 1)))) // {"variant":"Some","value":1}
+```
+
+`json.valid(text) -> bool` and `json.get(text, key) -> str` (a scalar-only
+raw-field reader, distinct from schema-checked `from_json`) round out the
+`json.*` group.
+
+## 13. Files and paths
+
+Core file operations:
+
+```lume
+fs.exists(path)                 // -> bool
+fs.read_text(path)              // -> str (fails the program if missing)
+fs.write_text(path, content)    // -> bool
+fs.try_read_text(path)          // -> result<str, str> (section 10's builtin convention)
+fs.try_write_text(path, content)// -> bool
+fs.read_bytes(path)             // -> result<bytes, str>
+fs.write_bytes(path, data)      // -> bool
+```
+
+Prefer the `try_` forms when failure is expected and should remain data; use
+the plain forms when failure should stop the program. Read a `try_`/
+`read_bytes` outcome with `result.is_ok`/`result.value`/`result.error`
+(never `match`) — see section 10.
+
+`path.*` is pure string manipulation, portable across `/` and `\`
+separators — no filesystem access:
+
+```lume
+let dir = path.join("reports", "2026")
+print(path.basename("reports/2026/summary.csv"))  // summary.csv
+print(path.dirname("reports/2026/summary.csv"))   // reports/2026
+print(path.stem("reports/2026/summary.csv"))      // summary
+print(match path.extension("reports/2026/summary.csv") {
+  Some(ext) => ext
+  None => "none"
+})                                                 // csv
+```
+
+`path.extension` returns `None` for a path with no dot, or a leading-dot
+name like `.gitignore`.
+
+`dir.list(path) -> result<[str], str>` lists one directory level (names
+only, unsorted). `dir.walk(path, maxDepth) -> result<[str], str>` recurses:
+entries are *full paths, files only* (a subdirectory is recursed into, never
+included itself), unsorted; `maxDepth` of `0` means no recursion at all
+(only `path`'s own files); an unreadable subdirectory partway through is
+silently skipped rather than failing the whole call:
+
+```lume
+let found = dir.walk("reports", 8)
+if result.is_ok(found) {
+  let entries = result.value(found)
+  var index = 0
+  while index < list.len(entries) {
+    print(list.get(entries, index))
+    index = index + 1
+  }
+}
+```
+
+## 14. Processes and environment values
 
 Run a process with an explicit executable and list of arguments:
 
 ```lume
-let process = process.run("git", ["status", "--short"])
-
-if process.ok(process) {
-  print(process.stdout(process))
+let outcome = process.run("git", ["status", "--short"])
+if process.ok(outcome) {
+  print(process.stdout(outcome))
 } else {
-  eprint(process.stderr(process))
+  eprint(process.stderr(outcome))
 }
 ```
 
-Process output is structured. Access its exit code, standard output, standard
-error, and success flag with `process.code`, `process.stdout`, `process.stderr`,
-and `process.ok`.
+Read its exit code, stdout, stderr, and success flag with `process.code`/
+`process.stdout`/`process.stderr`/`process.ok`. Arguments are always a list,
+never an interpolated command string — this keeps spaces and quoting
+predictable.
+
+Three richer variants, all returning the same `process` result:
+
+```lume
+process.run_with_input(exe, args, input)          // pipes input to stdin
+process.run_with_env(exe, args, envMap)           // Map<str,str> overrides, restored after
+process.run_with_options(exe, args, workingDir, timeoutMs)
+```
+
+`process.run_with_options`'s `workingDir` of `""` means "don't change
+directory"; `timeoutMs <= 0` means no timeout. A timed-out process is killed
+and reports `process.code(result) == -1` — the same value a failed-to-spawn
+process reports, since the underlying result has no separate "timed out"
+flag; don't rely on `-1` alone to distinguish the two cases.
 
 Read environment values with:
 
 ```lume
-let configured = env.has("DATABASE_URL")
-let database_url = env.get("DATABASE_URL")
+env.get(name)      // -> str
+env.has(name)      // -> bool
+env.set(name, value)   // -> bool
+env.unset(name)        // -> bool
 ```
 
-Arguments remain lists rather than interpolated command strings. This keeps
-spaces and quoting predictable and avoids an entire class of shell mistakes.
+## 15. HTTP requests
 
-## 13. Modules
+`http.get(url)`/`http.delete(url)` return `result<http, str>` (section 10's
+builtin convention — read with `result.*`, never `match`):
 
-Split related functions into files and import them with `use`.
+```lume
+let outcome = http.get("http://example.com")
+if result.is_ok(outcome) {
+  let response = result.value(outcome)
+  print(http.status(response))
+  print(http.ok(response))
+} else {
+  eprint(result.error(outcome))
+}
+```
+
+`http.post(url, body, content_type)`/`http.put(url, body, content_type)`
+send a fixed-`Content-Type` body. `http.request(method, url, headers, body)`
+(`headers: Map<str, str>`) sends any method with arbitrary headers — the
+only one of these that can send `Authorization` or anything beyond a fixed
+`Content-Type`. `http.request_bytes(method, url, headers, data)` mirrors it
+with a `bytes` body, paired with `http.body_bytes(response) -> bytes`.
+
+Read a response with `http.status`/`http.body`/`http.content_type`/
+`http.ok`/`http.truncated`.
+
+All six of the functions above are bounded at a fixed 10 MiB response size —
+checked *at request time* (the client stops reading once the limit is hit,
+not after downloading further), converting an oversized response into `Err`.
+For a caller-chosen limit that does *not* auto-error, use
+`http.request_with_limit(method, url, headers, body, maxBytes) ->
+result<http, str>` (`maxBytes <= 0` means unlimited) and check
+`http.truncated(response) -> bool` yourself:
+
+```lume
+let headers = map.remove(map.set(map.new(), "x", "y"), "x")  // empty Map<str,str>
+let outcome = http.request_with_limit("GET", url, headers, "", 1024)
+if result.is_ok(outcome) {
+  let response = result.value(outcome)
+  if http.truncated(response) {
+    print("response was cut off at 1024 bytes")
+  }
+}
+```
+
+HTTP is Windows-only today — the underlying client is a stub on other
+platforms that aborts the process rather than returning an `Err`.
+
+## 16. Bytes
+
+`bytes` is a type distinct from `str`, but represented identically at
+runtime — a deliberate scope reduction, not a NUL-safe binary type. Content
+with an embedded NUL byte truncates at the NUL on round-trip.
+
+```lume
+bytes.from_str(text) -> bytes
+bytes.to_str(data) -> str
+bytes.length(data) -> int
+```
+
+`fs.read_bytes`/`fs.write_bytes` and `http.request_bytes`/
+`http.body_bytes` mirror the `str` file/HTTP APIs with a `bytes` payload.
+
+## 17. Time and duration
+
+```lume
+time.now() -> int                              // Unix epoch seconds
+time.to_iso(seconds) -> str                    // UTC ISO-8601
+time.year/month/day/hour/minute/second(seconds) -> int   // UTC calendar components
+time.format(seconds, pattern) -> str           // strftime-style, UTC
+time.in_timezone(seconds, zone) -> result<str, str>          // section 10's builtin convention
+time.format_in_timezone(seconds, pattern, zone) -> result<str, str>
+```
+
+`pattern` accepts the host `strftime`'s directives (`%Y`, `%m`, `%d`, `%H`,
+`%M`, `%S`, `%A`, `%B`, and so on). `zone` is an IANA name
+(`"America/New_York"`); an unrecognized name is `Err`, not a crash. Avoid
+`%Z`/`%z` inside `format_in_timezone`'s pattern — those two directives read
+the *host's own* configured timezone, not `zone`, so they cannot reflect an
+arbitrary zone correctly; use `time.in_timezone`'s own numeric offset
+instead.
+
+```lume
+duration.seconds/minutes/hours/days(n) -> int
+```
+
+These are plain `int`-returning functions, the same representation
+`time.now()` uses — not a distinct `Duration` type with its own arithmetic.
+`time.now() + duration.minutes(5)` reads as what it means instead of a magic
+`300`.
+
+## 18. Modules
+
+Split related functions into files and import them with `use`. Module paths
+are dotted and resolve to files relative to the importing file:
 
 `modules/math.lume`:
 
@@ -500,12 +883,55 @@ fn main(args: [str]) -> int {
 }
 ```
 
-Module paths are resolved from source files, and cycles are reported explicitly.
-Use modules to separate reusable domain operations from command-line entry points.
+Imports are loaded recursively, once per graph. Missing modules, import
+cycles, and duplicate function symbols are compile errors. The `.lbc`
+bytecode cache hashes the combined dependency graph, so changing any
+imported file invalidates the root cache.
 
-## 14. Building, bytecode, and performance
+There is no bare `use fs`/`use json` for the builtin standard library —
+every builtin (`fs.*`, `json.*`, `str.*`, and so on) is always available
+without any `use` statement at all; `use` is only for a project's own
+modules.
 
-### Native tests
+## 19. Packages
+
+A directory becomes a package with a `lume.json` manifest:
+
+```json
+{ "name": "mathutils", "version": "0.1.0" }
+```
+
+Another project depends on it by declaring a local relative path in its own
+manifest:
+
+```json
+{
+  "name": "app",
+  "version": "0.1.0",
+  "dependencies": [{ "name": "mathutils", "path": "../mathutils" }]
+}
+```
+
+`lume install <dir>` resolves dependencies once (including transitively —
+`mathutils` can declare its own dependencies, and `app` picks them up
+automatically) and writes `lume.lock.json`, the file `use` resolution
+actually reads:
+
+```text
+lume install examples\packages\app
+lume run examples\packages\app\app.lume
+```
+
+`use mathutils.ops` then resolves through the lock file into `mathutils`'s
+directory instead of a local relative path; everything else about `use`
+works the same as an ordinary in-project module. A project with no
+`lume.json`/`lume.lock.json` sees no change in behavior at all. A dependency
+cycle across `lume.json` files is `E0709`; the same package name resolving
+to two different locations is `E0708`. There is no real version-range
+resolution or registry yet — `version` is recorded but not checked against
+anything.
+
+## 20. Testing
 
 A native test has a descriptive string name and a block of expectations:
 
@@ -515,145 +941,153 @@ test "calculates the total" {
 }
 ```
 
-Run all tests in a source file with `lume test tests.lume`. The runner reports
-individual results, prints the passed/failed totals, and exits unsuccessfully
-if any expectation or runtime operation fails. Assertions include
-`expect.equal`, `expect.true`, `expect.some`, `expect.ok`, and `expect.err`.
-Failure output contains the test declaration line and expected/actual values
-where applicable. Select tests by name with `--filter text`.
-Passing a directory discovers each direct `*_test.lume` child.
+Assertions: `expect.equal`, `expect.true`, `expect.ok`, `expect.err`,
+`expect.some`, plus process-output assertions for a captured
+`process.run`-style result: `expect.exit_code`, `expect.stdout_contains`,
+`expect.stderr_contains`.
 
-### Protocol methods
+A test body runs through the same restricted evaluator as a list-transform
+callback (section 6) — `match` anywhere in its reachable call graph fails at
+runtime; verify `match`-using logic by calling it from `main` and checking
+output instead.
 
-User-defined constraints can require statically dispatched methods:
+An optional timeout clause bounds a test against a runaway loop:
 
 ```lume
-protocol Named {
-  fn name(value: Self) -> str
-}
-
-impl Named for User {
-  fn name(value: User) -> str {
-    return value.name
-  }
-}
-
-fn keep_named<T: Named>(value: T) -> T {
-  return value
+test "completes quickly", timeout: 50 {
+  expect.true(true)
 }
 ```
 
-The compiler verifies the protocol and target type, implementation uniqueness,
-and every method name, parameter, and return type. Methods lower to concrete
-functions and are called with qualified syntax such as `User.name(user)`.
-There is no runtime method lookup.
+Run every test in one file:
 
-`lume run` maintains a hash-validated `.lbc` bytecode cache beside the source.
-Unchanged source can skip lexing, parsing, static validation, and emission.
+```text
+lume test tests.lume
+```
 
-Build and execute an artifact explicitly when packaging a script:
+Select tests with `--filter text` (matches against the full stable id, see
+below — a bare name or a path fragment both work). Pass a directory instead
+of a file to discover every `*_test.lume` file *recursively*, not just at
+the top level (a fixed internal 32-level depth bound). Skip subdirectories
+by name with `--ignore name1,name2` (e.g. `--ignore node_modules,.git`) — no
+default ignore list; nothing is skipped unless you say so:
+
+```text
+lume test tests --ignore node_modules,.git
+lume test tests --filter "tests/math_test.lume"
+```
+
+Add `--json` (in either order relative to `--filter`) for structured,
+line-delimited JSON — for CI and editor integrations:
+
+```text
+lume test examples\native_tests.lume --json
+```
+
+```json
+{"event":"test","id":"examples/native_tests.lume#adds two values","name":"adds two values","status":"pass","line":9,"message":""}
+{"event":"summary","passed":1,"failed":0,"total":1}
+```
+
+Directory mode adds one `{"event":"file","path":"..."}` line per discovered
+file. `id` is `<path>#<name>` exactly as the path was passed on the command
+line — stable enough to disambiguate same-named tests across files and to
+feed straight back into `--filter` for an exact rerun.
+
+## 21. Building, bytecode, and performance
+
+`lume run` maintains a content-hash-validated `.lbc` bytecode cache beside
+the source; unchanged source skips lexing, parsing, validation, and
+emission. Build and execute an artifact explicitly:
 
 ```text
 lume build deploy.lume deploy.lbc
 lume exec deploy.lbc
 ```
 
-The binary artifact records source identity, strings, integer operands, and
-instructions with validated boundaries. Truncated or corrupt bytecode is
-rejected rather than partially executed.
+Truncated or corrupt bytecode is rejected rather than partially executed.
+`.lbc` files are reproducible build products, ignored by Git.
 
-Measure compiler throughput in-process:
+Measure the in-process compiler and artifact decoder:
 
 ```text
 lume benchmark deploy.lume 1000
 ```
 
-The repository also contains a fixed 10,000-line benchmark. The feature series
-used while preparing this book measured:
+See [`BENCHMARKS.md`](../BENCHMARKS.md) for the repository's own dated,
+reproducible measurements and methodology, and for the acceptance gate a
+feature must clear (no more than a 5% median clean-compile regression
+without an offsetting benefit).
 
-| Compiler stage | Lines/second |
-| --- | ---: |
-| Generic function substitution | 32,165 |
-| Generic records, enums, Option, and Result | 33,167 |
-| List transformations | 31,536 |
-| Result propagation | 30,769 |
-| Final validation run, 30 iterations | 32,268 |
-| Closures and function values, 30 iterations | 31,371 |
-| Generic constraints and native test runner, 30 iterations | 31,221 |
-| Named test blocks and expectations, 30 iterations | 31,682 |
-| Test discovery and marker protocols, 30 iterations | 30,142 |
-| Protocol methods with static dispatch, 30 iterations | 30,915 |
+## 22. Editor and AI tooling
 
-Short runs vary with operating-system scheduling and machine load. Compare
-median results on the same machine and workload. Lume's design gate rejects a
-core feature that causes more than a five-percent median clean-compile
-regression unless its usefulness clearly offsets the cost.
+**Two separate pieces of editor support exist, at different levels of
+depth — use whichever fits, and don't assume they behave identically:**
 
-Fast compilation matters beyond developer comfort. It shortens AI repair loops,
-makes checking on every edit inexpensive, and keeps small scripts feeling small.
+- **`lume lsp`** (built into the compiler itself) runs a diagnostics-only
+  Language Server Protocol server over stdio (`Content-Length`-framed
+  JSON-RPC, full-document sync). It handles `initialize`/`shutdown`/`exit`
+  and publishes at most one real, compiler-verified diagnostic per file on
+  `textDocument/didOpen`/`didChange`/`didClose` (`lume.cto`'s own compile
+  pipeline reports only the first error it finds, so a file with multiple
+  problems only ever shows the first until that pipeline is widened to a
+  real diagnostic list — a known, deliberate scope boundary). It does not
+  provide completion, hover, or go-to-definition.
+- **`lsp\lume-lsp.ps1`** (a separate PowerShell script, `lsp/README.md`)
+  wraps `lume check <tempfile> --json` for the same one-diagnostic-per-file
+  behavior, and *additionally* provides:
+  - **completion**: a small static keyword list plus every name in
+    `ai/lume-api.json` — not scope- or type-aware; it always offers the
+    same list regardless of context;
+  - **hover**: shows a builtin's arity or "Lume keyword" for the exact word
+    under the cursor, matched against the same static lists — no real type
+    information;
+  - **go-to-definition**: a same-document-only regex search for
+    `fn <name>(` — it cannot jump across files;
+  - **formatting**: a simple, independent brace-depth reindenter — **not**
+    the same implementation as the compiler's own canonical `lume fmt`, and
+    not guaranteed to agree with it on every input.
 
-## 15. Editor and AI tooling
-
-The Lume language server provides editor-facing diagnostics and language
-support. The `lsp` directory contains its launcher and tests.
+  Start it with `powershell.exe -File .\lsp\lume-lsp.ps1` (expects
+  `dist\lume.exe`; pass `-Lume <path>` otherwise). Run `lsp\test.ps1` for
+  its own smoke test.
 
 For AI generation, two commands expose the language in compact forms:
 
 ```text
-lume api
-lume ai-reference
+lume api            # machine-readable feature/builtin manifest (ai/lume-api.json)
+lume ai-reference    # a compact, prose generation guide
 ```
 
-`api` returns a machine-readable feature and builtin manifest.
-`ai-reference` returns a concise generation guide. Together they reduce the
-amount of prompt material needed before a model can produce valid Lume.
+Good prompts state input/output data shapes, permitted effects (files,
+subprocesses, network), desired exit-code behavior, whether failures should
+be returned or terminate execution, and concrete expected output — then ask
+the model to run `lume check` before treating a draft as done. Static
+diagnostics make repair local and specific; the gotchas in section 25 below
+are exactly the kind of thing worth stating up front in a prompt, since they
+are easy for a model to get wrong by analogy to more common languages.
 
-Good AI prompts state:
-
-- input and output data shapes;
-- permitted effects, such as files or subprocesses;
-- desired exit-code behavior;
-- whether failures should be returned or terminate execution;
-- concrete examples of expected output.
-
-Then ask the model to check the program before running it. Static diagnostics
-make repair local and specific.
-
-## 16. A complete automation program
-
-The following program reads typed JSON configuration, runs a command, and
-returns a meaningful exit code. It illustrates the preferred Lume shape:
-records at the boundary, small functions in the middle, and effects near
-`main`.
+## 23. A complete automation program
 
 ```lume
-type CommandConfig {
-  executable: str
-  arguments: [str]
-}
-
-type AppConfig {
-  name: str
-  command: CommandConfig
-}
+type CommandConfig { executable: str, arguments: [str] }
+type AppConfig { name: str, command: CommandConfig }
 
 fn load_config(path: str) -> result<AppConfig, str> {
-  let source = fs.try_read_text(path)!
-  let config = AppConfig.from_json(source)!
-  return result.ok(config)
+  let source = fs.try_read_text(path)?
+  return AppConfig.from_json(source)
 }
 
 fn main(args: [str]) -> int {
-  let path = list.get(args, 0) ?? "app.json"
+  var path = "app.json"
+  if list.len(args) > 0 {
+    path = list.get(args, 0)
+  }
   let loaded = load_config(path)
 
   if result.is_ok(loaded) {
     let config = result.value(loaded)
-    let completed = process.run(
-      config.command.executable,
-      config.command.arguments
-    )
-
+    let completed = process.run(config.command.executable, config.command.arguments)
     if process.ok(completed) {
       print(str.trim(process.stdout(completed)))
       return 0
@@ -668,25 +1102,26 @@ fn main(args: [str]) -> int {
 }
 ```
 
+`load_config` returns the *lowercase* `result<AppConfig, str>` (section
+10's builtin convention), not the capitalized `Result` enum, because it
+propagates two builtin calls (`fs.try_read_text`, `AppConfig.from_json`)
+that are already that kind — `?` only propagates between two functions in
+the same world.
+
 Example `app.json`:
 
 ```json
 {
   "name": "repository status",
-  "command": {
-    "executable": "git",
-    "arguments": ["status", "--short"]
-  }
+  "command": { "executable": "git", "arguments": ["status", "--short"] }
 }
 ```
 
 There is no command-string interpolation, configuration fields are checked,
-JSON failures preserve their paths, and every operational outcome becomes an
-explicit exit code.
+JSON failures preserve their field paths, and every operational outcome
+becomes an explicit exit code.
 
-## 17. Design habits
-
-Prefer these habits in production Lume:
+## 24. Design habits
 
 1. Model external data with records immediately after reading it.
 2. Model state transitions with enums rather than strings.
@@ -694,41 +1129,80 @@ Prefer these habits in production Lume:
 4. Use `Result` for expected failure and `?` for short propagation paths.
 5. Handle `Option` and enum values with exhaustive `match`.
 6. Pass process arguments as lists, never as constructed shell command text.
-7. Keep list callbacks small; use named functions or immutable-capture closures.
-8. Put reusable logic in modules and effects near `main`.
-9. Run `lume check` continuously and test both success and failure paths.
-10. Measure compiler performance after expanding the language core.
+7. Keep list callbacks small; use named functions or immutable-capture
+   closures, and keep `match` out of them entirely.
+8. Convert a number to text with `str.from_int`, not a workaround.
+9. Reach for a small boolean-returning helper function instead of nesting
+   more than two or three `if`s deep for a compound condition.
+10. Put reusable logic in modules and effects near `main`.
+11. Run `lume check` continuously and test both success and failure paths.
+12. Measure compiler performance after expanding the language core.
 
-These conventions also improve AI output: fewer implicit rules mean fewer
-plausible but incorrect programs.
+## 25. Current boundaries and known gotchas
 
-## 18. Current boundaries
+Real, current limitations — not aspirational roadmap items from other
+documents in this repository:
 
-Lume is deliberately young and focused. It is not trying to replace every
-general-purpose language. Current boundaries include:
+- **No `and`/`or`/`not` boolean operators** in any spelling. Nest `if`s
+  (section 4).
+- **No `if`/`else` expression form.** Use a helper function with early
+  `return`s (section 4).
+- **No `??` operator** — that is Certo syntax, not Lume's (section 3).
+- **No `for` loop of any kind** — not a range loop, and not `for x in
+  list` either. `while` with a manually managed index is the only loop
+  construct (section 4). There is also no `break`/`continue`; use a
+  boolean flag checked in the loop condition instead.
+- **No `let`/`var` type annotations at all.** A binding's type always comes
+  from its initializer (section 3).
+- **Two separate, non-interchangeable `Result` conventions** — the
+  capitalized `Result` enum you construct yourself vs. the lowercase
+  `result<T, E>` every filesystem/directory/HTTP/JSON-decode builtin
+  returns. Mixing them produces a type-mismatch or "match requires an
+  enum" error rather than a clear diagnostic (section 10) — `Option<T>`
+  has no such split.
+- **A function call's return value cannot have a field accessed directly**
+  — `f(x).field` is a syntax error (`expected )`); bind it to a `let`
+  first, then access the field on that binding (section 12).
+- **Closures and `&name` references are not first-class values** — usable
+  only as the direct argument to a `list.*`/`map.*` transform, and cannot
+  contain `match` anywhere in their reachable call graph (section 6).
+- **`Ord` has no automatic derivation for compound types** — implement
+  `compare(a, b) -> int` by hand (section 9).
+- **`Map<K, V>` keys are limited** to `int`/`str`/`bool`, or a record/enum
+  with an explicit `impl Eq` (section 11).
+- **JSON decoding into an enum *field* inside a record is still not
+  supported** — only decoding a top-level enum value directly
+  (`EnumName.from_json`) works; a record containing an enum field cannot
+  currently round-trip through `from_json` for that field.
+- **`bytes` is not NUL-safe** — it is represented identically to `str` at
+  runtime, so an embedded NUL byte truncates content on round-trip
+  (section 16).
+- **HTTP is Windows-only** — a stub on other platforms aborts the process
+  rather than returning `Err` (section 15).
+- **A timed-out process and a failed-to-spawn process both report
+  `process.code == -1`** — there is no separate signal to tell them apart
+  (section 14).
+- **Compile diagnostics are single-error**: the whole compile pipeline
+  reports only the first problem it finds in a file, never a list — this
+  is why `lume lsp`/`lsp/lume-lsp.ps1` can only ever publish one diagnostic
+  per file too.
+- **A compact standard library, not a package ecosystem** — no registry,
+  no semver-range resolution (section 19); local-path dependencies only.
 
-- closures capture immutable values only; mutable captures are intentionally rejected;
-- a compact standard library rather than a large package ecosystem;
-- an evolving generic system without traits or type classes;
-- closures are expression-bodied rather than statement-bodied;
-- bootstrap tooling that is still maturing;
-- performance figures measured on the development machine, not a broad suite
-  of production hardware.
-
-These constraints are useful when choosing Lume. Use it for typed automation,
-data transformation, command orchestration, configuration handling, and compact
-tools where rapid checking matters. Choose a broader language when a task needs
-a mature third-party library ecosystem, complex concurrency, a GUI framework,
-or unrestricted systems programming.
+These are useful constraints when choosing Lume, not defects to work around
+by reaching for another language mid-task: use Lume for typed automation,
+data transformation, command orchestration, configuration handling, and
+compact tools where fast, predictable checking matters more than a large
+library ecosystem or unrestricted expressiveness.
 
 ---
 
 ## Closing: fast is a workflow
 
-Lume's speed is not only compiler throughput. It is the speed of discovering a
-mistake before a deployment starts, understanding a script months later,
+Lume's speed is not only compiler throughput. It is the speed of discovering
+a mistake before a deployment starts, understanding a script months later,
 generating a valid first draft with AI, and changing a data shape without
 guessing which paths will break.
 
-That is the promise behind “the fast one”: a small language that turns the edit,
-check, understand, and run loop into one short motion.
+That is the promise behind "the fast one": a small language that turns the
+edit, check, understand, and run loop into one short motion.
