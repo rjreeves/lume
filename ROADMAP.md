@@ -559,20 +559,27 @@ non-trivial benchmark in this file has met its own bar.**
 - ~~formatter and format checking~~ — shipped as `lume fmt <file>
   [--check]` (see "Shipped in the bootstrap" above's `--json` convention
   note, which already assumes `fmt`'s existence);
-- language-server support — still genuinely open; no `lume lsp` or
-  equivalent exists for `.lume` files (Certo has its own `certo-lsp`,
-  but that's for `.cto` files, unrelated). Scoped and found to have a
-  hard blocker: LSP's stdio transport frames each message as
-  `Content-Length: N\r\n\r\n` followed by exactly `N` bytes of JSON, but
-  Certo's stdlib has no way to read an exact byte count from stdin —
-  only `readLine` (stops at `\n`) and `readAll` (blocks until EOF,
-  which never comes on a persistent LSP pipe) exist. Filed as Certo
-  BACKLOG item 332. A second, smaller gap for later: `lume.cto`'s own
-  compile pipeline only ever reports one error (a single `problem: Text`
-  field with first-error-short-circuit throughout, not a list), so a
-  real multi-diagnostic LSP would also need that refactored — an
-  MVP could ship reporting only the first error per file in the
-  meantime;
+- ~~language-server support~~ — shipped as a diagnostics-only MVP:
+  `lume lsp` runs a persistent stdio JSON-RPC server implementing
+  `initialize`/`shutdown`/`exit` and `textDocument/didOpen`/`didChange`/
+  `didClose`, each publishing diagnostics via full-document sync
+  (`TextDocumentSyncKind.Full`, matching Certo's own `certo-lsp` choice
+  for `.cto` files). This was blocked all session on Certo having no way
+  to read an exact byte count from stdin for LSP's
+  `Content-Length: N\r\n\r\n`-framed transport — filed as Certo BACKLOG
+  item 332, now shipped as `readBytes(n): Text`. Two more things were
+  found while actually building it: Certo's C codegen doesn't escape a
+  literal `\r` inside a folded Text constant, corrupting the generated C
+  source (worked around here by building the carriage return at runtime
+  via `Char.fromInt(13)` instead of a string literal — not filed as a
+  BACKLOG item yet); and neither `print` nor `println` auto-flush stdout,
+  which matters on a fully-buffered pipe (every LSP write here is
+  followed by an explicit `flush()`). Still a real, known gap: `lume.cto`'s
+  own compile pipeline only ever reports one error (a single
+  `problem: Text` field with first-error-short-circuit throughout, not a
+  list), so this MVP publishes at most one diagnostic per file — a real
+  multi-diagnostic LSP needs that pipeline refactored first, a separate,
+  much larger change;
 - ~~a machine-readable API manifest, compact AI generation contract, and
   fixed AI evaluation tasks~~ — shipped: `lume api`/`ai-reference`
   generate the manifest (used by `build.ps1` to write
