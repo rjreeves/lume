@@ -1,0 +1,5 @@
+fn main(args: [str]) -> int {
+  let x = 1 + (if true { 5 })
+  print(x)
+  return 0
+}

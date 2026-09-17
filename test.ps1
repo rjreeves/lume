@@ -50,6 +50,18 @@ $invalidBooleanOp = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_boo
 if ($LASTEXITCODE -ne 1) { throw "invalid boolean operator validation should exit 1" }
 Assert-Equal 'boolean operator requires bool operands' 'E0617 line 2: condition must be bool, got int' ($invalidBooleanOp -join "`n")
 
+$ifExpression = & $Lume run (Join-Path $PSScriptRoot 'examples\if_expression.lume')
+if ($LASTEXITCODE -ne 0) { throw "if expression exited $LASTEXITCODE" }
+Assert-Equal 'if/else as an expression' "1`n2`nbig`n15`n42" ($ifExpression -join "`n")
+
+$invalidIfExprTypes = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_if_expression_types.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "if-expression type mismatch validation should exit 1" }
+Assert-Equal 'if-expression branches must agree on type' 'E0736 line 2: if-expression branches must return one type; expected int, got str' ($invalidIfExprTypes -join "`n")
+
+$invalidIfExprNoElse = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_if_expression_no_else.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "if-expression missing else validation should exit 1" }
+Assert-Equal 'if-expression requires else' 'E0733 line 2: if-expression requires `else`' ($invalidIfExprNoElse -join "`n")
+
 $functions = & $Lume run (Join-Path $PSScriptRoot 'examples\functions.lume')
 if ($LASTEXITCODE -ne 0) { throw "functions exited $LASTEXITCODE" }
 Assert-Equal 'functions and recursion' "42`n120" ($functions -join "`n")
