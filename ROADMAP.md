@@ -784,6 +784,46 @@ into every compilation.
 Each API should keep the `noun.verb` naming convention and return explicit
 `Option` or `Result` values rather than throwing exceptions.
 
+### 5. Core language ergonomics
+
+Three real gaps found while writing a non-trivial example program
+(`examples/game_of_life.lume`, a Conway's Game of Life on a toroidal
+grid) — not blocked on anything upstream, all genuinely bounded
+compiler-only changes, each confirmed by a direct empirical test
+against the real compiler rather than assumed from the grammar:
+
+- **no boolean `and`/`or`/`not` operators exist at all** — confirmed
+  zero matches for any of the three anywhere in the lexer or parser
+  (`src/lume.cto`'s symbol set for the lexer doesn't even include `|`,
+  and the two-character-operator list has no `&&`/`||`). Every compound
+  condition today needs nested `if` statements instead, which reads
+  poorly for anything more than a two-way check (`countNeighbors` in
+  the example above worked around this entirely by enumerating the 8
+  neighbor offsets as parallel lists rather than writing the natural
+  `if not (dRow == 0 and dCol == 0)` guard);
+- **no `if`/`else` expression form** — confirmed via a live `E0101
+  expected expression` compiling `if cell { rowTotal + 1 } else {
+  rowTotal }` as a closure body. `if`/`else` is statement-only; a
+  conditional *value* needs a small helper function with early
+  `return`s in each branch instead of `let x = if ... else ...`. Note
+  this file's own "Core language" bullet above (~line 339) already
+  lists "`if`/`else`... expressions", which this finding shows is not
+  accurate as written — worth a follow-up correction once this gap
+  itself is resolved or the wording is otherwise fixed;
+- **no way to convert an `int` to `str`** — confirmed no
+  `str.from_int`/`int.to_str`/equivalent exists anywhere in
+  `builtinNames()` or the language surface. The only working path
+  found is round-tripping through `result.value(json.encode(n))`,
+  which works (confirmed live: `json.encode(42)` → `Ok("42")`) but is
+  an odd, indirect spelling for a primitive most programs need
+  constantly for building any message that embeds a number.
+
+None of these blocked the example program, but they're real ergonomic
+gaps for a language whose own stated top-level principle (see "Product
+principles" above) is "reliable AI generation" — an AI generating Lume
+code has to already know these three specific workarounds rather than
+writing the obvious thing.
+
 ## Later: ecosystem readiness
 
 ### Distribution and interoperability
