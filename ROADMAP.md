@@ -649,16 +649,20 @@ into every compilation.
 ### 3. Stronger test tooling
 
 - ~~recursively discover test files~~ with explicit ignore rules —
-  partially shipped: `lume test <dir>` now finds `*_test.lume` files in
-  subdirectories too, not just the given directory (a fixed internal
-  32-level depth bound, not user-configurable), once Certo shipped
-  `isDirectory` closing BACKLOG item 329 (which also confirmed the
-  underlying `stat`/`S_ISDIR` mechanism already existed internally in
-  Certo's C runtime, used by its own recursive-delete helper, just
-  wasn't exposed as a callable builtin) — verified directly against a
-  freshly built `certo.exe` before wiring it in. Explicit ignore rules
-  (e.g. skipping `node_modules`-style directories) remain unimplemented
-  — a real, smaller, separate gap, not blocked on anything upstream;
+  shipped: `lume test <dir>` finds `*_test.lume` files in subdirectories
+  too, not just the given directory (a fixed internal 32-level depth
+  bound, not user-configurable), once Certo shipped `isDirectory`
+  closing BACKLOG item 329 (which also confirmed the underlying
+  `stat`/`S_ISDIR` mechanism already existed internally in Certo's C
+  runtime, used by its own recursive-delete helper, just wasn't exposed
+  as a callable builtin) — verified directly against a freshly built
+  `certo.exe` before wiring it in. ~~Explicit ignore rules~~ now shipped
+  too: `--ignore name1,name2` skips recursing into any subdirectory
+  whose own name exactly matches one in the comma-separated list (e.g.
+  `--ignore node_modules,.git`), via a new `walkDirIgnoring` mirroring
+  `walkDir` exactly rather than changing the public `dir.walk` builtin's
+  own documented behavior. No default ignore list - nothing is skipped
+  unless the flag says so;
 - ~~provide temporary-directory and environment fixtures~~ — shipped as
   `fixture.temp_dir()`/`fixture.cleanup(path)` and `env.set`/`env.unset`
   (see "Shipped in the bootstrap" above); no automatic cleanup, matching
