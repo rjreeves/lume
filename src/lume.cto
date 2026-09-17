@@ -5227,6 +5227,153 @@ fn installPackages(dir: Text): Unit [io] = {
 
 fn compileSource(source: Text): CompileResult = compile(lex(source))
 
+// A blocking header read: readLine() strips only the trailing '\n', leaving a
+// trailing '\r' on real clients' CRLF-terminated header lines, so lines are
+// trimmed before comparison. Returns None on EOF or a message with no (or an
+// unparsable) Content-Length header - both end the server loop the same way,
+// since a real client never sends either.
+fn lspReadContentLength(): Int? = {
+  var contentLength: Int? = None
+  var done = false
+  var eof = false
+  while not done and not eof {
+    if let Some(rawLine) = readLine() {
+      val line = Text.trim(rawLine)
+      if Text.eq(line, "") then { done = true }
+      else if Text.startsWith(line, "Content-Length:") then {
+        contentLength = parseInt(Text.trim(Text.slice(line, 15, Text.len(line))))
+      }
+    } else { eof = true }
+  }
+  if eof then None else contentLength
+}
+
+fn lspReadMessage(): Text? = {
+  if let Some(length) = lspReadContentLength() { Some(readBytes(length)) } else { None }
+}
+
+// Certo's print()/println() never auto-flush stdout (only flush() does), and
+// LSP's stdio transport is normally a pipe (fully buffered, not line-buffered)
+// - every write here is followed by flush(), or the client would never see it.
+// The carriage return is built via Char.fromInt rather than a "\r" literal:
+// Certo's codegen escapes "\n" but not "\r" when folding a Text literal into
+// its C source, so an embedded literal \r breaks the generated C string.
+fn lspWriteMessage(body: Text): Unit [io] = {
+  val cr = Char.toText(Char.fromInt(13))
+  print("Content-Length: " ++ intToText(Text.len(body)) ++ cr ++ "\n" ++ cr ++ "\n" ++ body)
+  flush()
+}
+
+fn lspRespond(id: JsonValue, result: JsonValue): Unit [io] = {
+  val response = Json.object()
+  JsonValue.set(response, "jsonrpc", Json.string("2.0"))
+  JsonValue.set(response, "id", id)
+  JsonValue.set(response, "result", result)
+  lspWriteMessage(Json.stringify(response))
+}
+
+fn lspRespondError(id: JsonValue, code: Int, message: Text): Unit [io] = {
+  val errorObject = Json.object()
+  JsonValue.set(errorObject, "code", Json.int(code))
+  JsonValue.set(errorObject, "message", Json.string(message))
+  val response = Json.object()
+  JsonValue.set(response, "jsonrpc", Json.string("2.0"))
+  JsonValue.set(response, "id", id)
+  JsonValue.set(response, "error", errorObject)
+  lspWriteMessage(Json.stringify(response))
+}
+
+// This is an MVP diagnostics translation: compileSource (like every Lume
+// compile path) reports at most one problem per call, so at most one
+// Diagnostic is ever published here. Reporting every error in a file would
+// need the compiler's single `problem: Text` field widened to a list first -
+// a separate, much larger change, not attempted here.
+fn lspPublishDiagnostics(uri: Text, problem: Text): Unit [io] = {
+  val diagnostics = Json.array()
+  if not Text.eq(problem, "") then {
+    val info = Json.parse(diagnosticJson(problem, ""))
+    val oneIndexedLine = JsonValue.asInt(JsonValue.get(info, "line"))
+    val lspLine = if oneIndexedLine > 0 then oneIndexedLine - 1 else 0
+    val position = Json.object()
+    JsonValue.set(position, "line", Json.int(lspLine))
+    JsonValue.set(position, "character", Json.int(0))
+    val range = Json.object()
+    JsonValue.set(range, "start", position)
+    JsonValue.set(range, "end", position)
+    val diagnostic = Json.object()
+    JsonValue.set(diagnostic, "range", range)
+    JsonValue.set(diagnostic, "severity", Json.int(1))
+    JsonValue.set(diagnostic, "code", JsonValue.get(info, "code"))
+    JsonValue.set(diagnostic, "source", Json.string("lume"))
+    JsonValue.set(diagnostic, "message", JsonValue.get(info, "message"))
+    JsonValue.push(diagnostics, diagnostic)
+  }
+  val params = Json.object()
+  JsonValue.set(params, "uri", Json.string(uri))
+  JsonValue.set(params, "diagnostics", diagnostics)
+  val notification = Json.object()
+  JsonValue.set(notification, "jsonrpc", Json.string("2.0"))
+  JsonValue.set(notification, "method", Json.string("textDocument/publishDiagnostics"))
+  JsonValue.set(notification, "params", params)
+  lspWriteMessage(Json.stringify(notification))
+}
+
+fn lspCheckDocument(uri: Text, text: Text): Unit [io] = {
+  val outcome = compileSource(text)
+  lspPublishDiagnostics(uri, outcome.problem)
+}
+
+// Full-document sync only (TextDocumentSyncKind.Full = 1) - the same choice
+// Certo's own LSP makes. Every didOpen/didChange carries the whole new text,
+// so each event is handled statelessly; no document store is needed.
+fn lspHandleMessage(parsed: JsonValue): Bool = {
+  val method = JsonValue.asText(JsonValue.get(parsed, "method"))
+  val id = JsonValue.get(parsed, "id")
+  val hasId = not JsonValue.isNull(id)
+  var keepGoing = true
+  if Text.eq(method, "initialize") then {
+    val capabilities = Json.object()
+    JsonValue.set(capabilities, "textDocumentSync", Json.int(1))
+    val result = Json.object()
+    JsonValue.set(result, "capabilities", capabilities)
+    lspRespond(id, result)
+  } else if Text.eq(method, "textDocument/didOpen") then {
+    val params = JsonValue.get(parsed, "params")
+    val textDocument = JsonValue.get(params, "textDocument")
+    val uri = JsonValue.asText(JsonValue.get(textDocument, "uri"))
+    val text = JsonValue.asText(JsonValue.get(textDocument, "text"))
+    lspCheckDocument(uri, text)
+  } else if Text.eq(method, "textDocument/didChange") then {
+    val params = JsonValue.get(parsed, "params")
+    val textDocument = JsonValue.get(params, "textDocument")
+    val uri = JsonValue.asText(JsonValue.get(textDocument, "uri"))
+    val contentChanges = JsonValue.get(params, "contentChanges")
+    val firstChange = Json.parse(JsonValue.atText(contentChanges, 0))
+    val text = JsonValue.asText(JsonValue.get(firstChange, "text"))
+    lspCheckDocument(uri, text)
+  } else if Text.eq(method, "textDocument/didClose") then {
+    val params = JsonValue.get(parsed, "params")
+    val textDocument = JsonValue.get(params, "textDocument")
+    val uri = JsonValue.asText(JsonValue.get(textDocument, "uri"))
+    lspPublishDiagnostics(uri, "")
+  } else if Text.eq(method, "shutdown") then {
+    lspRespond(id, Json.null())
+  } else if Text.eq(method, "exit") then {
+    keepGoing = false
+  } else if hasId then {
+    lspRespondError(id, -32601, "method not found: " ++ method)
+  }
+  keepGoing
+}
+
+fn runLspServer(): Unit [io] = {
+  var running = true
+  while running {
+    if let Some(raw) = lspReadMessage() { running = lspHandleMessage(Json.parse(raw)) }
+    else { running = false }
+  }
+}
+
 fn cachePath(sourcePath: Text): Text = sourcePath ++ ".lbc"
 
 fn compileOrCache(path: Text, source: Text): ArtifactResult [io] = {
@@ -5421,7 +5568,8 @@ fn aiReference(): Text = {
   "Match every variant with `match state { waiting => \"wait\", done(code) => \"done\" }`; payload bindings are typed and arm-local. " ++
   "Record construction requires every field exactly once and is statically checked. Operators: + - * / % == != < <= > >=. " ++
   "Builtins and arities are returned by `lume api`. main signature: fn main(args: [str]) -> int. " ++
-  "Use two-space indentation, braces, one statement per line, and no semicolons."
+  "Use two-space indentation, braces, one statement per line, and no semicolons. " ++
+  "lume lsp runs a diagnostics-only Language Server Protocol server over stdio (Content-Length-framed JSON-RPC, full-document sync): initialize/shutdown/exit are handled, and textDocument/didOpen/didChange/didClose each publish at most one diagnostic (compileSource, like every Lume compile path, reports only the first problem it finds)."
 }
 
 fn usage(): Unit [io] = {
@@ -5434,6 +5582,7 @@ fn usage(): Unit [io] = {
   println("       lume test <file.lume> [--filter text]")
   println("       lume fmt <file.lume> [--check]")
   println("       lume install <dir>")
+  println("       lume lsp")
   println("       lume api|ai-reference")
 }
 
@@ -5504,6 +5653,8 @@ fn main(): Unit [io] = {
     println(apiManifest())
   } else if Text.eq(command, "ai-reference") then {
     println(aiReference())
+  } else if Text.eq(command, "lsp") then {
+    runLspServer()
   } else if Text.eq(command, "help") or Text.eq(command, "--help") or Text.eq(path, "") then {
     usage()
   } else if Text.eq(command, "exec") then {

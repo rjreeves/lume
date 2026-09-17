@@ -925,4 +925,98 @@ $cyclicOutput = & $Lume install (Join-Path $PSScriptRoot 'examples\packages\cycl
 if ($LASTEXITCODE -ne 1) { throw "cyclic package install should exit 1" }
 Assert-Equal 'package dependency cycle validation' 'E0709 dependency cycle at `cyclic-b`' ($cyclicOutput -join "`n")
 
+# lume lsp is a persistent stdio JSON-RPC server, not a one-shot command, so
+# it needs its own framed-message client rather than a plain stdout compare.
+function Send-LspMessage([System.Diagnostics.Process]$Proc, [string]$Json) {
+  $bytes = [System.Text.Encoding]::UTF8.GetBytes($Json)
+  $header = "Content-Length: $($bytes.Length)`r`n`r`n"
+  $headerBytes = [System.Text.Encoding]::ASCII.GetBytes($header)
+  $stream = $Proc.StandardInput.BaseStream
+  $stream.Write($headerBytes, 0, $headerBytes.Length)
+  $stream.Write($bytes, 0, $bytes.Length)
+  $stream.Flush()
+}
+
+function Read-LspMessage([System.Diagnostics.Process]$Proc) {
+  $stream = $Proc.StandardOutput.BaseStream
+  $contentLength = -1
+  $lineBytes = New-Object System.Collections.Generic.List[byte]
+  while ($true) {
+    $b = $stream.ReadByte()
+    if ($b -eq -1) { throw 'lsp server closed stdout unexpectedly' }
+    if ($b -eq 13) { continue }
+    if ($b -eq 10) {
+      $line = [System.Text.Encoding]::ASCII.GetString($lineBytes.ToArray())
+      if ($line -eq '') { break }
+      if ($line -like 'Content-Length:*') { $contentLength = [int]($line.Substring(15).Trim()) }
+      $lineBytes.Clear()
+    } else {
+      $lineBytes.Add([byte]$b)
+    }
+  }
+  if ($contentLength -lt 0) { throw 'lsp response missing Content-Length' }
+  $bodyBytes = New-Object byte[] $contentLength
+  $read = 0
+  while ($read -lt $contentLength) {
+    $n = $stream.Read($bodyBytes, $read, $contentLength - $read)
+    if ($n -le 0) { throw 'lsp server closed stdout mid-body' }
+    $read += $n
+  }
+  return [System.Text.Encoding]::UTF8.GetString($bodyBytes)
+}
+
+$lspPsi = New-Object System.Diagnostics.ProcessStartInfo
+$lspPsi.FileName = $Lume
+$lspPsi.Arguments = 'lsp'
+$lspPsi.RedirectStandardInput = $true
+$lspPsi.RedirectStandardOutput = $true
+$lspPsi.RedirectStandardError = $true
+$lspPsi.UseShellExecute = $false
+$lspProc = [System.Diagnostics.Process]::Start($lspPsi)
+try {
+  Send-LspMessage $lspProc '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}'
+  $initResponse = Read-LspMessage $lspProc | ConvertFrom-Json
+  Assert-Equal 'lsp initialize advertises full-document sync' '1' "$($initResponse.result.capabilities.textDocumentSync)"
+
+  Send-LspMessage $lspProc '{"jsonrpc":"2.0","method":"initialized","params":{}}'
+
+  $brokenUri = 'file:///broken.lume'
+  $brokenSource = "fn main(args: [str]) -> int {`n  return undefinedVariable`n}`n"
+  $didOpenBroken = @{ jsonrpc = '2.0'; method = 'textDocument/didOpen'; params = @{ textDocument = @{ uri = $brokenUri; text = $brokenSource } } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $didOpenBroken
+  $brokenDiag = Read-LspMessage $lspProc | ConvertFrom-Json
+  Assert-Equal 'lsp publishes diagnostics for the opened uri' $brokenUri $brokenDiag.params.uri
+  Assert-Equal 'lsp reports one diagnostic for a compile error' '1' "$($brokenDiag.params.diagnostics.Count)"
+  Assert-Equal 'lsp diagnostic code matches lume check' 'E0210' $brokenDiag.params.diagnostics[0].code
+  Assert-Equal 'lsp diagnostic line is 0-indexed' '1' "$($brokenDiag.params.diagnostics[0].range.start.line)"
+  Assert-Equal 'lsp diagnostic message matches lume check' 'undefined binding `undefinedVariable`' $brokenDiag.params.diagnostics[0].message
+
+  $validUri = 'file:///valid.lume'
+  $validSource = "fn main(args: [str]) -> int {`n  return 0`n}`n"
+  $didOpenValid = @{ jsonrpc = '2.0'; method = 'textDocument/didOpen'; params = @{ textDocument = @{ uri = $validUri; text = $validSource } } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $didOpenValid
+  $validDiag = Read-LspMessage $lspProc | ConvertFrom-Json
+  Assert-Equal 'lsp reports no diagnostics for valid source' '0' "$($validDiag.params.diagnostics.Count)"
+
+  $didChangeFixed = @{ jsonrpc = '2.0'; method = 'textDocument/didChange'; params = @{ textDocument = @{ uri = $brokenUri }; contentChanges = @(@{ text = $validSource }) } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $didChangeFixed
+  $changedDiag = Read-LspMessage $lspProc | ConvertFrom-Json
+  Assert-Equal 'lsp didChange re-checks the full new text' '0' "$($changedDiag.params.diagnostics.Count)"
+
+  $didClose = @{ jsonrpc = '2.0'; method = 'textDocument/didClose'; params = @{ textDocument = @{ uri = $validUri } } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $didClose
+  $closedDiag = Read-LspMessage $lspProc | ConvertFrom-Json
+  Assert-Equal 'lsp didClose clears diagnostics' '0' "$($closedDiag.params.diagnostics.Count)"
+
+  Send-LspMessage $lspProc '{"jsonrpc":"2.0","id":2,"method":"shutdown"}'
+  $shutdownResponse = Read-LspMessage $lspProc | ConvertFrom-Json
+  Assert-Equal 'lsp shutdown responds with a null result' '' "$($shutdownResponse.result)"
+
+  Send-LspMessage $lspProc '{"jsonrpc":"2.0","method":"exit"}'
+  if (-not $lspProc.WaitForExit(5000)) { throw 'lsp server did not exit after an exit notification' }
+  Assert-Equal 'lsp exits cleanly' '0' "$($lspProc.ExitCode)"
+} finally {
+  if (-not $lspProc.HasExited) { $lspProc.Kill() }
+}
+
 Write-Host 'All Lume smoke tests passed.'
