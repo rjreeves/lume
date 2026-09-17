@@ -810,13 +810,15 @@ against the real compiler rather than assumed from the grammar:
   lists "`if`/`else`... expressions", which this finding shows is not
   accurate as written — worth a follow-up correction once this gap
   itself is resolved or the wording is otherwise fixed;
-- **no way to convert an `int` to `str`** — confirmed no
-  `str.from_int`/`int.to_str`/equivalent exists anywhere in
-  `builtinNames()` or the language surface. The only working path
-  found is round-tripping through `result.value(json.encode(n))`,
-  which works (confirmed live: `json.encode(42)` → `Ok("42")`) but is
-  an odd, indirect spelling for a primitive most programs need
-  constantly for building any message that embeds a number.
+- ~~no way to convert an `int` to `str`~~ — shipped as
+  `str.from_int(n) -> str`, mirroring `time.to_iso`'s own `(int) ->
+  str` shape exactly (same 3-site builtin pattern: `builtinNames`/
+  `builtinCounts`, `checkBuiltinTypes`, `callBuiltin`, using Certo's
+  own `intToText`, already used pervasively throughout this file's
+  own implementation). `examples/game_of_life.lume`'s `intText` helper
+  was simplified from the `result.value(json.encode(n))` workaround
+  that motivated this fix to a direct `str.from_int(n)` call, with
+  identical output confirmed before and after.
 
 None of these blocked the example program, but they're real ergonomic
 gaps for a language whose own stated top-level principle (see "Product

@@ -1,0 +1,4 @@
+fn main(args: [str]) -> int {
+  print(str.from_int("not an int"))
+  return 0
+}

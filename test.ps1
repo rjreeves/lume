@@ -94,6 +94,14 @@ $pathFunctions = & $Lume run (Join-Path $PSScriptRoot 'examples\path_functions.l
 if ($LASTEXITCODE -ne 0) { throw "path functions exited $LASTEXITCODE" }
 Assert-Equal 'path functions' "reports/2026`nsummary.csv`nreports/2026`nsummary`ncsv`nnone" ($pathFunctions -join "`n")
 
+$strFromInt = & $Lume run (Join-Path $PSScriptRoot 'examples\str_from_int.lume')
+if ($LASTEXITCODE -ne 0) { throw "str.from_int exited $LASTEXITCODE" }
+Assert-Equal 'str.from_int' "42!`n0`n-7" ($strFromInt -join "`n")
+
+$invalidStrFromInt = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_str_from_int_args.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "str.from_int argument validation should exit 1" }
+Assert-Equal 'str.from_int requires int' 'E0730 line 2: builtin `str.from_int` requires int' ($invalidStrFromInt -join "`n")
+
 $dirList = & $Lume run (Join-Path $PSScriptRoot 'examples\dir_list.lume')
 if ($LASTEXITCODE -ne 0) { throw "dir list exited $LASTEXITCODE" }
 Assert-Equal 'directory listing' "2`nmath_test.lume`ntext_test.lume" ($dirList -join "`n")

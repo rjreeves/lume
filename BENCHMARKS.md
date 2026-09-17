@@ -1597,3 +1597,37 @@ measure the already-built `lume.exe`'s own behavior compiling ordinary
 speed" this project cares about (Certo compiling Lume's own source, vs.
 Lume compiling a user's `.lume` program) aren't conflated by a future
 reader of this file.
+
+## Checkpoint after the Certo-primitive-unblock PR series (2026-09-17)
+
+A clean sweep of all three standard benchmark scripts at `0f53e43`
+(after PRs #69-#75: `process.run_with_options`, `dir.walk` + recursive
+test discovery, HTTP request-time bounding, `lume lsp`, `--ignore`
+test-discovery rules, the Game of Life example, and `str.from_int`),
+run against a freshly rebuilt `dist/lume.exe`. None of these PRs
+touched a hot compile-time path (`lex`, `compileBlock`, `verifyTypes`,
+`checkCallTypes`) - every one only added a new, additively-reached
+`else if` branch to `checkBuiltinTypes`/`callBuiltin` for its own new
+builtin name, or added CLI-only code (`lume lsp`'s server loop,
+`--ignore`'s flag parsing) that a compile-time benchmark never
+exercises at all - so, same as the last checkpoint, this is a
+stability check, not a change expected to move the numbers:
+
+| Benchmark | Mean | Lines/second | Target | Result |
+| --- | ---: | ---: | ---: | --- |
+| Trivial (`functions.lume`, `lume check`, 100 iterations) | 9.77 ms | - | - | consistent with every prior run in this file |
+| Trivial 10,000-line (`benchmark-10000.ps1`, 20 iterations) | 46.85 ms | 213,447 | 10,000 | `TargetMet: True`, ~21x over target |
+| Feature-mix (`benchmark-10000-features.ps1`, 30 fresh-process samples) | first run 220.68 ms (median 217.46, p95 249.49, stddev 12.53); reproduced 211.16 ms (median 212.04, p95 216.30, stddev 4.97) | 45,314 / 47,357 | 10,000 | `TargetMet: True` both runs |
+
+The feature-mix benchmark's first run landed close to the 5%-regression
+gate against the last checkpoint's 202.29 ms median (a ~7.5% delta) and
+showed noticeably higher stddev (12.53 ms vs. that checkpoint's 3.86
+ms) - reproduced immediately per this file's own "don't trust a single
+sample" discipline before writing anything down. The second run's
+stddev dropped back to 4.97 ms, in line with historical noise levels,
+and its median (212.04 ms) sits within ~5% of the last checkpoint - no
+plausible causal mechanism exists for a real regression here either,
+since the feature-mix program's generated code (records, an enum,
+`match`, a marker-protocol-constrained generic, closures,
+`list.map`/`filter`/`fold`) never calls any of the builtins these PRs
+added. Treated as noise, not a regression.

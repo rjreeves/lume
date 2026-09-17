@@ -902,7 +902,7 @@ fn builtinNames(): List<Text> = [
   "fs.exists", "fs.read_text", "fs.write_text", "fs.try_read_text", "fs.try_write_text", "fs.read_bytes", "fs.write_bytes",
   "env.get", "env.has", "env.set", "env.unset",
   "process.run", "process.run_with_input", "process.run_with_env", "process.run_with_options", "process.code", "process.stdout", "process.stderr", "process.ok",
-  "str.len", "str.trim", "str.upper", "str.lower",
+  "str.len", "str.trim", "str.upper", "str.lower", "str.from_int",
   "str.contains", "str.starts_with", "str.ends_with",
   "json.valid", "json.get", "json.encode",
   "path.join", "path.basename", "path.dirname", "path.extension", "path.stem",
@@ -924,7 +924,7 @@ fn builtinCounts(): List<Int> = [
   1, 1, 2, 1, 2, 1, 2,
   1, 1, 2, 1,
   2, 3, 3, 4, 1, 1, 1, 1,
-  1, 1, 1, 1,
+  1, 1, 1, 1, 1,
   2, 2, 2,
   1, 2, 1,
   2, 1, 1, 1, 1,
@@ -2725,6 +2725,11 @@ fn checkBuiltinTypes(code: List<Instruction>, name: Text, stackInput: List<Text>
     else if Text.eq(name, "http.ok") or Text.eq(name, "http.truncated") then { resultType = "bool" }
     else if Text.eq(name, "http.body_bytes") then { resultType = "bytes" }
     else { resultType = "str" }
+  } else if Text.eq(name, "str.from_int") then {
+    val valueType = pop(stack)
+    stack = valueType.stack
+    if not Text.eq(valueType.value, "int") then { problem = "E0730 builtin `str.from_int` requires int" }
+    resultType = "str"
   } else {
     val valueType = pop(stack)
     stack = valueType.stack
@@ -4515,6 +4520,11 @@ fn callBuiltin(code: List<Instruction>, name: Text, input: List<Text>, deadlineM
     val one = pop(stack)
     stack = one.stack
     if let Ok(value) = requireInt(one.value, name) { result = textValue(DateTime.toIso(DateTime.fromUnix(value))) }
+    else if let Err(message) = requireInt(one.value, name) { problem = message }
+  } else if Text.eq(name, "str.from_int") then {
+    val one = pop(stack)
+    stack = one.stack
+    if let Ok(value) = requireInt(one.value, name) { result = textValue(intToText(value)) }
     else if let Err(message) = requireInt(one.value, name) { problem = message }
   } else if Text.eq(name, "time.format") then {
     val pattern = pop(stack)

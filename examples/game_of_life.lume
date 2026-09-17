@@ -1,7 +1,7 @@
 // Conway's Game of Life on a toroidal (wrap-around) grid.
 
 fn intText(n: int) -> str {
-  return result.value(json.encode(n))
+  return str.from_int(n)
 }
 
 fn seedAlive(row: int, col: int) -> bool {
