@@ -1,0 +1,16 @@
+fn sideEffect(label: str) -> bool {
+  print("called " + label)
+  return true
+}
+
+fn main(args: [str]) -> int {
+  print(false and sideEffect("and-right"))
+  print(true or sideEffect("or-right"))
+  print(true and sideEffect("and-right-2"))
+  print(false or sideEffect("or-right-2"))
+  print(not true)
+  print(not false)
+  print(true and false or true)
+  print(not true and false)
+  return 0
+}

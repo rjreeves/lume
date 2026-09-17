@@ -792,15 +792,23 @@ grid) — not blocked on anything upstream, all genuinely bounded
 compiler-only changes, each confirmed by a direct empirical test
 against the real compiler rather than assumed from the grammar:
 
-- **no boolean `and`/`or`/`not` operators exist at all** — confirmed
-  zero matches for any of the three anywhere in the lexer or parser
-  (`src/lume.cto`'s symbol set for the lexer doesn't even include `|`,
-  and the two-character-operator list has no `&&`/`||`). Every compound
-  condition today needs nested `if` statements instead, which reads
-  poorly for anything more than a two-way check (`countNeighbors` in
-  the example above worked around this entirely by enumerating the 8
-  neighbor offsets as parallel lists rather than writing the natural
-  `if not (dRow == 0 and dCol == 0)` guard);
+- ~~no boolean `and`/`or`/`not` operators exist at all~~ — shipped,
+  with genuine short-circuit evaluation (deliberately verified with a
+  test that proves the right operand is never *evaluated* when the
+  left already determines the result, not just that the boolean
+  output is correct — this session separately found and filed a Certo
+  interpreter bug, BACKLOG item 326, where Certo's own `and`/`or`
+  don't short-circuit despite the spec saying they do, so Lume's own
+  implementation got extra scrutiny here). Needed zero new runtime
+  instruction types and zero `verifyTypes`/VM changes: `and`, `or`,
+  and `not` all compile to the same `jump_false`/`jump`/`const_bool`
+  instructions `if`/`else` already emits, via a new `parseOr →
+  parseAnd → parseNot → parseComparison` precedence level (`not`
+  binds tighter than `and`, which binds tighter than `or`) wired in at
+  all 15 sites that previously called `parseComparison` directly as
+  "the top-level expression parser". `verifyTypes`'s existing
+  `jump_false` handling already required and popped a `bool`, so
+  operand-type checking (`E0617`) came for free;
 - **no `if`/`else` expression form** — confirmed via a live `E0101
   expected expression` compiling `if cell { rowTotal + 1 } else {
   rowTotal }` as a closure body. `if`/`else` is statement-only; a
@@ -847,9 +855,19 @@ run against the real compiler, not assumed:
 - **a function call's return value cannot have a field accessed
   directly** — `result.value(decoded).name` is a syntax error (`E0206
   expected )`); the call's result must be bound to a `let` first, then
-  the field read off that binding. Confirmed as a real parser gap, not
-  a type error — same call bound to a `let` first compiles and runs
-  correctly.
+  the field read off that binding. **Scope corrected after further
+  investigation**: this is not a small, bounded parser fix. The lexer
+  treats a whole dotted name (`user.name`, `str.len`, `Result.Ok`) as
+  one identifier token (`isAlphaNumeric` includes `.`); every dotted
+  access in this compiler is a string-split on that one token's text
+  (`beforeDot`/`afterDot`/`Text.split(..., ".")`), not a recursive
+  postfix-application grammar production. `)` ends that token, so
+  there is no mechanism at all for attaching a trailing `.field` onto
+  an arbitrary expression (a call, a parenthesized expression, and so
+  on) — real support would mean inventing a genuine postfix-parsing
+  loop and changing how every existing dotted form (`str.len`,
+  `list.map`, `Result.Ok`, `User.from_json`, namespaced builtins in
+  general) is recognized, not a quick, isolated addition.
 
 None of these blocked the manual's own examples once corrected, but
 they're real ergonomic gaps for a language whose own stated top-level

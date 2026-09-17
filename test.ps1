@@ -42,6 +42,14 @@ $control = & $Lume run (Join-Path $PSScriptRoot 'examples\control_flow.lume')
 if ($LASTEXITCODE -ne 0) { throw "control flow exited $LASTEXITCODE" }
 Assert-Equal 'control flow' "control flow works`n10" ($control -join "`n")
 
+$booleanOps = & $Lume run (Join-Path $PSScriptRoot 'examples\boolean_operators.lume')
+if ($LASTEXITCODE -ne 0) { throw "boolean operators exited $LASTEXITCODE" }
+Assert-Equal 'and/or/not with short-circuiting' "false`ntrue`ncalled and-right-2`ntrue`ncalled or-right-2`ntrue`nfalse`ntrue`ntrue`nfalse" ($booleanOps -join "`n")
+
+$invalidBooleanOp = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_boolean_operator.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "invalid boolean operator validation should exit 1" }
+Assert-Equal 'boolean operator requires bool operands' 'E0617 line 2: condition must be bool, got int' ($invalidBooleanOp -join "`n")
+
 $functions = & $Lume run (Join-Path $PSScriptRoot 'examples\functions.lume')
 if ($LASTEXITCODE -ne 0) { throw "functions exited $LASTEXITCODE" }
 Assert-Equal 'functions and recursion' "42`n120" ($functions -join "`n")

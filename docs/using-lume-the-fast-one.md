@@ -158,8 +158,10 @@ let ready = retries < 3
 let same = left == right
 ```
 
-The full operator set is `+ - * / % == != < <= > >=`. String concatenation
-overloads `+`:
+The full operator set is `+ - * / % == != < <= > >=`, plus the boolean
+keyword-operators `and`/`or`/`not` (section 4) — `and`/`or` genuinely
+short-circuit, so `a and b()` never calls `b()` when `a` is already
+`false`. String concatenation overloads `+`:
 
 ```lume
 let message = "service=" + service
@@ -231,24 +233,26 @@ flag checked in the loop condition.
   }
   ```
 
-- **There are no `and`/`or`/`not` boolean operators, in any spelling** (no
-  keywords, no `&&`/`||`/`!` for boolean logic — `!` is reserved for
-  `Result`/`Option` propagation, see section 10). Every compound condition
-  needs nested `if`s:
+- **`and`/`or`/`not` are keywords, not symbols** — there is no `&&`/`||`/`!`
+  for boolean logic (`!` is reserved for `Result`/`Option` propagation, see
+  section 10). `not` binds tighter than `and`, which binds tighter than
+  `or` — ordinary precedence:
 
   ```lume
-  // instead of: if a and b { ... }
-  if a {
-    if b {
-      // ...
-    }
+  if a and b {
+    // ...
+  }
+
+  if not ready or retries > 3 {
+    // ...
   }
   ```
 
-  For an "or" shape, use two separate `if` blocks that both lead to the same
-  outcome, or a `var` flag set by either branch before a single check. When a
-  condition has many cases, prefer restructuring it as a small boolean-typed
-  helper function (as above) — it reads far better than deep `if` nesting.
+  `and`/`or` genuinely short-circuit: the right operand is never evaluated
+  once the left already determines the result (`false and expensive()`
+  never calls `expensive()`; same for `true or expensive()`). Both operands
+  of `and`/`or`, and the operand of `not`, must be `bool` — there is no
+  truthiness.
 
 The checker prevents integers, strings, or records from being used as
 accidental conditions.
@@ -1132,8 +1136,9 @@ becomes an explicit exit code.
 7. Keep list callbacks small; use named functions or immutable-capture
    closures, and keep `match` out of them entirely.
 8. Convert a number to text with `str.from_int`, not a workaround.
-9. Reach for a small boolean-returning helper function instead of nesting
-   more than two or three `if`s deep for a compound condition.
+9. Use `and`/`or`/`not` directly for compound conditions; reach for a
+   small boolean-returning helper function only once a condition needs
+   more explanation than the operators alone can give it.
 10. Put reusable logic in modules and effects near `main`.
 11. Run `lume check` continuously and test both success and failure paths.
 12. Measure compiler performance after expanding the language core.
@@ -1143,8 +1148,6 @@ becomes an explicit exit code.
 Real, current limitations — not aspirational roadmap items from other
 documents in this repository:
 
-- **No `and`/`or`/`not` boolean operators** in any spelling. Nest `if`s
-  (section 4).
 - **No `if`/`else` expression form.** Use a helper function with early
   `return`s (section 4).
 - **No `??` operator** — that is Certo syntax, not Lume's (section 3).
