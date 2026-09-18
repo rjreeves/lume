@@ -1085,6 +1085,29 @@ function Read-LspMessage([System.Diagnostics.Process]$Proc) {
   return [System.Text.Encoding]::UTF8.GetString($bodyBytes)
 }
 
+# A Content-Length that parses as a valid integer but is negative used to
+# reach readBytes with that negative count and hang the server forever (0%
+# CPU, no response, no crash for a client to notice and restart from) -
+# confirmed live before this test existed. It's now treated the same as an
+# unparsable header: the server exits instead of hanging.
+$lspNegLenPsi = New-Object System.Diagnostics.ProcessStartInfo
+$lspNegLenPsi.FileName = $Lume
+$lspNegLenPsi.Arguments = 'lsp'
+$lspNegLenPsi.RedirectStandardInput = $true
+$lspNegLenPsi.RedirectStandardOutput = $true
+$lspNegLenPsi.RedirectStandardError = $true
+$lspNegLenPsi.UseShellExecute = $false
+$lspNegLenProc = [System.Diagnostics.Process]::Start($lspNegLenPsi)
+try {
+  $negLenHeader = [System.Text.Encoding]::ASCII.GetBytes("Content-Length: -1`r`n`r`n")
+  $lspNegLenProc.StandardInput.BaseStream.Write($negLenHeader, 0, $negLenHeader.Length)
+  $lspNegLenProc.StandardInput.BaseStream.Flush()
+  if (-not $lspNegLenProc.WaitForExit(5000)) { throw 'lsp server should exit on a negative Content-Length, not hang' }
+  Assert-Equal 'lsp exits instead of hanging on a negative Content-Length' '0' "$($lspNegLenProc.ExitCode)"
+} finally {
+  if (-not $lspNegLenProc.HasExited) { $lspNegLenProc.Kill() }
+}
+
 $lspPsi = New-Object System.Diagnostics.ProcessStartInfo
 $lspPsi.FileName = $Lume
 $lspPsi.Arguments = 'lsp'

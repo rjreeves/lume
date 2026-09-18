@@ -606,7 +606,16 @@ non-trivial benchmark in this file has met its own bar.**
   `problem: Text` field with first-error-short-circuit throughout, not a
   list), so this MVP publishes at most one diagnostic per file — a real
   multi-diagnostic LSP needs that pipeline refactored first, a separate,
-  much larger change;
+  much larger change. Later stress-testing against a deliberately
+  adversarial client found every case tried (malformed JSON, missing
+  `method`/`params`/`textDocument` fields, an empty `contentChanges`
+  array) already degrades gracefully — except one real hang, confirmed
+  live: a `Content-Length` header that parses as a valid but *negative*
+  integer reached `readBytes` with that count and blocked forever (0%
+  CPU, no response, no crash for an editor to notice and restart from).
+  Fixed by having `lspReadContentLength` treat a negative value the same
+  as an unparsable one, which the server already handled correctly (a
+  clean exit, not a hang);
 - ~~a machine-readable API manifest, compact AI generation contract, and
   fixed AI evaluation tasks~~ — shipped: `lume api`/`ai-reference`
   generate the manifest (used by `build.ps1` to write
