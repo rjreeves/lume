@@ -638,6 +638,32 @@ foundation — is next.
   a dependency's own `dependencies` too, recursively, into the same
   flat `lume.lock.json`, with cycle (`E0709`) and ambiguous-name
   (`E0708`) detection mirroring `use`'s own cycle detection;
+- ~~enforce per-package dependency isolation~~ — shipped, closing a
+  real gap found while reviewing the packaging system: any package
+  could `use` any other package present anywhere in the resolved
+  tree, whether or not it declared that package as its own
+  dependency, purely because `lume.lock.json` was one flat list and
+  `loadModule` (`src/lume.cto`) threaded it through every recursive
+  call unchanged — confirmed live with a diamond graph (`app` →
+  `foo`/`bar`, both → `baz`) where `foo` successfully called into
+  `bar` despite never declaring it, purely because `bar` happened to
+  be some *other* dependency of the root app. `examples/packages/app`
+  itself demonstrated the exact pattern (`app.lume` used
+  `formatting.fmt` directly while only declaring `mathutils`;
+  `formatting` was only ever declared by `mathutils`) — fixed by
+  adding `formatting` to `app/lume.json` directly, since it's a real,
+  honest dependency. Each `lume.lock.json` entry now also records its
+  own declared dependency names, and a new top-level `"direct"` field
+  records the root app's own; `loadModule` carries both the full flat
+  list (still needed to locate any resolved package's files) and a
+  second, narrower "currently visible" list that only widens when
+  resolution actually crosses into a declared dependency, using
+  *that* dependency's own declared names from then on — all computed
+  once at `install` time, so ordinary `run`/`check`/`test` still does
+  zero resolution work, unchanged from this section's own closing
+  constraint below. An undeclared cross-package `use` now falls
+  through to the same `E0701 cannot read module` error a genuinely
+  missing module already produces — no new error code needed;
 - cache resolved dependencies by content hash — deferred: not
   meaningful yet for local paths (reading a local directory has no
   fetch cost to cache); revisit once packages can come from anywhere

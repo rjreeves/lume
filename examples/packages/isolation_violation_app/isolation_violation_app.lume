@@ -1,0 +1,6 @@
+use leaky.leaky_lib
+
+fn main(args: [str]) -> int {
+  print(leaky_lib.hello())
+  return 0
+}

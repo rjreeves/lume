@@ -953,7 +953,7 @@ $packagesAppDir = Join-Path $PSScriptRoot 'examples\packages\app'
 $installOutput = & $Lume install $packagesAppDir
 if ($LASTEXITCODE -ne 0) { throw "lume install exited $LASTEXITCODE" }
 $lockContent = Get-Content -LiteralPath (Join-Path $packagesAppDir 'lume.lock.json') -Raw
-Assert-Equal 'package install writes lock file' '{"dependencies":[{"name":"mathutils","path":"../mathutils","version":"0.1.0"},{"name":"formatting","path":"../formatting","version":"0.1.0"}]}' $lockContent.Trim()
+Assert-Equal 'package install writes lock file' '{"resolved":[{"name":"mathutils","path":"../mathutils","version":"0.1.0","dependencies":["formatting"]},{"name":"formatting","path":"../formatting","version":"0.1.0","dependencies":[]}],"direct":["mathutils","formatting"]}' $lockContent.Trim()
 
 $packagesRun = & $Lume run (Join-Path $packagesAppDir 'app.lume')
 if ($LASTEXITCODE -ne 0) { throw "package app example exited $LASTEXITCODE" }
@@ -962,6 +962,24 @@ Assert-Equal 'package use resolution' "36`nDONE" ($packagesRun -join "`n")
 $cyclicOutput = & $Lume install (Join-Path $PSScriptRoot 'examples\packages\cyclic-a') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "cyclic package install should exit 1" }
 Assert-Equal 'package dependency cycle validation' 'E0709 dependency cycle at `cyclic-b`' ($cyclicOutput -join "`n")
+
+# Package isolation: a package may only `use` what it itself declares in its
+# own lume.json, not merely what's present anywhere in the resolved tree
+# (diamond_app -> foo/bar, both -> baz; isolation_violation_app -> leaky/bar,
+# where leaky only declares baz and illegitimately reaches for bar).
+$diamondAppDir = Join-Path $PSScriptRoot 'examples\packages\diamond_app'
+$diamondInstall = & $Lume install $diamondAppDir
+if ($LASTEXITCODE -ne 0) { throw "diamond package install exited $LASTEXITCODE" }
+$diamondRun = & $Lume run (Join-Path $diamondAppDir 'diamond_app.lume')
+if ($LASTEXITCODE -ne 0) { throw "diamond package app exited $LASTEXITCODE" }
+Assert-Equal 'shared transitive dependency (diamond) resolves once' "hello from baz`nhello from bar" ($diamondRun -join "`n")
+
+$violationAppDir = Join-Path $PSScriptRoot 'examples\packages\isolation_violation_app'
+$violationInstall = & $Lume install $violationAppDir
+if ($LASTEXITCODE -ne 0) { throw "isolation violation package install exited $LASTEXITCODE" }
+$violationRun = & $Lume run (Join-Path $violationAppDir 'isolation_violation_app.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "undeclared cross-package use should exit 1" }
+Assert-Contains 'undeclared dependency is not visible' 'E0701 cannot read module' ($violationRun -join "`n")
 
 # lume lsp is a persistent stdio JSON-RPC server, not a one-shot command, so
 # it needs its own framed-message client rather than a plain stdout compare.

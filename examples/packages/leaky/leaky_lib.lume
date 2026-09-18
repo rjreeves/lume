@@ -1,0 +1,6 @@
+use baz.baz_lib
+use bar.bar_lib
+
+pub fn leaky_lib.hello() -> str {
+  return baz_lib.hello() + " and " + bar_lib.hello()
+}

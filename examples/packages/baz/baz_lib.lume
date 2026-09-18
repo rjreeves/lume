@@ -1,0 +1,3 @@
+pub fn baz_lib.hello() -> str {
+  return "hello from baz"
+}
