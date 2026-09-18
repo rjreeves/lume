@@ -176,15 +176,22 @@ type ModuleLoad = {
   problem: Text
 }
 
+type ModulePathResult = {
+  path: Text
+  crossedName: Text
+}
+
 type PackageDep = {
   name: Text
   path: Text
+  dependencyNames: List<Text>
 }
 
 type ResolvedDep = {
   name: Text
   path: Text
   version: Text
+  dependencyNames: List<Text>
 }
 
 type ResolveOutcome = {
@@ -5217,53 +5224,106 @@ fn importedModules(source: Text): List<Text> = {
   modules
 }
 
-fn findDepPath(deps: List<PackageDep>, name: Text): Text? = {
+// Plain found/dep pair, not Option<PackageDep> - Certo's codegen mishandles
+// Option wrapping a multi-field record (confirmed: "operand of type
+// PackageDep where arithmetic or pointer type is required" from the C
+// compiler), so this mirrors MatchContextPop/IfExprContextPop's own
+// established always-populated-struct pattern instead.
+type FindDepResult = {
+  found: Bool
+  dep: PackageDep
+}
+
+fn findDep(deps: List<PackageDep>, name: Text): FindDepResult = {
   var index = 0
   var found = false
-  var path = ""
+  var matched = PackageDep { name: "", path: "", dependencyNames: [] }
   while index < List.len(deps) and not found {
     val dep = List.getOrPanic(deps, index)
     if Text.eq(dep.name, name) then {
       found = true
-      path = dep.path
+      matched = dep
     }
     index = index + 1
   }
-  if found then Some(path) else None
+  FindDepResult { found: found, dep: matched }
 }
 
-fn loadPackageDeps(dir: Text): List<PackageDep> [io] = {
+// The subset of `allDeps` a package whose own manifest declares `names` is
+// allowed to `use` - see loadModule's own crossedName handling below.
+fn depsVisibleTo(allDeps: List<PackageDep>, names: List<Text>): List<PackageDep> = {
+  var visible: List<PackageDep> = []
+  for dep in allDeps {
+    if containsName(names, dep.name) then { visible = List.push(visible, dep) }
+  }
+  visible
+}
+
+fn readDependencyNames(namesArray: JsonValue): List<Text> = {
+  var names: List<Text> = []
+  if JsonValue.isArray(namesArray) then {
+    var index = 0
+    while index < JsonValue.length(namesArray) {
+      // JsonValue.atText on a plain string array element returns its raw
+      // JSON-encoded text, quotes included (confirmed directly: "foo", not
+      // foo) - re-parsing it as its own one-value JSON document and reading
+      // that back with asText is what actually unwraps the string, mirroring
+      // how every array-of-objects site elsewhere in this file already
+      // reparses JsonValue.atText's own output rather than using it as-is.
+      names = List.push(names, JsonValue.asText(Json.parse(JsonValue.atText(namesArray, index))))
+      index = index + 1
+    }
+  }
+  names
+}
+
+// Two lists: every package resolved anywhere in the tree (needed to locate
+// any of their files by path once module resolution crosses into one), and
+// the subset the *root* app's own files may `use` directly - its own
+// declared dependencies, not the whole transitively-resolved set (see
+// loadModule's crossedName handling for how a deeper package's own,
+// narrower visibility is computed once resolution crosses into it).
+type PackageContext = {
+  allDeps: List<PackageDep>
+  visibleDeps: List<PackageDep>
+}
+
+fn loadPackageContext(dir: Text): PackageContext [io] = {
   val lockPath = Path.join(dir, "lume.lock.json")
   if let Some(source) = readFile(lockPath) {
     val root = Json.parse(source)
-    val depsArray = JsonValue.get(root, "dependencies")
+    val depsArray = JsonValue.get(root, "resolved")
+    var allDeps: List<PackageDep> = []
     if JsonValue.isArray(depsArray) then {
-      var deps: List<PackageDep> = []
       var index = 0
       while index < JsonValue.length(depsArray) {
         val entry = Json.parse(JsonValue.atText(depsArray, index))
         val name = JsonValue.asText(JsonValue.get(entry, "name"))
         val relativePath = JsonValue.asText(JsonValue.get(entry, "path"))
-        deps = List.push(deps, PackageDep { name: name, path: Path.join(dir, relativePath) })
+        val ownNames = readDependencyNames(JsonValue.get(entry, "dependencies"))
+        allDeps = List.push(allDeps, PackageDep { name: name, path: Path.join(dir, relativePath), dependencyNames: ownNames })
         index = index + 1
       }
-      deps
-    } else { [] }
-  } else { [] }
+    }
+    val directNames = readDependencyNames(JsonValue.get(root, "direct"))
+    PackageContext { allDeps: allDeps, visibleDeps: depsVisibleTo(allDeps, directNames) }
+  } else { PackageContext { allDeps: [], visibleDeps: [] } }
 }
 
-fn resolveModulePath(path: Text, moduleName: Text, deps: List<PackageDep>): Text = {
+fn resolveModulePath(path: Text, moduleName: Text, visibleDeps: List<PackageDep>): ModulePathResult = {
   val dot = Text.indexOf(moduleName, ".") ?? -1
   val head = if dot >= 0 then Text.slice(moduleName, 0, dot) else moduleName
-  if let Some(depPath) = findDepPath(deps, head) {
+  val localPath = Path.join(Path.dirname(path), Text.replace(moduleName, ".", "/") ++ ".lume")
+  val found = findDep(visibleDeps, head)
+  if found.found then {
     if dot >= 0 then {
       val rest = Text.slice(moduleName, dot + 1, Text.len(moduleName))
-      Path.join(depPath, Text.replace(rest, ".", "/") ++ ".lume")
-    } else { Path.join(Path.dirname(path), Text.replace(moduleName, ".", "/") ++ ".lume") }
-  } else { Path.join(Path.dirname(path), Text.replace(moduleName, ".", "/") ++ ".lume") }
+      ModulePathResult { path: Path.join(found.dep.path, Text.replace(rest, ".", "/") ++ ".lume"), crossedName: head }
+    } else { ModulePathResult { path: localPath, crossedName: "" } }
+  } else { ModulePathResult { path: localPath, crossedName: "" } }
 }
 
-fn loadModule(path: Text, active: List<Text>, alreadyLoaded: List<Text>, deps: List<PackageDep>): ModuleLoad [io] = {
+fn loadModule(path: Text, active: List<Text>, alreadyLoaded: List<Text>, allDeps: List<PackageDep>, visibleDeps: List<PackageDep>): ModuleLoad [io] = {
   if containsName(alreadyLoaded, path) then { ModuleLoad { source: "", loadedPaths: alreadyLoaded, problem: "" } }
   else if containsName(active, path) then { ModuleLoad { source: "", loadedPaths: alreadyLoaded, problem: "E0702 module import cycle at `" ++ path ++ "`" } }
   else if let Some(source) = readFile(path) {
@@ -5273,8 +5333,15 @@ fn loadModule(path: Text, active: List<Text>, alreadyLoaded: List<Text>, deps: L
     var problem = ""
     for moduleName in importedModules(source) {
       if Text.eq(problem, "") then {
-        val dependencyPath = resolveModulePath(path, moduleName, deps)
-        val dependency = loadModule(dependencyPath, nextActive, loadedPaths, deps)
+        val resolved = resolveModulePath(path, moduleName, visibleDeps)
+        // Same package (crossedName == "") keeps this file's own visibility
+        // unchanged; crossing into a declared dependency narrows it to
+        // *that* package's own declared names, not the whole flat tree -
+        // this is what actually enforces isolation: a dependency can only
+        // `use` what it itself declared, never a sibling it never asked for.
+        val crossedDep = findDep(allDeps, resolved.crossedName)
+        val nextVisible = if Text.eq(resolved.crossedName, "") then visibleDeps else if crossedDep.found then depsVisibleTo(allDeps, crossedDep.dep.dependencyNames) else []
+        val dependency = loadModule(resolved.path, nextActive, loadedPaths, allDeps, nextVisible)
         if not Text.eq(dependency.problem, "") then { problem = dependency.problem }
         else {
           combined = combined ++ dependency.source
@@ -5290,7 +5357,10 @@ fn loadModule(path: Text, active: List<Text>, alreadyLoaded: List<Text>, deps: L
   }
 }
 
-fn loadProgram(path: Text): ModuleLoad [io] = loadModule(path, [], [], loadPackageDeps(Path.dirname(path)))
+fn loadProgram(path: Text): ModuleLoad [io] = {
+  val pkgContext = loadPackageContext(Path.dirname(path))
+  loadModule(path, [], [], pkgContext.allDeps, pkgContext.visibleDeps)
+}
 
 fn readManifestVersion(manifestPath: Text): Result<Text, Text> = {
   if let Some(source) = readFile(manifestPath) {
@@ -5304,6 +5374,26 @@ fn readManifestVersion(manifestPath: Text): Result<Text, Text> = {
       } else { Ok(JsonValue.asText(version)) }
     }
   } else { Err("cannot read manifest `" ++ manifestPath ++ "`") }
+}
+
+// The plain dependency names a manifest itself declares - used to build
+// each lock-file entry's own "dependencies" list, so module resolution can
+// later tell "this package declared X" apart from "X merely exists
+// somewhere in the resolved tree" (see resolveModulePath/loadModule).
+fn readManifestDependencyNames(manifestPath: Text): List<Text> [io] = {
+  if let Some(source) = readFile(manifestPath) {
+    val depsArray = JsonValue.get(Json.parse(source), "dependencies")
+    if JsonValue.isArray(depsArray) then {
+      var names: List<Text> = []
+      var index = 0
+      while index < JsonValue.length(depsArray) {
+        val entry = Json.parse(JsonValue.atText(depsArray, index))
+        names = List.push(names, JsonValue.asText(JsonValue.get(entry, "name")))
+        index = index + 1
+      }
+      names
+    } else { [] }
+  } else { [] }
 }
 
 // Path.join never collapses ".." segments (confirmed empirically: joining
@@ -5376,7 +5466,8 @@ fn resolveDependencies(rootDir: Text, rootRelative: Text, active: List<Text>, re
         } else {
           val depManifestPath = Path.join(Path.join(rootDir, depRootRelative), "lume.json")
           if let Ok(depVersion) = readManifestVersion(depManifestPath) {
-            currentResolved = List.push(currentResolved, ResolvedDep { name: depName, path: depRootRelative, version: depVersion })
+            val depDependencyNames = readManifestDependencyNames(depManifestPath)
+            currentResolved = List.push(currentResolved, ResolvedDep { name: depName, path: depRootRelative, version: depVersion, dependencyNames: depDependencyNames })
             val nested = resolveDependencies(rootDir, depRootRelative, List.push(active, depRootRelative), currentResolved)
             if not Text.eq(nested.problem, "") then { problem = nested.problem }
             else { currentResolved = nested.resolved }
@@ -5412,10 +5503,20 @@ fn installPackages(dir: Text): Unit [io] = {
           JsonValue.set(lockEntry, "name", Json.string(dep.name))
           JsonValue.set(lockEntry, "path", Json.string(dep.path))
           JsonValue.set(lockEntry, "version", Json.string(dep.version))
+          val ownNames = Json.array()
+          for depName in dep.dependencyNames { JsonValue.push(ownNames, Json.string(depName)) }
+          JsonValue.set(lockEntry, "dependencies", ownNames)
           JsonValue.push(lockDeps, lockEntry)
         }
+        // Which of the root app's own direct dependencies it may `use`
+        // directly - distinct from the full "resolved" list below, which
+        // also contains transitive-only packages a *deeper* dependency
+        // declared, not the app itself (see loadProgram/loadModule).
+        val directNames = Json.array()
+        for name in readManifestDependencyNames(manifestPath) { JsonValue.push(directNames, Json.string(name)) }
         val lockRoot = Json.object()
-        JsonValue.set(lockRoot, "dependencies", lockDeps)
+        JsonValue.set(lockRoot, "resolved", lockDeps)
+        JsonValue.set(lockRoot, "direct", directNames)
         val lockPath = Path.join(dir, "lume.lock.json")
         if writeFile(lockPath, Json.stringify(lockRoot)) then { println("wrote " ++ lockPath) }
         else {

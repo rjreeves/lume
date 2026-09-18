@@ -1,0 +1,8 @@
+{
+  "name": "isolation_violation_app",
+  "version": "0.1.0",
+  "dependencies": [
+    { "name": "leaky", "path": "../leaky" },
+    { "name": "bar", "path": "../bar" }
+  ]
+}

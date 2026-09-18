@@ -1,0 +1,1 @@
+{"resolved":[{"name":"leaky","path":"../leaky","version":"0.1.0","dependencies":["baz"]},{"name":"baz","path":"../baz","version":"0.1.0","dependencies":[]},{"name":"bar","path":"../bar","version":"0.1.0","dependencies":["baz"]}],"direct":["leaky","bar"]}

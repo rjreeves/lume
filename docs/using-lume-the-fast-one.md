@@ -947,6 +947,17 @@ to two different locations is `E0708`. There is no real version-range
 resolution or registry yet — `version` is recorded but not checked against
 anything.
 
+**Dependencies are isolated per package, not shared across the whole
+resolved tree.** If `app` depends on `mathutils`, and `mathutils` depends on
+`formatting`, `app` can call into `mathutils` freely — but `app` cannot
+`use formatting` directly unless it *also* declares `formatting` as its own
+dependency. This matters even when it looks like it should "just work":
+`formatting` genuinely exists somewhere in `app`'s resolved tree, but
+`app`'s own manifest never asked for it, so it isn't visible to `app`'s own
+files. Declare exactly what you use, in the package that uses it — the same
+rule real package managers enforce, and for the same reason: a package's
+own `lume.json` is the only thing that reliably tells you what it needs.
+
 ## 20. Testing
 
 A native test has a descriptive string name and a block of expectations:

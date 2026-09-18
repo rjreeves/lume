@@ -1,0 +1,7 @@
+{
+  "name": "leaky",
+  "version": "0.1.0",
+  "dependencies": [
+    { "name": "baz", "path": "../baz" }
+  ]
+}

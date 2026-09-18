@@ -1,0 +1,8 @@
+use foo.foo_lib
+use bar.bar_lib
+
+fn main(args: [str]) -> int {
+  print(foo_lib.hello())
+  print(bar_lib.hello())
+  return 0
+}

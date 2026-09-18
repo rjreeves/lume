@@ -1,0 +1,5 @@
+use baz.baz_lib
+
+pub fn foo_lib.hello() -> str {
+  return baz_lib.hello()
+}
