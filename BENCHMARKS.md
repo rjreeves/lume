@@ -1631,3 +1631,31 @@ since the feature-mix program's generated code (records, an enum,
 `match`, a marker-protocol-constrained generic, closures,
 `list.map`/`filter`/`fold`) never calls any of the builtins these PRs
 added. Treated as noise, not a regression.
+
+## Checkpoint after and/or/not, if-expressions, and package isolation (2026-09-18)
+
+A clean sweep of all three standard benchmark scripts at `3e73db8`
+(after PRs #78-#80: `and`/`or`/`not` boolean operators, `if`/`else` as
+an expression, and per-package dependency isolation), run against a
+freshly rebuilt `dist/lume.exe`. Unlike the last checkpoint, this one
+is a real verification, not just a stability check: #78 and #79 both
+add a genuinely new precedence level (`parseOr`/`parseAnd`/`parseNot`)
+and new `verifyTypes` instruction handling (`if_expr_start`/
+`if_expr_then_end`/`if_expr_finish`) that every compile now passes
+through, not an additive branch reached only by new syntax. #80 (package
+isolation) touches only `lume install`/module resolution, not the
+compiler's own expression/statement grammar, so it isn't expected to
+move these numbers on its own.
+
+| Benchmark | Mean | Lines/second | Target | Result |
+| --- | ---: | ---: | ---: | --- |
+| Trivial (`functions.lume`, `lume check`, 100 iterations) | 9.30 ms | - | - | consistent with every prior run in this file |
+| Trivial 10,000-line (`benchmark-10000.ps1`, 20 iterations) | 50.80 ms | 196,850 | 10,000 | `TargetMet: True`, ~20x over target |
+| Feature-mix (`benchmark-10000-features.ps1`, 30 fresh-process samples) | 216.30 ms (median 214.61, p95 228.36, stddev 6.36) | 46,233 | 10,000 | `TargetMet: True`, ~4.6x over target |
+
+All three land within ordinary run-to-run noise of the last checkpoint's
+own figures (9.77 ms / 213,447 / 211.16 ms - median 212.04, p95 216.30,
+stddev 4.97 - and this run's own stddev, 6.36 ms, is in the same range,
+not the elevated ~12.5 ms that triggered a reproduce-before-trusting
+check last time) - no regression, including from the two PRs that did
+add real new hot-path code.
