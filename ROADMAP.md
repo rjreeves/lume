@@ -928,7 +928,25 @@ things rather than writing the obvious thing.
 
 - reproducible standalone executable builds;
 - package signing and checksum verification;
-- a stable bytecode version and compatibility policy;
+- ~~a stable bytecode version and compatibility policy~~ — the
+  version-*format* half was already covered (`LBC4`'s own magic
+  number), but investigating the `.lbc` cache directly found a real,
+  confirmed-live gap the format alone didn't close: `compileOrCache`
+  (`src/lume.cto`) keyed a cache hit purely on the program's own
+  source hash, with no way to tell "this source is unchanged" apart
+  from "this source is unchanged *and the compiler that produced this
+  bytecode is still the one running*" — upgrading `lume.exe` (even
+  for a real bug fix) left any untouched `.lume` file's stale,
+  pre-fix bytecode cached indefinitely, with no way to detect it short
+  of manually deleting the `.lbc` or touching the source. Fixed by
+  bumping the format to `LBC5` and embedding a build-time hash of
+  `lume.cto`'s own source (computed by `build.ps1`, substituted into a
+  placeholder constant before invoking Certo) alongside the existing
+  program-source hash; either mismatch is now treated as a cache miss.
+  Verified live: patching a real cache's embedded build-hash field to
+  simulate "same program, different compiler build" correctly forced a
+  transparent recompile with the right output, and rewrote the cache
+  with the real hash afterward;
 - a narrow C ABI or subprocess-based interoperability story;
 - release archives and installers for major desktop platforms.
 

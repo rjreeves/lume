@@ -167,6 +167,7 @@ type EnumScan = {
 type ArtifactResult = {
   code: List<Instruction>
   sourceHash: Text
+  buildHash: Text
   problem: Text
 }
 
@@ -5126,10 +5127,23 @@ fn appendBinaryText(parts: List<Bytes>, value: Text): List<Bytes> = {
   List.pushMut(output, Bytes.fromText(value))
 }
 
+// Replaced by build.ps1 with a real sha256 of this file's own source,
+// before invoking Certo - see build.ps1's own templating step. Running
+// `certo run src/lume.cto` directly (bypassing build.ps1) leaves this
+// literal placeholder in place, which is harmless: every .lbc produced by
+// that one build still gets a consistent identity, correctly rejecting
+// caches from any *real* build either way. Deliberately exactly 64
+// characters, matching a real sha256 hex digest's own length exactly -
+// encodeArtifact/decodeArtifact both treat this as a fixed-size field the
+// same way they already do the source hash, so an un-substituted
+// placeholder of the wrong length would corrupt every byte offset after it.
+fn compilerBuildHash(): Text = "UNBUILT_UNBUILT_UNBUILT_UNBUILT_UNBUILT_UNBUILT_UNBUILT_UNBUILT_"
+
 fn encodeArtifact(source: Text, code: List<Instruction>): Bytes = {
   var parts: List<Bytes> = []
-  parts = List.pushMut(parts, Bytes.fromText("LBC4"))
+  parts = List.pushMut(parts, Bytes.fromText("LBC5"))
   parts = List.pushMut(parts, Bytes.fromText(Crypto.sha256(source)))
+  parts = List.pushMut(parts, Bytes.fromText(compilerBuildHash()))
   parts = List.pushMut(parts, Bytes.fromInt64LE(List.len(code)))
   for instructionItem in code {
     parts = appendBinaryText(parts, instructionItem.op)
@@ -5140,18 +5154,25 @@ fn encodeArtifact(source: Text, code: List<Instruction>): Bytes = {
   Bytes.concatMany(parts)
 }
 
+// Header layout: "LBC5" (4) + source sha256 hex (64) + compiler build
+// hash hex (64) + instruction count (8) = 140 bytes before the first
+// instruction - bumped from LBC4's 76-byte header (no build hash field)
+// when this file gained the ability to tell "same source, different
+// compiler build" apart from a genuine cache hit; see compileOrCache.
 fn decodeArtifact(content: Bytes): ArtifactResult = {
   var code: List<Instruction> = []
   var problem = ""
   var sourceHash = ""
+  var buildHash = ""
   val contentLength = Bytes.length(content)
-  if contentLength < 76 then { problem = "E0401 invalid bytecode artifact" }
-  else if not Text.eq(Bytes.toText(Bytes.slice(content, 0, 4)), "LBC4") then {
+  if contentLength < 140 then { problem = "E0401 invalid bytecode artifact" }
+  else if not Text.eq(Bytes.toText(Bytes.slice(content, 0, 4)), "LBC5") then {
     problem = "E0402 unsupported bytecode format"
   } else {
     sourceHash = Bytes.toText(Bytes.slice(content, 4, 68))
-    val instructionCount = Bytes.readInt64LE(content, 68)
-    var cursor = 76
+    buildHash = Bytes.toText(Bytes.slice(content, 68, 132))
+    val instructionCount = Bytes.readInt64LE(content, 132)
+    var cursor = 140
     var index = 0
     if instructionCount < 0 or instructionCount > contentLength then { problem = "E0403 invalid bytecode instruction count" }
     while index < instructionCount and Text.eq(problem, "") {
@@ -5195,7 +5216,7 @@ fn decodeArtifact(content: Bytes): ArtifactResult = {
     }
     if Text.eq(problem, "") and cursor != contentLength then { problem = "E0403 trailing bytecode data" }
   }
-  ArtifactResult { code: code, sourceHash: sourceHash, problem: problem }
+  ArtifactResult { code: code, sourceHash: sourceHash, buildHash: buildHash, problem: problem }
 }
 
 fn saveArtifact(path: Text, source: Text, code: List<Instruction>): Text [io] = {
@@ -5205,7 +5226,7 @@ fn saveArtifact(path: Text, source: Text, code: List<Instruction>): Text [io] = 
 
 fn loadArtifact(path: Text): ArtifactResult [io] = {
   if let Some(content) = readFileBytes(path) { decodeArtifact(content) }
-  else { ArtifactResult { code: [], sourceHash: "", problem: "E0405 cannot read bytecode artifact `" ++ path ++ "`" } }
+  else { ArtifactResult { code: [], sourceHash: "", buildHash: "", problem: "E0405 cannot read bytecode artifact `" ++ path ++ "`" } }
 }
 
 fn importedModules(source: Text): List<Text> = {
@@ -5687,21 +5708,21 @@ fn compileOrCache(path: Text, source: Text): ArtifactResult [io] = {
   val hash = Crypto.sha256(source)
   if fileExists(pathToCache) then {
     val cached = loadArtifact(pathToCache)
-    if Text.eq(cached.problem, "") and Text.eq(cached.sourceHash, hash) then { cached }
+    if Text.eq(cached.problem, "") and Text.eq(cached.sourceHash, hash) and Text.eq(cached.buildHash, compilerBuildHash()) then { cached }
     else {
       val compiled = compileSource(source)
-      if not Text.eq(compiled.problem, "") then { ArtifactResult { code: [], sourceHash: hash, problem: compiled.problem } }
+      if not Text.eq(compiled.problem, "") then { ArtifactResult { code: [], sourceHash: hash, buildHash: compilerBuildHash(), problem: compiled.problem } }
       else {
         val saveProblem = saveArtifact(pathToCache, source, compiled.code)
-        ArtifactResult { code: compiled.code, sourceHash: hash, problem: saveProblem }
+        ArtifactResult { code: compiled.code, sourceHash: hash, buildHash: compilerBuildHash(), problem: saveProblem }
       }
     }
   } else {
     val compiled = compileSource(source)
-    if not Text.eq(compiled.problem, "") then { ArtifactResult { code: [], sourceHash: hash, problem: compiled.problem } }
+    if not Text.eq(compiled.problem, "") then { ArtifactResult { code: [], sourceHash: hash, buildHash: compilerBuildHash(), problem: compiled.problem } }
     else {
       val saveProblem = saveArtifact(pathToCache, source, compiled.code)
-      ArtifactResult { code: compiled.code, sourceHash: hash, problem: saveProblem }
+      ArtifactResult { code: compiled.code, sourceHash: hash, buildHash: compilerBuildHash(), problem: saveProblem }
     }
   }
 }
