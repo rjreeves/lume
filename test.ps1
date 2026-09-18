@@ -989,6 +989,30 @@ $filterByPathFragment = & $Lume test $nativeTestsPath --filter 'native_tests.lum
 if ($LASTEXITCODE -ne 0) { throw "filter by path fragment exited $LASTEXITCODE" }
 Assert-Equal 'filter matches path fragment via stable id' "PASS adds two values`nPASS recognizes present values`n2 passed; 0 failed" ($filterByPathFragment -join "`n")
 
+# A `|` in a declared test name used to shift the marker's trailing timeout
+# field, silently disabling it (parseInt on non-numeric text falls back to
+# 0, meaning "no timeout") - so a hanging test with a `|` in its name never
+# timed out at all. These cover the fix: the name round-trips intact (not
+# truncated at the `|`) in both plain and --json output, the timeout still
+# fires, and --filter can target a `|`-containing name via literal substring.
+$pipeNamePath = Join-Path $PSScriptRoot 'examples\native_tests_pipe_name.lume'
+$pipeNameId = ($pipeNamePath -replace '\\', '\\')
+
+$pipeNameTests = & $Lume test $pipeNamePath 2>&1
+if ($LASTEXITCODE -ne 1) { throw "pipe-in-name native test should exit 1" }
+Assert-Equal 'native test name preserves a literal pipe character' "PASS adds|two values`nFAIL hangs|past its own timeout (line 5): test timed out after 50ms`n1 passed; 1 failed" ($pipeNameTests -join "`n")
+
+$pipeNameJson = & $Lume test $pipeNamePath --json 2>&1
+if ($LASTEXITCODE -ne 1) { throw "pipe-in-name json native test should exit 1" }
+$pipeNameJsonExpected = "{`"event`":`"test`",`"id`":`"$pipeNameId#adds|two values`",`"name`":`"adds|two values`",`"status`":`"pass`",`"line`":1,`"message`":`"`"}" + "`n" + `
+  "{`"event`":`"test`",`"id`":`"$pipeNameId#hangs|past its own timeout`",`"name`":`"hangs|past its own timeout`",`"status`":`"fail`",`"line`":5,`"message`":`"test timed out after 50ms`"}" + "`n" + `
+  '{"event":"summary","passed":1,"failed":1,"total":2}'
+Assert-Equal 'structured test output preserves a literal pipe character' $pipeNameJsonExpected ($pipeNameJson -join "`n")
+
+$pipeNameFiltered = & $Lume test $pipeNamePath --filter 'adds|two'
+if ($LASTEXITCODE -ne 0) { throw "filter targeting a pipe-containing name exited $LASTEXITCODE" }
+Assert-Equal 'filter matches a literal pipe character in a test name' "PASS adds|two values`n1 passed; 0 failed" ($pipeNameFiltered -join "`n")
+
 $packagesAppDir = Join-Path $PSScriptRoot 'examples\packages\app'
 $installOutput = & $Lume install $packagesAppDir
 if ($LASTEXITCODE -ne 0) { throw "lume install exited $LASTEXITCODE" }

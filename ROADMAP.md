@@ -536,7 +536,19 @@ non-trivial benchmark in this file has met its own bar.**
   assertion failure; a test with no `timeout:` clause is unbounded,
   unchanged from before. This bounds a hang in test *code*, not a
   subprocess — `process.run` itself still has no timeout (see "Standard
-  scripting APIs" below);
+  scripting APIs" below). Investigating the native test framework later
+  found a real, confirmed-live bug here: a declared test's name and
+  timeout live in the same pipe-delimited `function` marker string
+  (`name|returnType|generics|constraints|testName|timeoutMs`), and
+  `testName` is the one field taken verbatim from a user-written string
+  literal rather than a pipe-free lexer token — so `test "a|b", timeout:
+  50 { while true {} }` silently truncated the reported name to `a` and
+  shifted `timeoutMs` onto non-numeric text, `parseInt`'s `?? 0`
+  fallback then meaning "no timeout", hanging forever instead of
+  failing after 50ms. Fixed by escaping a literal `|` in the declared
+  name with a control byte (`Char.fromInt(1)`, unreachable through any
+  of Lume's own string escapes) before it enters the marker, and
+  reversing that when the name is read back out;
 - process-output assertions — `expect.exit_code(process, code: int) ->
   bool`, `expect.stdout_contains(process, text: str) -> bool`, and
   `expect.stderr_contains(process, text: str) -> bool` — for asserting
