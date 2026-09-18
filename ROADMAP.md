@@ -558,7 +558,22 @@ non-trivial benchmark in this file has met its own bar.**
   open and why;
 - ~~formatter and format checking~~ — shipped as `lume fmt <file>
   [--check]` (see "Shipped in the bootstrap" above's `--json` convention
-  note, which already assumes `fmt`'s existence);
+  note, which already assumes `fmt`'s existence). Investigating it later
+  found `fmt` had zero test coverage and a real bug: `formatSource`
+  computed indentation by checking whether each line's own trimmed text
+  starts with `}`/ends with `{`, with no awareness that `//` starts a
+  comment or `"..."` is a string — so a comment like `// opens a block
+  here {` desynced indentation for the rest of the file, and `fmt
+  --check` false-flagged correctly-formatted code. Fixed by having
+  `formatSource` compute that signal from a comment/string-stripped copy
+  of each line instead of the raw line; `test.ps1` now covers `fmt`
+  (previously untested) with a comment/string edge-case fixture,
+  misindentation round-trip, and idempotency check. Left out of scope:
+  `scanString` doesn't stop at a newline, so a string literal can
+  technically span physical lines today, which `fmt`'s line-by-line
+  model would still corrupt (inserting indentation into the string's
+  own content — a semantics-changing bug, not just cosmetic) — no
+  example or doc relies on that, so it's noted here rather than fixed;
 - ~~language-server support~~ — shipped as a diagnostics-only MVP:
   `lume lsp` runs a persistent stdio JSON-RPC server implementing
   `initialize`/`shutdown`/`exit` and `textDocument/didOpen`/`didChange`/
