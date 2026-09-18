@@ -240,6 +240,15 @@ fn newline(): Text = Char.toText(Char.fromInt(10))
 fn tab(): Text = Char.toText(Char.fromInt(9))
 fn carriageReturn(): Text = Char.toText(Char.fromInt(13))
 
+// Stands in for a literal `|` inside a test's declared name (the one
+// free-form string-literal field in the "function" marker's otherwise
+// lexer-token-safe pipe-delimited encoding - see markerTestName) so an
+// embedded `|` can never be mistaken for a field separator and shift
+// the timeout field after it. No legitimate test name can already
+// contain this byte: Lume's own string escapes never produce a raw
+// control character.
+fn pipeEscape(): Text = Char.toText(Char.fromInt(1))
+
 fn scanString(source: Text, start: Int, line: Int): List<Token> = {
   var index = start + 1
   val sourceLength = Text.len(source)
@@ -1506,7 +1515,7 @@ fn markerGenericConstraints(value: Text): Text = {
 
 fn markerTestName(value: Text): Text = {
   val parts = Text.split(value, "|")
-  if List.len(parts) > 4 then List.getOrPanic(parts, 4) else ""
+  if List.len(parts) > 4 then Text.replace(List.getOrPanic(parts, 4), pipeEscape(), "|") else ""
 }
 
 fn markerTestTimeout(value: Text): Int = {
@@ -1859,7 +1868,7 @@ fn compile(tokens: List<Token>): CompileResult = {
     if not Text.eq(result.problem, "") then { problem = result.problem }
     else {
       val constraintText = if isTest then "" else genericConstraints(tokens, header + 1)
-      val testName = if isTest then at(tokens, header + 1).text else ""
+      val testName = if isTest then Text.replace(at(tokens, header + 1).text, "|", pipeEscape()) else ""
       val testTimeoutMs = if isTest and Text.eq(at(tokens, header + 2).text, ",") then (parseInt(at(tokens, header + 5).text) ?? 0) else 0
       code = List.pushMut(code, makeInstruction("function", name ++ "|" ++ returnType ++ "|" ++ genericText ++ "|" ++ constraintText ++ "|" ++ testName ++ "|" ++ intToText(testTimeoutMs), List.len(parameters), at(tokens, header).line))
       if Text.eq(name, "main") then {
