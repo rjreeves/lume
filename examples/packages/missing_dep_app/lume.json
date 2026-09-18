@@ -1,0 +1,7 @@
+{
+  "name": "missing_dep_app",
+  "version": "0.1.0",
+  "dependencies": [
+    { "name": "does_not_exist", "path": "../does_not_exist" }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "name": "malformed_dep_app",
+  "version": "0.1.0",
+  "dependencies": [
+    { "name": "malformed_dep", "path": "../malformed_dep" }
+  ]
+}
