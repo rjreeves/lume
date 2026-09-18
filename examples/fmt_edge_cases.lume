@@ -1,0 +1,15 @@
+fn describe(count: int) -> str {
+  // this comment ends with a brace {
+  if count > 0 {
+    return "Options: { a, b }"
+  } // closes the branch
+  else {
+    return "none"
+  }
+}
+
+fn main(args: [str]) -> int {
+  print(describe(1))
+  print(describe(0))
+  return 0
+}

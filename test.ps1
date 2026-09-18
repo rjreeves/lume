@@ -440,6 +440,23 @@ $check = & $Lume check (Join-Path $PSScriptRoot 'examples\arithmetic.lume')
 if ($LASTEXITCODE -ne 0) { throw "check exited $LASTEXITCODE" }
 Assert-Equal 'check' 'ok' ($check -join "`n")
 
+$fmtEdgeCasesPath = Join-Path $PSScriptRoot 'examples\fmt_edge_cases.lume'
+$fmtEdgeCasesCheck = & $Lume fmt $fmtEdgeCasesPath --check
+if ($LASTEXITCODE -ne 0) { throw "fmt --check should not be confused by braces inside comments/strings" }
+Assert-Equal 'fmt ignores braces inside comments and strings' 'ok' ($fmtEdgeCasesCheck -join "`n")
+
+$fmtMisindentedPath = Join-Path $PSScriptRoot 'dist\fmt_edge_cases_misindented.lume'
+(Get-Content -LiteralPath $fmtEdgeCasesPath | ForEach-Object { $_.Trim() }) -join "`n" | Set-Content -LiteralPath $fmtMisindentedPath -NoNewline -Encoding utf8
+& $Lume fmt $fmtMisindentedPath | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "fmt (write mode) on a misindented file should exit 0" }
+$fmtReformatted = (Get-Content -LiteralPath $fmtMisindentedPath -Raw).Trim()
+$fmtCanonical = (Get-Content -LiteralPath $fmtEdgeCasesPath -Raw).Trim()
+Assert-Equal 'fmt reformats misindented source back to canonical, comments/strings intact' $fmtCanonical $fmtReformatted
+
+$fmtIdempotentCheck = & $Lume fmt $fmtMisindentedPath --check
+if ($LASTEXITCODE -ne 0) { throw "fmt --check on fmt's own output should exit 0 (idempotency)" }
+Assert-Equal 'fmt output is idempotent under --check' 'ok' ($fmtIdempotentCheck -join "`n")
+
 $immutable = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_immutable.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "immutable validation should exit 1" }
 Assert-Equal 'immutable validation' 'E0215 line 3: cannot assign to immutable `answer`' ($immutable -join "`n")
