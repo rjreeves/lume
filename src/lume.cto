@@ -5567,7 +5567,11 @@ fn compileSource(source: Text): CompileResult = compile(lex(source))
 // trailing '\r' on real clients' CRLF-terminated header lines, so lines are
 // trimmed before comparison. Returns None on EOF or a message with no (or an
 // unparsable) Content-Length header - both end the server loop the same way,
-// since a real client never sends either.
+// since a real client never sends either. A successfully-parsed but negative
+// value is treated as unparsable too: it would otherwise reach readBytes,
+// which blocks forever trying to read that many bytes (confirmed live - a
+// bare `Content-Length: -1` hangs the server permanently with 0% CPU, no
+// way for a client to recover short of killing the process).
 fn lspReadContentLength(): Int? = {
   var contentLength: Int? = None
   var done = false
@@ -5577,7 +5581,12 @@ fn lspReadContentLength(): Int? = {
       val line = Text.trim(rawLine)
       if Text.eq(line, "") then { done = true }
       else if Text.startsWith(line, "Content-Length:") then {
-        contentLength = parseInt(Text.trim(Text.slice(line, 15, Text.len(line))))
+        val parsed = parseInt(Text.trim(Text.slice(line, 15, Text.len(line))))
+        if let Some(n) = parsed {
+          contentLength = if n >= 0 then Some(n) else None
+        } else {
+          contentLength = None
+        }
       }
     } else { eof = true }
   }
