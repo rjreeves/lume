@@ -272,7 +272,7 @@ Assert-Contains 'truncated bytecode rejection' 'E0401 invalid bytecode artifact'
 # other offset shifts - must be rejected cleanly rather than silently
 # skipping the unrecognized instruction and corrupting execution.
 $staleArtifactBytes = [IO.File]::ReadAllBytes($artifactPath)
-$cursor = 76
+$cursor = 140
 $patchedOffset = -1
 while ($cursor -lt $staleArtifactBytes.Length) {
   $opLength = [BitConverter]::ToInt64($staleArtifactBytes, $cursor)
@@ -291,6 +291,29 @@ $staleArtifactRun = & $Lume exec $staleArtifactPath 2>&1
 if ($LASTEXITCODE -ne 1) { throw "stale-opcode bytecode should exit 1" }
 Assert-Contains 'unrecognized bytecode operation rejection' 'E0725' ($staleArtifactRun -join "`n")
 
+# A cache whose source hash still matches the current program, but whose
+# embedded build-hash field (bytes [68:132), see decodeArtifact's own
+# header layout comment) doesn't match the running lume.exe's own
+# compilerBuildHash() - simulating a real .lume file untouched across a
+# lume.exe upgrade - must be treated as a miss and transparently
+# recompiled, not silently reused. `lume run` (not `exec`, which never
+# compares hashes at all) is what actually exercises compileOrCache.
+$buildHashCheckSource = Join-Path $PSScriptRoot 'dist\build-hash-check.lume'
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'examples\functions.lume') -Destination $buildHashCheckSource -Force
+$buildHashCheckLbc = "$buildHashCheckSource.lbc"
+Remove-Item -LiteralPath $buildHashCheckLbc -ErrorAction SilentlyContinue
+$firstRun = & $Lume run $buildHashCheckSource
+if ($LASTEXITCODE -ne 0) { throw "build-hash-check first run exited $LASTEXITCODE" }
+$patchedBuildHashBytes = [IO.File]::ReadAllBytes($buildHashCheckLbc)
+[Text.Encoding]::UTF8.GetBytes(('0' * 64)).CopyTo($patchedBuildHashBytes, 68)
+[IO.File]::WriteAllBytes($buildHashCheckLbc, $patchedBuildHashBytes)
+$secondRun = & $Lume run $buildHashCheckSource
+if ($LASTEXITCODE -ne 0) { throw "build-hash-check second run exited $LASTEXITCODE" }
+Assert-Equal 'stale build hash is transparently recompiled, not reused' "42`n120" ($secondRun -join "`n")
+$rewrittenBytes = [IO.File]::ReadAllBytes($buildHashCheckLbc)
+$rewrittenBuildHash = [Text.Encoding]::UTF8.GetString($rewrittenBytes, 68, 64)
+if ($rewrittenBuildHash -eq ('0' * 64)) { throw "cache was not rewritten with the real build hash after the mismatch" }
+
 # callBuiltin's own diagnostics (as opposed to checkBuiltinTypes' compile-
 # time twin) only run at actual execution, never during `lume check` on
 # real source - since a legitimate call already passed typechecking by
@@ -304,7 +327,7 @@ $builtinCheckPath = Join-Path $PSScriptRoot 'dist\callbuiltin-runtime-check.lbc'
 & $Lume build (Join-Path $PSScriptRoot 'examples\callbuiltin_runtime_check.lume') $builtinCheckPath | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "callbuiltin runtime check build exited $LASTEXITCODE" }
 $builtinCheckBytes = [IO.File]::ReadAllBytes($builtinCheckPath)
-$cursor = 76
+$cursor = 140
 $textPatchOffset = -1
 while ($cursor -lt $builtinCheckBytes.Length) {
   $opLength = [BitConverter]::ToInt64($builtinCheckBytes, $cursor)
