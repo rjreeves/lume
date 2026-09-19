@@ -1105,9 +1105,25 @@ things rather than writing the obvious thing.
   costs nothing that matters). Resolution is flat and name-based (no
   type/scope awareness - two declarations sharing a name resolve to
   whichever appears first in the file) and single-file only (an
-  imported symbol's definition isn't found). Hover, completion,
-  references, rename, and code actions, plus cross-file resolution,
-  remain open;
+  imported symbol's definition isn't found). `textDocument/hover`
+  followed, reusing the same declaration index plus three existing
+  pure helpers (`parameterNames`/`parameterTypes`/
+  `functionReturnType`, already built for `scanFunctions`' protocol-
+  method handling) to show a function's full signature with no new
+  parsing; a record/enum name shows only the bare `"type Name"`/
+  `"enum Name"` line, since their field/variant lists aren't exposed
+  by a standalone-reusable helper the way a function's signature is -
+  a smaller follow-up if wanted later. Surfaced a separate, more
+  significant finding along the way, deliberately not fixed here and
+  spawned as its own task instead: `textDocument/didOpen`/`didChange`
+  on source with an incomplete function signature (the single most
+  common state while a user is actively typing) crashes the *entire*
+  `lume lsp` server process, not just that one request - a pre-
+  existing, compiler-wide gap in how the scan helpers trust well-
+  formed input (confirmed directly: `lume check` on the same
+  malformed source already panics with "list index out of bounds"
+  today), unrelated to hover itself. Completion, references, rename,
+  and code actions, plus cross-file resolution, remain open;
 - project-wide symbol indexing without slowing single-file checks;
 - debugger protocol support after bytecode/source maps stabilize;
 - ~~generated API documentation~~ — shipped as `lume api-docs`, a
