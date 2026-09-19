@@ -1046,7 +1046,20 @@ things rather than writing the obvious thing.
 
 ### Distribution and interoperability
 
-- reproducible standalone executable builds;
+- ~~reproducible standalone executable builds~~ — confirmed and fixed,
+  though the actual fix lives in Certo, not here: building `lume.cto`
+  twice (same toolchain, same machine, same output filename, seconds
+  apart) produced binaries differing in exactly one 4-byte field out
+  of ~650KB - the PE COFF `TimeDateStamp` lld-link embeds by default
+  on Windows. Fixed upstream by adding `-Xlinker /Brepro` to Certo's
+  Windows link step ([rjreeves/Certo#2](https://github.com/rjreeves/Certo/pull/2),
+  merged), verified end to end after rebuilding the toolchain:
+  `sha256sum` now matches exactly across repeated builds, both via a
+  direct `certo` invocation and through this project's own
+  `build.ps1` (including its build-hash templating step), with the
+  full `test.ps1` suite passing unchanged against the rebuilt binary.
+  Windows-only - other platforms use a different linker path entirely
+  and weren't measured or touched;
 - package signing and checksum verification;
 - ~~a stable bytecode version and compatibility policy~~ — the
   version-*format* half was already covered (`LBC4`'s own magic
