@@ -5757,17 +5757,166 @@ fn lspCheckDocument(uri: Text, text: Text): Unit [io] = {
   lspPublishDiagnostics(uri, outcome.problem)
 }
 
+// Certo's Map is pointer-equality keyed (crates/stdlib/src/collections.rs:
+// "Map (open-addressing, pointer-equality keys)"), confirmed live: two
+// content-identical Text values parsed from separate JSON-RPC messages
+// don't match as Map keys even though Text.eq(a, b) is true. A URI arriving
+// in one message and looked up from another is exactly that case, so the
+// document store is two parallel lists searched by Text.eq instead - open
+// documents in one LSP session number in the single digits, so an O(n) scan
+// costs nothing that matters.
+type LspDocuments = {
+  uris: List<Text>
+  texts: List<Text>
+}
+
+type LspState = {
+  documents: LspDocuments
+  running: Bool
+}
+
+fn lspDocumentIndex(uris: List<Text>, uri: Text): Int = {
+  var index = 0
+  var result = -1
+  while index < List.len(uris) and result == -1 {
+    if Text.eq(List.getOrPanic(uris, index), uri) then { result = index }
+    index = index + 1
+  }
+  result
+}
+
+fn lspDocumentsSet(documents: LspDocuments, uri: Text, text: Text): LspDocuments = {
+  val existing = lspDocumentIndex(documents.uris, uri)
+  if existing >= 0 then {
+    var newTexts: List<Text> = []
+    var index = 0
+    while index < List.len(documents.texts) {
+      if index == existing then { newTexts = List.push(newTexts, text) }
+      else { newTexts = List.push(newTexts, List.getOrPanic(documents.texts, index)) }
+      index = index + 1
+    }
+    LspDocuments { uris: documents.uris, texts: newTexts }
+  } else {
+    LspDocuments { uris: List.push(documents.uris, uri), texts: List.push(documents.texts, text) }
+  }
+}
+
+fn lspDocumentsRemove(documents: LspDocuments, uri: Text): LspDocuments = {
+  var newUris: List<Text> = []
+  var newTexts: List<Text> = []
+  var index = 0
+  while index < List.len(documents.uris) {
+    if not Text.eq(List.getOrPanic(documents.uris, index), uri) then {
+      newUris = List.push(newUris, List.getOrPanic(documents.uris, index))
+      newTexts = List.push(newTexts, List.getOrPanic(documents.texts, index))
+    }
+    index = index + 1
+  }
+  LspDocuments { uris: newUris, texts: newTexts }
+}
+
+// LSP-only declaration index: a single linear pass over tokens collecting
+// the name token immediately following any fn/type/enum keyword. Covers
+// top-level functions, protocol method signatures, impl methods, records,
+// and enums - not local val/var bindings or generic type parameters.
+// Deliberately not scanFunctions/scanRecords/scanEnums: those validate full
+// structure and bail on the first error, but a definition request can
+// arrive while the open document has an unrelated compile error elsewhere.
+fn lspDeclarationSites(tokens: List<Token>): List<Token> = {
+  var result: List<Token> = []
+  var index = 0
+  while not Text.eq(at(tokens, index).kind, "eof") {
+    val current = at(tokens, index)
+    val isDeclKeyword = Text.eq(current.text, "fn") or Text.eq(current.text, "type") or Text.eq(current.text, "enum")
+    if isDeclKeyword and Text.eq(at(tokens, index + 1).kind, "name") then {
+      result = List.push(result, at(tokens, index + 1))
+    }
+    index = index + 1
+  }
+  result
+}
+
+// Returns the text of the name-kind token covering (line, column), or ""
+// if the position doesn't fall inside a name token.
+fn lspNameTokenAt(tokens: List<Token>, line: Int, column: Int): Text = {
+  var index = 0
+  var result = ""
+  while not Text.eq(at(tokens, index).kind, "eof") and Text.eq(result, "") {
+    val current = at(tokens, index)
+    val withinColumns = column >= current.column and column < current.column + Text.len(current.text)
+    if Text.eq(current.kind, "name") and current.line == line and withinColumns then {
+      result = current.text
+    }
+    index = index + 1
+  }
+  result
+}
+
+// Flat, first-match, name-only resolution - not type/scope-aware, matching
+// this compiler's own flat-namespace philosophy elsewhere (hashName's
+// bucket lookups). Two declarations sharing a name resolve to whichever
+// appears first in the file. Returned token's line is 0 (never a real
+// value - lex() lines start at 1) when nothing matches.
+fn lspFindDeclaration(sites: List<Token>, name: Text): Token = {
+  var index = 0
+  var result = makeToken("name", "", 0, 0)
+  while index < List.len(sites) and result.line == 0 {
+    val site = List.getOrPanic(sites, index)
+    if Text.eq(site.text, name) then { result = site }
+    index = index + 1
+  }
+  result
+}
+
+fn lspHandleDefinition(id: JsonValue, params: JsonValue, documents: LspDocuments): Unit [io] = {
+  val textDocument = JsonValue.get(params, "textDocument")
+  val uri = JsonValue.asText(JsonValue.get(textDocument, "uri"))
+  val position = JsonValue.get(params, "position")
+  val requestLine = JsonValue.asInt(JsonValue.get(position, "line")) + 1
+  val requestColumn = JsonValue.asInt(JsonValue.get(position, "character")) + 1
+  val documentIndex = lspDocumentIndex(documents.uris, uri)
+  if documentIndex >= 0 then {
+    val text = List.getOrPanic(documents.texts, documentIndex)
+    val requestTokens = lex(text)
+    val name = lspNameTokenAt(requestTokens, requestLine, requestColumn)
+    if Text.eq(name, "") then { lspRespond(id, Json.null()) }
+    else {
+      val declaration = lspFindDeclaration(lspDeclarationSites(requestTokens), name)
+      if declaration.line == 0 then { lspRespond(id, Json.null()) }
+      else {
+        val startPos = Json.object()
+        JsonValue.set(startPos, "line", Json.int(declaration.line - 1))
+        JsonValue.set(startPos, "character", Json.int(declaration.column - 1))
+        val endPos = Json.object()
+        JsonValue.set(endPos, "line", Json.int(declaration.line - 1))
+        JsonValue.set(endPos, "character", Json.int(declaration.column - 1 + Text.len(declaration.text)))
+        val range = Json.object()
+        JsonValue.set(range, "start", startPos)
+        JsonValue.set(range, "end", endPos)
+        val location = Json.object()
+        JsonValue.set(location, "uri", Json.string(uri))
+        JsonValue.set(location, "range", range)
+        lspRespond(id, location)
+      }
+    }
+  } else { lspRespond(id, Json.null()) }
+}
+
 // Full-document sync only (TextDocumentSyncKind.Full = 1) - the same choice
-// Certo's own LSP makes. Every didOpen/didChange carries the whole new text,
-// so each event is handled statelessly; no document store is needed.
-fn lspHandleMessage(parsed: JsonValue): Bool = {
+// Certo's own LSP makes. Every didOpen/didChange carries the whole new
+// text, so no state is needed to apply an edit - but textDocument/definition
+// requests carry only a URI and a position, so the last-known text for each
+// open URI is retained in `documents` across calls.
+fn lspHandleMessage(parsed: JsonValue, documents: LspDocuments): LspState = {
   val method = JsonValue.asText(JsonValue.get(parsed, "method"))
   val id = JsonValue.get(parsed, "id")
   val hasId = not JsonValue.isNull(id)
   var keepGoing = true
+  var nextDocuments = documents
   if Text.eq(method, "initialize") then {
     val capabilities = Json.object()
     JsonValue.set(capabilities, "textDocumentSync", Json.int(1))
+    JsonValue.set(capabilities, "definitionProvider", Json.bool(true))
     val result = Json.object()
     JsonValue.set(result, "capabilities", capabilities)
     lspRespond(id, result)
@@ -5776,6 +5925,7 @@ fn lspHandleMessage(parsed: JsonValue): Bool = {
     val textDocument = JsonValue.get(params, "textDocument")
     val uri = JsonValue.asText(JsonValue.get(textDocument, "uri"))
     val text = JsonValue.asText(JsonValue.get(textDocument, "text"))
+    nextDocuments = lspDocumentsSet(documents, uri, text)
     lspCheckDocument(uri, text)
   } else if Text.eq(method, "textDocument/didChange") then {
     val params = JsonValue.get(parsed, "params")
@@ -5784,12 +5934,16 @@ fn lspHandleMessage(parsed: JsonValue): Bool = {
     val contentChanges = JsonValue.get(params, "contentChanges")
     val firstChange = Json.parse(JsonValue.atText(contentChanges, 0))
     val text = JsonValue.asText(JsonValue.get(firstChange, "text"))
+    nextDocuments = lspDocumentsSet(documents, uri, text)
     lspCheckDocument(uri, text)
   } else if Text.eq(method, "textDocument/didClose") then {
     val params = JsonValue.get(parsed, "params")
     val textDocument = JsonValue.get(params, "textDocument")
     val uri = JsonValue.asText(JsonValue.get(textDocument, "uri"))
+    nextDocuments = lspDocumentsRemove(documents, uri)
     lspPublishDiagnostics(uri, "")
+  } else if Text.eq(method, "textDocument/definition") then {
+    lspHandleDefinition(id, JsonValue.get(parsed, "params"), documents)
   } else if Text.eq(method, "shutdown") then {
     lspRespond(id, Json.null())
   } else if Text.eq(method, "exit") then {
@@ -5797,14 +5951,18 @@ fn lspHandleMessage(parsed: JsonValue): Bool = {
   } else if hasId then {
     lspRespondError(id, -32601, "method not found: " ++ method)
   }
-  keepGoing
+  LspState { documents: nextDocuments, running: keepGoing }
 }
 
 fn runLspServer(): Unit [io] = {
   var running = true
+  var documents: LspDocuments = LspDocuments { uris: [], texts: [] }
   while running {
-    if let Some(raw) = lspReadMessage() { running = lspHandleMessage(Json.parse(raw)) }
-    else { running = false }
+    if let Some(raw) = lspReadMessage() {
+      val state = lspHandleMessage(Json.parse(raw), documents)
+      running = state.running
+      documents = state.documents
+    } else { running = false }
   }
 }
 

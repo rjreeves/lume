@@ -1085,7 +1085,29 @@ things rather than writing the obvious thing.
 
 ### Developer experience
 
-- richer completion, hover, definition, references, rename, and code actions;
+- ~~richer completion, hover, definition, references, rename, and code
+  actions~~ — partially shipped: `textDocument/definition`
+  (go-to-definition), the first of the six chosen as the cheapest to
+  build on `scanFunctions`/`scanRecords`/`scanEnums`'s existing
+  declaration data. Required two foundational pieces first: `Token`
+  gained a `column` field (LSP positions are `{line, character}`, but
+  `Token` only tracked `line`), and the server gained a document
+  store, since `textDocument/definition` requests carry only a URI and
+  a position, not source text, unlike `didOpen`/`didChange`. Building
+  that store surfaced a real, confirmed finding along the way: Certo's
+  `Map` is pointer-equality keyed by design
+  (`crates/stdlib/src/collections.rs`), so a `Map<Text, Text>` keyed
+  by URI silently failed every lookup once the key Text came from a
+  *different* JSON-RPC message than the one that inserted it, even
+  though `Text.eq` on the two values was `true` - the document store
+  is two parallel lists searched by `Text.eq` instead (open documents
+  in one LSP session number in the single digits, so the O(n) scan
+  costs nothing that matters). Resolution is flat and name-based (no
+  type/scope awareness - two declarations sharing a name resolve to
+  whichever appears first in the file) and single-file only (an
+  imported symbol's definition isn't found). Hover, completion,
+  references, rename, and code actions, plus cross-file resolution,
+  remain open;
 - project-wide symbol indexing without slowing single-file checks;
 - debugger protocol support after bytecode/source maps stabilize;
 - ~~generated API documentation~~ — shipped as `lume api-docs`, a

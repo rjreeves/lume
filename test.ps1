@@ -1228,6 +1228,7 @@ try {
   Send-LspMessage $lspProc '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}'
   $initResponse = Read-LspMessage $lspProc | ConvertFrom-Json
   Assert-Equal 'lsp initialize advertises full-document sync' '1' "$($initResponse.result.capabilities.textDocumentSync)"
+  Assert-Equal 'lsp initialize advertises definitionProvider' 'True' "$($initResponse.result.capabilities.definitionProvider)"
 
   Send-LspMessage $lspProc '{"jsonrpc":"2.0","method":"initialized","params":{}}'
 
@@ -1258,6 +1259,36 @@ try {
   Send-LspMessage $lspProc $didClose
   $closedDiag = Read-LspMessage $lspProc | ConvertFrom-Json
   Assert-Equal 'lsp didClose clears diagnostics' '0' "$($closedDiag.params.diagnostics.Count)"
+
+  # go-to-definition: `add` is declared at 0-indexed line 0, columns 3-6; the
+  # call site on line 5 references it. The document store is looked up by a
+  # URI Text parsed from a *different* JSON-RPC message than the one that
+  # inserted it - this is exactly the case that surfaced Certo's Map being
+  # pointer-equality keyed (crates/stdlib/src/collections.rs), which is why
+  # the document store is two parallel lists searched by Text.eq, not a Map.
+  $defSource = "fn add(a: int, b: int) -> int {`n  return a + b`n}`n`nfn main(args: [str]) -> int {`n  print(add(1, 2))`n  return 0`n}`n"
+  $defUri = 'file:///definition.lume'
+  $didOpenDef = @{ jsonrpc = '2.0'; method = 'textDocument/didOpen'; params = @{ textDocument = @{ uri = $defUri; text = $defSource } } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $didOpenDef
+  Read-LspMessage $lspProc | Out-Null
+
+  $defReq = @{ jsonrpc = '2.0'; id = 10; method = 'textDocument/definition'; params = @{ textDocument = @{ uri = $defUri }; position = @{ line = 5; character = 9 } } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $defReq
+  $defResp = Read-LspMessage $lspProc | ConvertFrom-Json
+  Assert-Equal 'go-to-definition finds the call site''s declaration' $defUri $defResp.result.uri
+  Assert-Equal 'go-to-definition start line' '0' "$($defResp.result.range.start.line)"
+  Assert-Equal 'go-to-definition start character' '3' "$($defResp.result.range.start.character)"
+  Assert-Equal 'go-to-definition end character' '6' "$($defResp.result.range.end.character)"
+
+  $defReqWhitespace = @{ jsonrpc = '2.0'; id = 11; method = 'textDocument/definition'; params = @{ textDocument = @{ uri = $defUri }; position = @{ line = 5; character = 0 } } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $defReqWhitespace
+  $defRespWhitespace = Read-LspMessage $lspProc | ConvertFrom-Json
+  Assert-Equal 'go-to-definition on whitespace returns null' '' "$($defRespWhitespace.result)"
+
+  $defReqUndeclared = @{ jsonrpc = '2.0'; id = 12; method = 'textDocument/definition'; params = @{ textDocument = @{ uri = $defUri }; position = @{ line = 5; character = 3 } } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $defReqUndeclared
+  $defRespUndeclared = Read-LspMessage $lspProc | ConvertFrom-Json
+  Assert-Equal 'go-to-definition on an undeclared name (print) returns null' '' "$($defRespUndeclared.result)"
 
   Send-LspMessage $lspProc '{"jsonrpc":"2.0","id":2,"method":"shutdown"}'
   $shutdownResponse = Read-LspMessage $lspProc | ConvertFrom-Json
