@@ -6041,6 +6041,7 @@ fn usage(): Unit [io] = {
   println("       lume build <file.lume> [output.lbc]")
   println("       lume exec <file.lbc>")
   println("       lume benchmark <file.lume> [iterations]")
+  println("       lume profile <file.lume> [iterations]")
   println("       lume test <file.lume|dir> [--filter text] [--ignore names]")
   println("       lume fmt <file.lume> [--check]")
   println("       lume install <dir> [--check]")
@@ -6239,6 +6240,59 @@ fn main(): Unit [io] = {
         println("instructions=" ++ intToText(instructionCount))
         println("compile_total_ms=" ++ intToText(compileMs))
         println("bytecode_load_total_ms=" ++ intToText(loadMs))
+      } else if Text.eq(command, "profile") then {
+        // A 3-bucket phase breakdown, not 5: lex() and
+        // scanRecords/scanEnums/scanFunctions (the declaration scan) are
+        // separately callable pure functions, so those two are timed
+        // precisely. compile() itself fuses per-function codegen (the
+        // emitter), protocol-impl validation, verifyTypes (the verifier),
+        // and patchGenericDispatch with no seam between them - splitting
+        // those three out would mean either changing CompileResult/
+        // compile()'s signature (used by every command) or duplicating its
+        // ~140-line body purely for instrumentation, so they stay one
+        // combined bucket. compile() also always re-derives declarations
+        // from tokens itself (no way to hand it pre-scanned ones without
+        // that same signature change), so compile_total_ms unavoidably
+        // re-includes a full scan pass - the last line is explicitly an
+        // estimate (a subtraction against the separately-measured
+        // scan_total_ms), not a fourth precisely-isolated bucket.
+        val iterations = parseInt(arg(3) ?? "1000") ?? 1000
+        val tokens = lex(combinedSource)
+
+        val startLex = monotonicMillis()
+        var lexIndex = 0
+        while lexIndex < iterations {
+          val discardTokens = lex(combinedSource)
+          lexIndex = lexIndex + 1
+        }
+        val lexMs = monotonicMillis() - startLex
+
+        val startScan = monotonicMillis()
+        var scanIndex = 0
+        while scanIndex < iterations {
+          val discardRecords = scanRecords(tokens)
+          val discardEnums = scanEnums(tokens)
+          val discardFunctions = scanFunctions(tokens)
+          scanIndex = scanIndex + 1
+        }
+        val scanMs = monotonicMillis() - startScan
+
+        val startProfileCompile = monotonicMillis()
+        var compileIndex = 0
+        var profileInstructionCount = 0
+        while compileIndex < iterations {
+          val measured = compile(tokens)
+          profileInstructionCount = List.len(measured.code)
+          compileIndex = compileIndex + 1
+        }
+        val profileCompileMs = monotonicMillis() - startProfileCompile
+
+        println("iterations=" ++ intToText(iterations))
+        println("instructions=" ++ intToText(profileInstructionCount))
+        println("lex_total_ms=" ++ intToText(lexMs))
+        println("scan_total_ms=" ++ intToText(scanMs))
+        println("compile_total_ms=" ++ intToText(profileCompileMs))
+        println("estimated_codegen_verify_patch_total_ms=" ++ intToText(maxInt(profileCompileMs - scanMs, 0)))
       } else {
         eprintln("unknown command: " ++ command)
         usage()

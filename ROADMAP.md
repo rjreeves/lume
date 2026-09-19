@@ -1091,7 +1091,23 @@ things rather than writing the obvious thing.
 
 ### Performance engineering
 
-- profile lexer, declaration scan, type substitution, verifier, and emitter;
+- ~~profile lexer, declaration scan, type substitution, verifier, and
+  emitter~~ — partially shipped as `lume profile <file> [iterations]`
+  (see `BENCHMARKS.md`'s "Phase profiling" checkpoint): `lex()` and the
+  declaration scan (`scanRecords`/`scanEnums`/`scanFunctions`) are
+  timed precisely, since both are already separately callable pure
+  functions. Type substitution, verifier, and emitter stay one
+  combined, explicitly-labeled-`estimated` bucket — `compile()` fuses
+  per-function codegen, `verifyTypes`, and `patchGenericDispatch` with
+  no seam between them, and separating them cleanly would mean either
+  changing `CompileResult`/`compile()`'s signature (used by every
+  command: `run`/`check`/`test`/`build`/`lsp`) or duplicating its
+  ~140-line body purely for instrumentation — not attempted here. The
+  3-bucket data found a real, actionable result: lexing alone is
+  roughly 33-42% of total compile time on both 10,000-line benchmark
+  programs, not a rounding error — the highest-leverage target if
+  compile-time work continues, ahead of further verifier/emitter
+  micro-optimization;
 - reduce allocation and string-copying hot spots;
 - add persistent compiler-process measurements;
 - add one-function incremental rebuild benchmarks;

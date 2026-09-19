@@ -1693,3 +1693,39 @@ squarely back in range - ordinary single-short-process scheduling
 jitter, not a regression. No plausible causal mechanism exists for a
 real regression from any of these seven PRs either way, since none
 touch a hot compile-time path.
+
+## Phase profiling: lex, scan, and the rest (2026-09-19)
+
+`ROADMAP.md`'s "Performance engineering" section has long called for
+profiling the lexer, declaration scan, verifier, and emitter
+separately. `compile()` fuses per-function codegen (the emitter),
+protocol-impl validation, `verifyTypes` (the verifier), and
+`patchGenericDispatch` into one function with no seam between the
+last three - splitting those apart cleanly would mean either changing
+`CompileResult`/`compile()`'s signature (used by every command) or
+duplicating its ~140-line body purely for instrumentation. Scoped
+down to 3 buckets instead: `lex()` and `scanRecords`/`scanEnums`/
+`scanFunctions` (the declaration scan) are already separately callable
+pure functions, so those two are timed precisely by the new `lume
+profile <file> [iterations]` command; the remaining codegen+verify+patch
+work stays one combined, explicitly-labeled-`estimated` bucket (a
+subtraction against the separately-measured scan time, since
+`compile()` always re-derives declarations from tokens itself and so
+unavoidably re-includes a full scan pass in its own total).
+
+| Benchmark | Lex (mean) | Scan (mean) | Compile total (mean) | Est. codegen+verify+patch (mean) |
+| --- | ---: | ---: | ---: | ---: |
+| Trivial 10,000-line (`dist/benchmark-10000.lume`, 30 iterations) | 14.03 ms | 1.07 ms | 33.83 ms | 32.77 ms |
+| Feature-mix 10,000-line (`dist/benchmark-10000-features.lume`, 30 iterations) | 32.27 ms | 2.10 ms | 97.90 ms | 95.80 ms |
+
+A real, actionable finding, not just a stability check: lexing alone
+accounts for roughly 33-42% of total compile time on both programs
+(14.03 of 33.83 ms trivial; 32.27 of 97.90 ms feature-mix), while the
+declaration scan is consistently small (2-3%). The remaining
+codegen+verify+patch bucket is the majority of the time but not
+overwhelmingly so - lexing is a genuine, non-trivial cost center in
+this compiler, not a rounding error, and would be the highest-leverage
+target if compile-time work continues here (a byte-level rewrite
+avoiding the current lex's per-character branching, or reducing the
+token stream's own allocation pressure, rather than further verifier/
+emitter micro-optimization).
