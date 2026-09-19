@@ -1,0 +1,6 @@
+fn broken(a: int, b: int
+
+fn main(args: [str]) -> int {
+  print(broken(1, 2))
+  return 0
+}
