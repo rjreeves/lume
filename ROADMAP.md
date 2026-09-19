@@ -735,6 +735,24 @@ foundation — is next.
   but doesn't have the shape `lume install` always writes, reported
   through `loadProgram`'s existing `ModuleLoad.problem` path as a new
   `E0738`;
+- ~~detect a stale lock file~~ — `run`/`check`/`test` reading only
+  `lume.lock.json`, never the manifest, is an intentional, already-
+  documented constraint (zero resolution work on ordinary runs), not a
+  bug — confirmed live that editing `lume.json` (e.g. dropping a
+  dependency) without re-running `install` leaves the app still able
+  to `use` the now-undeclared dependency, silently, via the untouched
+  lock file. The real gap was that nothing, not even optionally, could
+  detect this drift: a manifest and its lock file can go out of sync
+  the same way `package-lock.json`/`Cargo.lock` can in other
+  ecosystems, either sharing the drift silently (if the stale lock
+  file is committed) or failing confusingly in CI in a way that
+  never reproduces locally (if it's regenerated fresh there). Shipped
+  `lume install <dir> --check`, mirroring `npm ci`/`cargo build
+  --locked`: re-resolves exactly like plain `install`, but compares the
+  result against the existing lock file byte-for-byte instead of
+  overwriting it, reporting a mismatch (including "no lock file yet")
+  as a new `E0739` and never writing — an opt-in CI gate that leaves
+  `run`/`check`/`test`'s own zero-resolution-work guarantee untouched;
 - cache resolved dependencies by content hash — deferred: not
   meaningful yet for local paths (reading a local directory has no
   fetch cost to cache); revisit once packages can come from anywhere

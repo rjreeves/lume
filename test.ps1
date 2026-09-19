@@ -1023,6 +1023,33 @@ $packagesRun = & $Lume run (Join-Path $packagesAppDir 'app.lume')
 if ($LASTEXITCODE -ne 0) { throw "package app example exited $LASTEXITCODE" }
 Assert-Equal 'package use resolution' "36`nDONE" ($packagesRun -join "`n")
 
+# `lume install --check` re-resolves and compares against the existing lock
+# file instead of overwriting it - a CI gate for "someone edited lume.json
+# and forgot to re-run install," which run/check/test can't catch on their
+# own (they only ever read the lock file, by design, never the manifest).
+$checkFreshInstall = & $Lume install $packagesAppDir --check
+if ($LASTEXITCODE -ne 0) { throw "install --check on a freshly-installed project should exit 0" }
+Assert-Equal 'install --check accepts an up-to-date lock file' 'ok' ($checkFreshInstall -join "`n")
+
+$staleLockAppDir = Join-Path $PSScriptRoot 'examples\packages\stale_lock_app'
+$checkStale = & $Lume install $staleLockAppDir --check 2>&1
+if ($LASTEXITCODE -ne 1) { throw "install --check on a stale lock file should exit 1" }
+Assert-Equal 'install --check rejects a lock file that no longer matches lume.json' "E0739 lock file ``$staleLockAppDir/lume.lock.json`` is out of date with ``$staleLockAppDir/lume.json``" ($checkStale -join "`n")
+$staleLockContent = (Get-Content -LiteralPath (Join-Path $staleLockAppDir 'lume.lock.json') -Raw).Trim()
+Assert-Equal 'install --check never writes, even on mismatch' '{"resolved":[],"direct":[]}' $staleLockContent
+
+# Copied as a sibling of mathutils, not into dist/ - its manifest declares
+# mathutils via a relative "../mathutils" path, which only still resolves
+# from another directory directly under examples\packages.
+$missingLockDir = Join-Path $PSScriptRoot 'examples\packages\missing-lock-check'
+if (Test-Path -LiteralPath $missingLockDir) { Remove-Item -LiteralPath $missingLockDir -Recurse -Force }
+Copy-Item -LiteralPath $staleLockAppDir -Destination $missingLockDir -Recurse
+Remove-Item -LiteralPath (Join-Path $missingLockDir 'lume.lock.json')
+$checkMissing = & $Lume install $missingLockDir --check 2>&1
+if ($LASTEXITCODE -ne 1) { throw "install --check with no lock file at all should exit 1" }
+Assert-Equal 'install --check rejects a missing lock file' "E0739 lock file ``$missingLockDir/lume.lock.json`` is out of date with ``$missingLockDir/lume.json``" ($checkMissing -join "`n")
+Remove-Item -LiteralPath $missingLockDir -Recurse -Force
+
 $cyclicOutput = & $Lume install (Join-Path $PSScriptRoot 'examples\packages\cyclic-a') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "cyclic package install should exit 1" }
 Assert-Equal 'package dependency cycle validation' 'E0709 dependency cycle at `cyclic-b`' ($cyclicOutput -join "`n")
