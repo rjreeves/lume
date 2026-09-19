@@ -5964,6 +5964,33 @@ fn apiManifest(): Text = {
   Json.stringify(root)
 }
 
+// Renders the same builtinNames()/builtinCounts() data apiManifest()
+// already turns into JSON as human-readable Markdown instead, grouped
+// into a section per namespace (the text before the first ".") as the
+// already-namespace-ordered list is walked - can never drift from the
+// real compiler since it's the identical source `lume api` reads, not
+// a hand-maintained duplicate.
+fn builtinReferenceMarkdown(): Text = {
+  val names = builtinNames()
+  val counts = builtinCounts()
+  var output = "# Lume Builtin Reference\n\n"
+  output = output ++ "Generated from `builtinNames()`/`builtinCounts()` in `src/lume.cto` (the same source `lume api` reads) by `lume api-docs` - do not hand-edit; regenerated on every build. For usage and semantics, see `docs/using-lume-the-fast-one.md`.\n\n"
+  var currentNamespace = ""
+  var index = 0
+  while index < List.len(names) {
+    val name = List.getOrPanic(names, index)
+    val namespace = beforeDot(name)
+    if not Text.eq(namespace, currentNamespace) then {
+      if not Text.eq(currentNamespace, "") then { output = output ++ "\n" }
+      output = output ++ "## " ++ namespace ++ "\n\n"
+      currentNamespace = namespace
+    }
+    output = output ++ "- `" ++ name ++ "` - " ++ intToText(List.getOrPanic(counts, index)) ++ " argument(s)\n"
+    index = index + 1
+  }
+  output
+}
+
 fn aiReference(): Text = {
   "Lume 0.1: fn name(arg: int) -> int { ... }. " ++
   "Bindings: let immutable, var mutable. Statements: if/else, while, return, print(expr), eprint(expr). " ++
@@ -6008,7 +6035,7 @@ fn usage(): Unit [io] = {
   println("       lume fmt <file.lume> [--check]")
   println("       lume install <dir> [--check]")
   println("       lume lsp")
-  println("       lume api|ai-reference")
+  println("       lume api|api-docs|ai-reference")
 }
 
 fn runCode(code: List<Instruction>): Unit [io] = {
@@ -6076,6 +6103,8 @@ fn main(): Unit [io] = {
   val testJson = hasFlag("--json")
   if Text.eq(command, "api") then {
     println(apiManifest())
+  } else if Text.eq(command, "api-docs") then {
+    println(builtinReferenceMarkdown())
   } else if Text.eq(command, "ai-reference") then {
     println(aiReference())
   } else if Text.eq(command, "lsp") then {

@@ -440,6 +440,17 @@ $check = & $Lume check (Join-Path $PSScriptRoot 'examples\arithmetic.lume')
 if ($LASTEXITCODE -ne 0) { throw "check exited $LASTEXITCODE" }
 Assert-Equal 'check' 'ok' ($check -join "`n")
 
+# api-docs renders builtinNames()/builtinCounts() as Markdown instead of
+# JSON (lume api's own format) - same source data, so it can't drift from
+# the compiler. Anchor on a couple of stable lines rather than the whole
+# multi-hundred-line body, matching this file's light-touch style for
+# build-output commands.
+$apiDocs = & $Lume api-docs
+if ($LASTEXITCODE -ne 0) { throw "api-docs exited $LASTEXITCODE" }
+Assert-Equal 'api-docs starts with the reference heading' '# Lume Builtin Reference' ($apiDocs | Select-Object -First 1)
+Assert-Contains 'api-docs groups builtins by namespace' '## str' ($apiDocs -join "`n")
+Assert-Contains 'api-docs lists a known builtin with its arity' '- `str.upper` - 1 argument(s)' ($apiDocs -join "`n")
+
 $fmtEdgeCasesPath = Join-Path $PSScriptRoot 'examples\fmt_edge_cases.lume'
 $fmtEdgeCasesCheck = & $Lume fmt $fmtEdgeCasesPath --check
 if ($LASTEXITCODE -ne 0) { throw "fmt --check should not be confused by braces inside comments/strings" }
