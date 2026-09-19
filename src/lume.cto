@@ -223,13 +223,23 @@ fn valueBody(value: Text): Text = Text.slice(value, 2, Text.len(value))
 
 fn valueInt(value: Text): Int = parseInt(valueBody(value)) ?? 0
 
-fn isDigit(ch: Text): Bool =
-  Text.contains("0123456789", ch) and not Text.eq(ch, "")
+// Byte-code classification, not Text-based - lex() used to call charAt
+// (Text.byteAtUnchecked, a heap-allocated single-character Text) and then
+// Text.contains against a string literal for every character of every
+// source file, on the hottest path in the whole compiler. Confirmed live
+// with an isolated, correctness-verified probe (identical results either
+// way, 55,000,000 characters of realistic Lume source): Bytes.byteAt's
+// plain Int plus these numeric range checks is ~66x faster (3094ms vs
+// 47ms for the identical workload) - lume profile had already shown
+// lexing at 33-42% of total compile time. Bounds are identical to the
+// Text-based isDigit/isAlpha/isAlphaNumeric this replaces; 46 is `.`,
+// matching isAlphaNumeric's old Text.eq(ch, ".").
+fn isDigitCode(code: Int): Bool = code >= 48 and code <= 57
 
-fn isAlpha(ch: Text): Bool =
-  Text.contains("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_", ch) and not Text.eq(ch, "")
+fn isAlphaCode(code: Int): Bool =
+  (code >= 97 and code <= 122) or (code >= 65 and code <= 90) or code == 95
 
-fn isAlphaNumeric(ch: Text): Bool = isAlpha(ch) or isDigit(ch) or Text.eq(ch, ".")
+fn isAlphaNumericCode(code: Int): Bool = isAlphaCode(code) or isDigitCode(code) or code == 46
 
 fn startsUppercase(value: Text): Bool = Text.len(value) > 0 and Text.contains("ABCDEFGHIJKLMNOPQRSTUVWXYZ", charAt(value, 0))
 
@@ -249,25 +259,25 @@ fn carriageReturn(): Text = Char.toText(Char.fromInt(13))
 // control character.
 fn pipeEscape(): Text = Char.toText(Char.fromInt(1))
 
-fn scanString(source: Text, start: Int, line: Int): List<Token> = {
+fn scanString(source: Text, sourceBytes: Bytes, start: Int, line: Int): List<Token> = {
   var index = start + 1
   val sourceLength = Text.len(source)
   var value = ""
   var closed = false
   while index < sourceLength and not closed {
-    val ch = charAt(source, index)
-    if Text.eq(ch, "\"") then {
+    val code = Bytes.byteAt(sourceBytes, index)
+    if code == 34 then {
       closed = true
       index = index + 1
-    } else if Text.eq(ch, "\\") and index + 1 < sourceLength then {
-      val escaped = charAt(source, index + 1)
-      if Text.eq(escaped, "n") then { value = value ++ newline() }
-      else if Text.eq(escaped, "t") then { value = value ++ tab() }
-      else if Text.eq(escaped, "r") then { value = value ++ carriageReturn() }
-      else { value = value ++ escaped }
+    } else if code == 92 and index + 1 < sourceLength then {
+      val escapedCode = Bytes.byteAt(sourceBytes, index + 1)
+      if escapedCode == 110 then { value = value ++ newline() }
+      else if escapedCode == 116 then { value = value ++ tab() }
+      else if escapedCode == 114 then { value = value ++ carriageReturn() }
+      else { value = value ++ charAt(source, index + 1) }
       index = index + 2
     } else {
-      value = value ++ ch
+      value = value ++ charAt(source, index)
       index = index + 1
     }
   }
@@ -282,31 +292,32 @@ fn lex(source: Text): List<Token> = {
   var index = 0
   var line = 1
   val sourceLength = Text.len(source)
+  val sourceBytes = Bytes.fromText(source)
   while index < sourceLength {
-    val ch = charAt(source, index)
-    if Text.eq(ch, " ") or Text.eq(ch, tab()) or Text.eq(ch, carriageReturn()) then {
+    val code = Bytes.byteAt(sourceBytes, index)
+    if code == 32 or code == 9 or code == 13 then {
       index = index + 1
-    } else if Text.eq(ch, newline()) then {
+    } else if code == 10 then {
       output = List.pushMut(output, makeToken("newline", "", line))
       line = line + 1
       index = index + 1
-    } else if Text.eq(ch, "/") and index + 1 < sourceLength and Text.eq(charAt(source, index + 1), "/") then {
-      while index < sourceLength and not Text.eq(charAt(source, index), newline()) {
+    } else if code == 47 and index + 1 < sourceLength and Bytes.byteAt(sourceBytes, index + 1) == 47 then {
+      while index < sourceLength and Bytes.byteAt(sourceBytes, index) != 10 {
         index = index + 1
       }
-    } else if Text.eq(ch, "\"") then {
-      val scanned = scanString(source, index, line)
+    } else if code == 34 then {
+      val scanned = scanString(source, sourceBytes, index, line)
       output = List.pushMut(output, List.getOrPanic(scanned, 0))
       index = List.getOrPanic(scanned, 1).line
-    } else if isDigit(ch) then {
+    } else if isDigitCode(code) then {
       val start = index
-      while index < sourceLength and isDigit(charAt(source, index)) {
+      while index < sourceLength and isDigitCode(Bytes.byteAt(sourceBytes, index)) {
         index = index + 1
       }
       output = List.pushMut(output, makeToken("number", Text.sliceUnchecked(source, start, index), line))
-    } else if isAlpha(ch) then {
+    } else if isAlphaCode(code) then {
       val start = index
-      while index < sourceLength and isAlphaNumeric(charAt(source, index)) {
+      while index < sourceLength and isAlphaNumericCode(Bytes.byteAt(sourceBytes, index)) {
         index = index + 1
       }
       output = List.pushMut(output, makeToken("name", Text.sliceUnchecked(source, start, index), line))
@@ -317,12 +328,15 @@ fn lex(source: Text): List<Token> = {
       if Text.eq(pair, "==") or Text.eq(pair, "!=") or Text.eq(pair, "<=") or Text.eq(pair, ">=") or Text.eq(pair, "->") or Text.eq(pair, "=>") then {
         output = List.pushMut(output, makeToken("symbol", pair, line))
         index = index + 2
-      } else if Text.contains("{}()[],:=+-*/%<>!?&", ch) then {
-        output = List.pushMut(output, makeToken("symbol", ch, line))
-        index = index + 1
       } else {
-        output = List.pushMut(output, makeToken("error", "E0001 unexpected character `" ++ ch ++ "`", line))
-        index = index + 1
+        val ch = charAt(source, index)
+        if Text.contains("{}()[],:=+-*/%<>!?&", ch) then {
+          output = List.pushMut(output, makeToken("symbol", ch, line))
+          index = index + 1
+        } else {
+          output = List.pushMut(output, makeToken("error", "E0001 unexpected character `" ++ ch ++ "`", line))
+          index = index + 1
+        }
       }
     }
   }
