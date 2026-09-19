@@ -1659,3 +1659,37 @@ stddev 4.97 - and this run's own stddev, 6.36 ms, is in the same range,
 not the elevated ~12.5 ms that triggered a reproduce-before-trusting
 check last time) - no regression, including from the two PRs that did
 add real new hot-path code.
+
+## Checkpoint after seven investigative bug fixes (2026-09-19)
+
+A clean sweep of all three standard benchmark scripts at `431ba83`
+(after PRs #82-#88: the `.lbc` bytecode cache's build-identity hash,
+`lume fmt` comment/string-awareness, escaping `|` in a declared test
+name, `lume lsp` rejecting a negative `Content-Length` instead of
+hanging, unifying manifest error codes, detecting a corrupted
+`lume.lock.json`, and `lume install --check`), run against a freshly
+rebuilt `dist/lume.exe`. A stability check, not a real verification:
+every one of these PRs fixed something in `lume fmt`, `lume lsp`,
+`lume install`, or the native test framework's marker-string
+encoding - none touch `lex`/`compileBlock`/`verifyTypes`/
+`checkCallTypes`, and the one change that does sit on a path every
+function declaration passes through (`|`-escaping the declared test
+name marker) only runs its new `Text.replace` when `isTest` is true,
+so it adds nothing to the plain-function declarations that dominate
+both 10,000-line benchmark programs.
+
+| Benchmark | Mean | Lines/second | Target | Result |
+| --- | ---: | ---: | ---: | --- |
+| Trivial (`functions.lume`, `lume check`, 100 iterations) | 9.36 ms (first sample 10.29 ms, reproduced per this file's own discipline) | - | - | consistent with every prior run in this file |
+| Trivial 10,000-line (`benchmark-10000.ps1`, 20 iterations) | 46.10 ms | 216,920 | 10,000 | `TargetMet: True`, ~22x over target |
+| Feature-mix (`benchmark-10000-features.ps1`, 30 fresh-process samples) | 203.59 ms (median 202.86, p95 212.06, stddev 5.19) | 49,119 | 10,000 | `TargetMet: True`, ~4.9x over target |
+
+All three land within, or slightly better than, the last checkpoint's
+own figures (9.30 ms / 196,850 / 216.30 ms - median 214.61, p95
+228.36, stddev 6.36). The trivial check's first sample (10.29 ms) sat
+noticeably above the historical 9.3-9.8 ms band; reproduced immediately
+rather than recorded as-is, and the second sample (9.36 ms) landed
+squarely back in range - ordinary single-short-process scheduling
+jitter, not a regression. No plausible causal mechanism exists for a
+real regression from any of these seven PRs either way, since none
+touch a hot compile-time path.
