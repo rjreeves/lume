@@ -1232,6 +1232,7 @@ try {
   Assert-Equal 'lsp initialize advertises hoverProvider' 'True' "$($initResponse.result.capabilities.hoverProvider)"
   Assert-Equal 'lsp initialize advertises referencesProvider' 'True' "$($initResponse.result.capabilities.referencesProvider)"
   Assert-Equal 'lsp initialize advertises renameProvider' 'True' "$($initResponse.result.capabilities.renameProvider)"
+  Assert-Equal 'lsp initialize advertises completionProvider' 'True' "$($null -ne $initResponse.result.capabilities.completionProvider)"
 
   Send-LspMessage $lspProc '{"jsonrpc":"2.0","method":"initialized","params":{}}'
 
@@ -1340,6 +1341,25 @@ try {
   Send-LspMessage $lspProc $renameReqWhitespace
   $renameRespWhitespace = Read-LspMessage $lspProc | ConvertFrom-Json
   Assert-Equal 'rename on whitespace returns null' '' "$($renameRespWhitespace.result)"
+
+  # completion: no scope resolution - every builtin plus every fn/type/enum
+  # declared in the open document, unfiltered by cursor position or partial
+  # word. Spot checks, not an exhaustive enumeration of every builtin (the
+  # list is large and would make this brittle against future additions).
+  $compReq = @{ jsonrpc = '2.0'; id = 19; method = 'textDocument/completion'; params = @{ textDocument = @{ uri = $defUri }; position = @{ line = 5; character = 9 } } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $compReq
+  $compResp = Read-LspMessage $lspProc | ConvertFrom-Json
+  $compLabels = $compResp.result | ForEach-Object { $_.label }
+  Assert-Equal 'completion includes the file-local declaration' 'True' "$($compLabels -contains 'add')"
+  Assert-Equal 'completion includes a builtin' 'True' "$($compLabels -contains 'str.len')"
+  $addCompletion = $compResp.result | Where-Object { $_.label -eq 'add' } | Select-Object -First 1
+  Assert-Equal 'completion item for a function declaration has Function kind' '3' "$($addCompletion.kind)"
+
+  $compReqNeverOpened = @{ jsonrpc = '2.0'; id = 20; method = 'textDocument/completion'; params = @{ textDocument = @{ uri = 'file:///never_opened_completion.lume' }; position = @{ line = 0; character = 0 } } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $compReqNeverOpened
+  $compRespNeverOpened = Read-LspMessage $lspProc | ConvertFrom-Json
+  $compLabelsNeverOpened = $compRespNeverOpened.result | ForEach-Object { $_.label }
+  Assert-Equal 'completion still returns builtins for a never-opened uri' 'True' "$($compLabelsNeverOpened -contains 'str.len')"
 
   Send-LspMessage $lspProc '{"jsonrpc":"2.0","id":2,"method":"shutdown"}'
   $shutdownResponse = Read-LspMessage $lspProc | ConvertFrom-Json

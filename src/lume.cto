@@ -6072,6 +6072,47 @@ fn lspHandleRename(id: JsonValue, params: JsonValue, documents: LspDocuments): U
   } else { lspRespond(id, Json.null()) }
 }
 
+fn lspCompletionItem(label: Text, kind: Int): JsonValue = {
+  val item = Json.object()
+  JsonValue.set(item, "label", Json.string(label))
+  JsonValue.set(item, "kind", Json.int(kind))
+  item
+}
+
+fn lspDeclarationCompletionKind(keyword: Text): Int = {
+  if Text.eq(keyword, "type") then 7
+  else if Text.eq(keyword, "enum") then 13
+  else 3
+}
+
+// No scope resolution: every builtin plus every fn/type/enum declared
+// anywhere in the currently open document, unfiltered by cursor position or
+// partial-word prefix. Real editors already fuzzy-filter completion items
+// against whatever's been typed client-side - this is standard LSP client
+// behavior, not a workaround. Matches this arc's own established trade-off
+// (flat, name-based, not scope-aware) for definition/hover/references/
+// rename, applied here too rather than building real scope resolution.
+fn lspHandleCompletion(id: JsonValue, params: JsonValue, documents: LspDocuments): Unit [io] = {
+  val textDocument = JsonValue.get(params, "textDocument")
+  val uri = JsonValue.asText(JsonValue.get(textDocument, "uri"))
+  val items = Json.array()
+  val names = builtinNames()
+  var index = 0
+  while index < List.len(names) {
+    JsonValue.push(items, lspCompletionItem(List.getOrPanic(names, index), 3))
+    index = index + 1
+  }
+  val documentIndex = lspDocumentIndex(documents.uris, uri)
+  if documentIndex >= 0 then {
+    val text = List.getOrPanic(documents.texts, documentIndex)
+    val declarations = lspDeclarationSites(lex(text))
+    for declaration in declarations {
+      JsonValue.push(items, lspCompletionItem(declaration.name.text, lspDeclarationCompletionKind(declaration.keyword)))
+    }
+  }
+  lspRespond(id, items)
+}
+
 // Full-document sync only (TextDocumentSyncKind.Full = 1) - the same choice
 // Certo's own LSP makes. Every didOpen/didChange carries the whole new
 // text, so no state is needed to apply an edit - but textDocument/definition
@@ -6090,6 +6131,7 @@ fn lspHandleMessage(parsed: JsonValue, documents: LspDocuments): LspState = {
     JsonValue.set(capabilities, "hoverProvider", Json.bool(true))
     JsonValue.set(capabilities, "referencesProvider", Json.bool(true))
     JsonValue.set(capabilities, "renameProvider", Json.bool(true))
+    JsonValue.set(capabilities, "completionProvider", Json.object())
     val result = Json.object()
     JsonValue.set(result, "capabilities", capabilities)
     lspRespond(id, result)
@@ -6123,6 +6165,8 @@ fn lspHandleMessage(parsed: JsonValue, documents: LspDocuments): LspState = {
     lspHandleReferences(id, JsonValue.get(parsed, "params"), documents)
   } else if Text.eq(method, "textDocument/rename") then {
     lspHandleRename(id, JsonValue.get(parsed, "params"), documents)
+  } else if Text.eq(method, "textDocument/completion") then {
+    lspHandleCompletion(id, JsonValue.get(parsed, "params"), documents)
   } else if Text.eq(method, "shutdown") then {
     lspRespond(id, Json.null())
   } else if Text.eq(method, "exit") then {
