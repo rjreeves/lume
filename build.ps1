@@ -28,4 +28,5 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 & (Join-Path $dist 'lume.exe') api | Set-Content -LiteralPath (Join-Path $root 'ai\lume-api.json') -Encoding utf8
+& (Join-Path $dist 'lume.exe') api-docs | Set-Content -LiteralPath (Join-Path $root 'docs\builtins.md') -Encoding utf8
 exit $LASTEXITCODE
