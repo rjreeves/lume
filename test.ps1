@@ -1229,6 +1229,7 @@ try {
   $initResponse = Read-LspMessage $lspProc | ConvertFrom-Json
   Assert-Equal 'lsp initialize advertises full-document sync' '1' "$($initResponse.result.capabilities.textDocumentSync)"
   Assert-Equal 'lsp initialize advertises definitionProvider' 'True' "$($initResponse.result.capabilities.definitionProvider)"
+  Assert-Equal 'lsp initialize advertises hoverProvider' 'True' "$($initResponse.result.capabilities.hoverProvider)"
 
   Send-LspMessage $lspProc '{"jsonrpc":"2.0","method":"initialized","params":{}}'
 
@@ -1289,6 +1290,25 @@ try {
   Send-LspMessage $lspProc $defReqUndeclared
   $defRespUndeclared = Read-LspMessage $lspProc | ConvertFrom-Json
   Assert-Equal 'go-to-definition on an undeclared name (print) returns null' '' "$($defRespUndeclared.result)"
+
+  # hover: reuses the same $defUri document (fn add(a: int, b: int) -> int
+  # declared, called from main). Hovering the call site shows the full
+  # signature (parameterNames/parameterTypes/functionReturnType, already
+  # exercised elsewhere in the compiler for protocol methods - reused as-is,
+  # no new parsing). A record/enum name would show only the bare "type
+  # Name"/"enum Name" line (not attempted here - no record/enum in this
+  # fixture); see BENCHMARKS.md-style notes in the PR for the field-list
+  # follow-up this defers.
+  $hoverReq = @{ jsonrpc = '2.0'; id = 13; method = 'textDocument/hover'; params = @{ textDocument = @{ uri = $defUri }; position = @{ line = 5; character = 9 } } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $hoverReq
+  $hoverResp = Read-LspMessage $lspProc | ConvertFrom-Json
+  Assert-Equal 'hover on a function call shows its signature' 'fn add(a: int, b: int): int' $hoverResp.result.contents.value
+  Assert-Equal 'hover response content kind is plaintext' 'plaintext' $hoverResp.result.contents.kind
+
+  $hoverReqWhitespace = @{ jsonrpc = '2.0'; id = 14; method = 'textDocument/hover'; params = @{ textDocument = @{ uri = $defUri }; position = @{ line = 5; character = 0 } } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $hoverReqWhitespace
+  $hoverRespWhitespace = Read-LspMessage $lspProc | ConvertFrom-Json
+  Assert-Equal 'hover on whitespace returns null' '' "$($hoverRespWhitespace.result)"
 
   Send-LspMessage $lspProc '{"jsonrpc":"2.0","id":2,"method":"shutdown"}'
   $shutdownResponse = Read-LspMessage $lspProc | ConvertFrom-Json
