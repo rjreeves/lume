@@ -1108,7 +1108,19 @@ things rather than writing the obvious thing.
   programs, not a rounding error — the highest-leverage target if
   compile-time work continues, ahead of further verifier/emitter
   micro-optimization;
-- reduce allocation and string-copying hot spots;
+- ~~reduce allocation and string-copying hot spots~~ — partially
+  shipped: `lume profile` (above) pointed straight at `lex()`'s
+  per-character classification (`isDigit`/`isAlpha`/`isAlphaNumeric`, a
+  heap-allocated single-character `Text` from `charAt` plus a
+  `Text.contains` string search, for every character of every source
+  file). Rewritten to use Certo's `Bytes.byteAt`/plain `Int` codes
+  instead — measured ~66x faster in isolation, and a real ~29-38%
+  wall-clock reduction on the two 10,000-line benchmarks end to end
+  (see `BENCHMARKS.md`'s "Lexer rewrite" checkpoint). `charAt`'s other,
+  far-colder callers and `scanString`'s own value-accumulation
+  (`Text.++` in a loop) were left untouched — this closes the specific
+  allocation hot spot `lume profile` found, not every one that might
+  exist;
 - add persistent compiler-process measurements;
 - add one-function incremental rebuild benchmarks;
 - measure 100,000-line modules and multi-module projects;

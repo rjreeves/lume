@@ -1729,3 +1729,58 @@ target if compile-time work continues here (a byte-level rewrite
 avoiding the current lex's per-character branching, or reducing the
 token stream's own allocation pressure, rather than further verifier/
 emitter micro-optimization).
+
+## Lexer rewrite: Bytes instead of Text (2026-09-19)
+
+Acted on the finding directly above. `lex()`/`scanString()` classified
+every character via `isDigit`/`isAlpha`/`isAlphaNumeric`, each built on
+`Text.contains(LONG_STRING, ch)` against a heap-allocated
+single-character `Text` from `charAt` (`Text.byteAtUnchecked`) - for
+every character of every source file, on the hottest path in the
+compiler. An isolated, correctness-verified probe (identical
+classification results either way, 55,000,000 characters of realistic
+Lume source) found replacing that with Certo's `Bytes.byteAt(bytes,
+index): Int` plus plain numeric range checks is ~66x faster in
+isolation (3094 ms vs 47 ms for the identical workload). Rewrote
+`lex()`/`scanString()`'s dispatch/classification to use `Bytes` and
+`Int` codes throughout (token *text* still built with the existing
+`Text.sliceUnchecked`, unrelated to the classification cost); `charAt`
+itself and its other, far-colder callers (`startsUppercase`, the
+bucket-hash function, generic-argument splitting, `fmt`'s
+comment/string stripping) were left untouched, since none of them
+iterate a whole source file per compile.
+
+`lume profile`'s own before/after numbers show the real, non-isolated
+effect: lexing is now roughly 4x faster end to end (not the full 66x -
+`lex()` also builds the token list and, for strings, accumulates
+`value`, neither touched by this change), which is itself only part
+of a full compile:
+
+| Benchmark | Lex (mean), before → after | Compile total (mean), before → after |
+| --- | ---: | ---: |
+| Trivial 10,000-line (`lume profile`, 30 iterations) | 14.57 ms → 3.63 ms | 32.30 ms → 29.17 ms |
+| Feature-mix 10,000-line (`lume profile`, 30 iterations) | 31.77 ms → 7.80 ms | 93.77 ms → 84.90 ms |
+
+The full, gold-standard fresh-process benchmark methodology (this
+file's own "at least 30 runs" contract) shows a larger real-world
+effect than the in-process `lume profile` numbers alone suggest -
+plausibly because reduced allocation pressure has knock-on effects
+beyond the isolated lex phase (less memory churn for the rest of the
+run), not just the raw classification cost:
+
+| Benchmark | Mean, before → after | Lines/second, before → after | Target | Result |
+| --- | ---: | ---: | ---: | --- |
+| Trivial (`functions.lume`, `lume check`, 100 iterations) | 9.36 ms → 9.46 ms | - | - | unchanged (dominated by process startup at this size, not lexing) |
+| Trivial 10,000-line (`benchmark-10000.ps1`, 20 iterations) | 46.10 ms → 32.80 ms | 216,920 → 304,878 | 10,000 | `TargetMet: True`, ~30x over target |
+| Feature-mix (`benchmark-10000-features.ps1`, 30 fresh-process samples) | 203.59 ms → 127.08 ms (median 127.34, p95 133.62, stddev 3.83) | 49,119 → 78,693 | 10,000 | `TargetMet: True`, ~7.9x over target |
+
+A ~29% wall-clock reduction on the trivial 10,000-line benchmark and a
+~38% reduction on the feature-mix benchmark (the more string/syntax-
+heavy of the two, where the lexer rewrite has proportionally more to
+do) - correctness verified by the full `test.ps1` suite (254/254
+passing, unchanged), which already exercises string escapes, comments,
+every symbol/operator, and identifiers extensively. The trivial
+single-file `functions.lume` check (100 iterations, one tiny file) is
+unaffected, as expected - at that size, per-process overhead dominates
+and there isn't enough source text for the lexer's own cost to show up
+against the noise floor.
