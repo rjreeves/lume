@@ -5533,17 +5533,17 @@ fn resolveDependencies(rootDir: Text, rootRelative: Text, active: List<Text>, re
   } else { ResolveOutcome { resolved: resolved, problem: "E0705 cannot read manifest `" ++ manifestPath ++ "`" } }
 }
 
-fn installPackages(dir: Text): Unit [io] = {
-  val manifestPath = Path.join(dir, "lume.json")
-  if let Err(message) = readManifestVersion(manifestPath) {
-    eprintln(message)
-    Process.quit(1)
-  } else {
+// Everything `installPackages` needs to write a lock file, minus the
+// actual writing - shared by plain `lume install` (writes this) and
+// `lume install --check` (compares this against what's already on disk
+// instead, to catch a manifest that changed since the lock file was
+// last generated without re-running install).
+fn computeLockContent(dir: Text, manifestPath: Text): Result<Text, Text> = {
+  if let Err(message) = readManifestVersion(manifestPath) { Err(message) }
+  else {
     val outcome = resolveDependencies(dir, "", [], [])
-    if not Text.eq(outcome.problem, "") then {
-      eprintln(outcome.problem)
-      Process.quit(1)
-    } else {
+    if not Text.eq(outcome.problem, "") then { Err(outcome.problem) }
+    else {
       val lockDeps = Json.array()
       for dep in outcome.resolved {
         val lockEntry = Json.object()
@@ -5564,12 +5564,34 @@ fn installPackages(dir: Text): Unit [io] = {
       val lockRoot = Json.object()
       JsonValue.set(lockRoot, "resolved", lockDeps)
       JsonValue.set(lockRoot, "direct", directNames)
-      val lockPath = Path.join(dir, "lume.lock.json")
-      if writeFile(lockPath, Json.stringify(lockRoot)) then { println("wrote " ++ lockPath) }
-      else {
-        eprintln("E0707 cannot write lock file `" ++ lockPath ++ "`")
+      Ok(Json.stringify(lockRoot))
+    }
+  }
+}
+
+fn installPackages(dir: Text, checkOnly: Bool): Unit [io] = {
+  val manifestPath = Path.join(dir, "lume.json")
+  val computed = computeLockContent(dir, manifestPath)
+  if let Err(message) = computed {
+    eprintln(message)
+    Process.quit(1)
+  } else if let Ok(content) = computed {
+    val lockPath = Path.join(dir, "lume.lock.json")
+    if checkOnly then {
+      if let Some(existing) = readFile(lockPath) {
+        if Text.eq(existing, content) then { println("ok") }
+        else {
+          eprintln("E0739 lock file `" ++ lockPath ++ "` is out of date with `" ++ manifestPath ++ "`")
+          Process.quit(1)
+        }
+      } else {
+        eprintln("E0739 lock file `" ++ lockPath ++ "` is out of date with `" ++ manifestPath ++ "`")
         Process.quit(1)
       }
+    } else if writeFile(lockPath, content) then { println("wrote " ++ lockPath) }
+    else {
+      eprintln("E0707 cannot write lock file `" ++ lockPath ++ "`")
+      Process.quit(1)
     }
   }
 }
@@ -5973,7 +5995,7 @@ fn usage(): Unit [io] = {
   println("       lume benchmark <file.lume> [iterations]")
   println("       lume test <file.lume|dir> [--filter text] [--ignore names]")
   println("       lume fmt <file.lume> [--check]")
-  println("       lume install <dir>")
+  println("       lume install <dir> [--check]")
   println("       lume lsp")
   println("       lume api|ai-reference")
 }
@@ -6056,7 +6078,7 @@ fn main(): Unit [io] = {
       Process.quit(1)
     } else { runCode(artifact.code) }
   } else if Text.eq(command, "install") then {
-    installPackages(path)
+    installPackages(path, hasFlag("--check"))
   } else if let Some(entries) = listDir(path) {
     if not Text.eq(command, "test") then {
       eprintln("command `" ++ command ++ "` requires a file")
