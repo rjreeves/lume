@@ -1114,15 +1114,25 @@ things rather than writing the obvious thing.
   `"enum Name"` line, since their field/variant lists aren't exposed
   by a standalone-reusable helper the way a function's signature is -
   a smaller follow-up if wanted later. Surfaced a separate, more
-  significant finding along the way, deliberately not fixed here and
-  spawned as its own task instead: `textDocument/didOpen`/`didChange`
-  on source with an incomplete function signature (the single most
-  common state while a user is actively typing) crashes the *entire*
-  `lume lsp` server process, not just that one request - a pre-
-  existing, compiler-wide gap in how the scan helpers trust well-
-  formed input (confirmed directly: `lume check` on the same
-  malformed source already panics with "list index out of bounds"
-  today), unrelated to hover itself. `textDocument/references` and
+  significant finding along the way, deliberately not fixed in that
+  PR and spawned as its own task instead: `textDocument/didOpen`/
+  `didChange` on source with an incomplete function signature (the
+  single most common state while a user is actively typing) crashed
+  the *entire* `lume lsp` server process, not just that one request.
+  ~~Fixed~~: `parameterNames`/`parameterTypes`/`functionReturnType`/
+  `typeNext`/`genericParameters`/`genericConstraints` (all in the same
+  small, self-contained block of token-walking helpers a function's
+  parameter list, generic parameter list, and type references are
+  parsed with) had at least one `while` loop with no `eof` bound each
+  - a different instance of the same general class the parser-level
+  error-code audit above already fixed once for `blockEnd`, in a
+  different function. Added the same `eof`-bound idiom used everywhere
+  else in the file to each; verified against the original repro plus
+  four sibling malformed shapes (an unclosed generic parameter list, an
+  unclosed generic type reference, a bare parameter name at end of
+  file, an unclosed record field type) - all now report a diagnostic
+  instead of panicking, and the LSP server stays fully responsive
+  after receiving one via `didOpen`. `textDocument/references` and
   `textDocument/rename` shipped together (both reduce to the same
   core - every `name`-kind token in the file matching a given name,
   simpler than the declaration index since it needs no keyword-

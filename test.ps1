@@ -837,6 +837,18 @@ $genericConstraintName = & $Lume check (Join-Path $PSScriptRoot 'examples\invali
 if ($LASTEXITCODE -ne 1) { throw "unknown generic constraint should exit 1" }
 Assert-Equal 'generic constraint name validation' 'E0679 line 1: unknown generic constraint `Printable`' ($genericConstraintName -join "`n")
 
+# An incomplete function signature (no closing paren, the single most
+# common state while a user is actively typing) must report a clean
+# diagnostic, not panic - confirmed live before this fix:
+# parameterNames/parameterTypes/functionReturnType/typeNext/
+# genericParameters/genericConstraints all had at least one token-walking
+# loop with no eof bound, and List.getOrPanic's resulting out-of-bounds
+# panic crashed not just this `check` but the entire `lume lsp` server
+# process on any didOpen/didChange with the same incomplete text.
+$incompleteSignature = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_incomplete_function_signature.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "incomplete function signature should exit 1, not panic" }
+Assert-Equal 'incomplete function signature reports a diagnostic, not a panic' 'E0201 missing `fn main`' ($incompleteSignature -join "`n")
+
 $protocolConstraint = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_protocol_constraint.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "missing protocol implementation should exit 1" }
 Assert-Equal 'protocol implementation constraint' 'E0680 line 12: type `User` does not satisfy `Named` for `T` calling `keep_named`' ($protocolConstraint -join "`n")
@@ -1360,6 +1372,23 @@ try {
   $compRespNeverOpened = Read-LspMessage $lspProc | ConvertFrom-Json
   $compLabelsNeverOpened = $compRespNeverOpened.result | ForEach-Object { $_.label }
   Assert-Equal 'completion still returns builtins for a never-opened uri' 'True' "$($compLabelsNeverOpened -contains 'str.len')"
+
+  # An incomplete function signature must not crash the whole server -
+  # it did before this fix (didOpen on this exact source killed the
+  # process, taking every other open document's diagnostics/definition/
+  # hover/references/rename/completion down with it). Confirms the server
+  # both publishes a diagnostic AND stays genuinely responsive afterward
+  # (a second request, not just "hasn't exited yet").
+  $incompleteSource = "fn broken(a: int, b: int`n`nfn main(args: [str]) -> int {`n  print(broken(1, 2))`n  return 0`n}`n"
+  $incompleteUri = 'file:///incomplete_signature.lume'
+  $didOpenIncomplete = @{ jsonrpc = '2.0'; method = 'textDocument/didOpen'; params = @{ textDocument = @{ uri = $incompleteUri; text = $incompleteSource } } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $didOpenIncomplete
+  $incompleteDiag = Read-LspMessage $lspProc | ConvertFrom-Json
+  Assert-Equal 'lsp survives didOpen on an incomplete function signature' '1' "$($incompleteDiag.params.diagnostics.Count)"
+
+  Send-LspMessage $lspProc '{"jsonrpc":"2.0","id":21,"method":"initialize","params":{}}'
+  $postCrashInit = Read-LspMessage $lspProc | ConvertFrom-Json
+  Assert-Equal 'lsp stays responsive after an incomplete signature' '1' "$($postCrashInit.result.capabilities.textDocumentSync)"
 
   Send-LspMessage $lspProc '{"jsonrpc":"2.0","id":2,"method":"shutdown"}'
   $shutdownResponse = Read-LspMessage $lspProc | ConvertFrom-Json
