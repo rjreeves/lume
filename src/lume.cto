@@ -900,17 +900,26 @@ fn containsName(names: List<Text>, name: Text): Bool = {
 // which was judged not worth the added correctness risk for this pass.
 fn bucketCount(): Int = 1024
 
-fn characterIndex(ch: Text): Int = {
-  val alphabet = "abcdefghijklmnopqrstuvwxyz_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-  Text.indexOf(alphabet, ch) ?? 63
-}
+fn characterIndex(code: Int): Int =
+  if code >= 97 and code <= 122 then {
+    code - 97
+  } else if code == 95 then {
+    26
+  } else if code >= 65 and code <= 90 then {
+    27 + (code - 65)
+  } else if code >= 48 and code <= 57 then {
+    53 + (code - 48)
+  } else {
+    63
+  }
 
 fn hashName(name: Text): Int = {
+  val nameBytes = Bytes.fromText(name)
   var h = 0
   var i = 0
   val len = Text.len(name)
   while i < len {
-    h = (h * 31 + characterIndex(charAt(name, i))) % bucketCount()
+    h = (h * 31 + characterIndex(Bytes.byteAt(nameBytes, i))) % bucketCount()
     i = i + 1
   }
   h
