@@ -1784,3 +1784,53 @@ single-file `functions.lume` check (100 iterations, one tiny file) is
 unaffected, as expected - at that size, per-process overhead dominates
 and there isn't enough source text for the lexer's own cost to show up
 against the noise floor.
+
+## Bucket hash rewrite: Bytes instead of Text (2026-09-19)
+
+A second instance of the same pattern, found while looking for other
+candidates after the lexer rewrite above. The scope-resolution bucket
+hash - `hashName`, called on every name insert/lookup/contains check
+across declaration scanning, verification, and codegen (5 call sites)
+- classified each character via `characterIndex`, a linear
+`Text.indexOf` scan through a 63-character alphabet `Text` against a
+heap-allocated single-character `Text` from `charAt`. An isolated,
+correctness-verified probe (identical hash totals either way, 6,000,000
+hash computations over a realistic mix of identifier lengths) found
+replacing that with a byte-code `characterIndex(Int): Int` (plain
+range/offset arithmetic against `Bytes.byteAt`, no allocation, no scan)
+is ~9.8x faster in isolation (2141 ms vs 218 ms) - a smaller multiple
+than the lexer rewrite's ~66x, since the alphabet scan already
+short-circuits early for common letters, but `hashName` has far more
+call sites than `lex()` does.
+
+`lume profile`'s before/after numbers (before = the lexer-rewrite
+checkpoint's own post-rewrite baseline) show the effect reaches well
+beyond declaration scanning, into the combined codegen+verify+patch
+bucket as well, since name lookups happen throughout compilation, not
+just during the scan phase:
+
+| Benchmark | Scan (mean), before → after | Compile total (mean), before → after |
+| --- | ---: | ---: |
+| Trivial 10,000-line (`lume profile`, 30 iterations) | 1.07 ms → 0.50 ms | 29.17 ms → 22.40 ms |
+| Feature-mix 10,000-line (`lume profile`, 30 iterations) | 2.10 ms → 1.03 ms | 84.90 ms → 70.83 ms |
+
+The full, gold-standard fresh-process benchmark suite confirms a real
+end-to-end reduction on top of the lexer rewrite, not just an isolated
+or in-process effect:
+
+| Benchmark | Mean, before → after | Lines/second, before → after | Target | Result |
+| --- | ---: | ---: | ---: | --- |
+| Trivial (`functions.lume`, `lume check`, 100 iterations) | 9.46 ms → 9.15 ms | - | - | unchanged (dominated by process startup at this size) |
+| Trivial 10,000-line (`benchmark-10000.ps1`, 20 iterations) | 32.80 ms → 25.75 ms | 304,878 → 388,350 | 10,000 | `TargetMet: True`, ~39x over target |
+| Feature-mix (`benchmark-10000-features.ps1`, 30 fresh-process samples) | 127.08 ms → 109.23 ms (median 107.80, p95 118.29, stddev 5.79) | 78,693 → 91,554 | 10,000 | `TargetMet: True`, ~9.2x over target |
+
+A further ~21.5% wall-clock reduction on the trivial 10,000-line
+benchmark and a ~14% reduction on the feature-mix benchmark, on top of
+the lexer rewrite's own already-shipped ~29-38% - correctness verified
+by the full `test.ps1` suite (all cases passing, unchanged) plus direct
+`lume run`/`lume check` spot checks against `generics.lume`,
+`protocols.lume`, `closures.lume`, and `generic_dispatch_multi_param.lume`
+(all name-lookup-heavy files). `characterIndex`'s signature changed
+from `Text -> Int` to `Int -> Int`, but it has exactly one caller
+(`hashName` itself), so no other call sites needed updating; `charAt`
+and `hashName`'s own public signature are both unchanged.

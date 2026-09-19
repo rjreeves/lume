@@ -1121,6 +1121,19 @@ things rather than writing the obvious thing.
   (`Text.++` in a loop) were left untouched — this closes the specific
   allocation hot spot `lume profile` found, not every one that might
   exist;
+- ~~reduce allocation and string-copying hot spots (second instance)~~
+  — the scope-resolution bucket hash (`hashName`, called on every name
+  insert/lookup/contains check across declaration scanning,
+  verification, and codegen) had the same allocate-per-character
+  pattern: `characterIndex` did a linear `Text.indexOf` scan through a
+  63-character alphabet against a heap-allocated single-character
+  `Text`. Rewritten to a byte-code version (`Bytes.byteAt` plus plain
+  range/offset arithmetic, no allocation, no scan) — measured ~9.8x
+  faster in isolation, and end to end (see `BENCHMARKS.md`'s "Bucket
+  hash rewrite" checkpoint) a further ~14-23% wall-clock reduction on
+  top of the lexer rewrite above, bigger than the isolated probe alone
+  suggested since `hashName` runs throughout scan, verify, and codegen,
+  not just one phase;
 - add persistent compiler-process measurements;
 - add one-function incremental rebuild benchmarks;
 - measure 100,000-line modules and multi-module projects;
