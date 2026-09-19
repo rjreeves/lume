@@ -650,6 +650,21 @@ value, which would need dispatch-at-call-time support added everywhere
 an `"f:"`-tagged value gets invoked, a materially larger change to a
 core mechanism.
 
+Investigating JSON encode/decode edge cases afterward found the area
+largely solid too (nested enum fields inside a record, nested
+`Option<T>` fields, both directions - all decode and encode correctly)
+except one confirmed gap: `SomeType.from_json(...)` failed at runtime
+inside any closure or test body with `callback uses unsupported
+operation \`decode_json\`` - confirmed live inside a native `test`
+block. `json.encode` already worked in that same restricted context;
+`decode_json` simply had no handler in `callPure` at all, only in
+`execute()`. Unlike the `&T.method` gap above, this one was cheap to
+close properly rather than just document: `decodeRecordJson` is a pure
+function (`Json.parse` plus recursive schema lookups, no `[io]`), so
+`callPure` now handles `decode_json` directly, mirroring `execute()`'s
+own handling exactly - `from_json` now works inside closures and test
+bodies for real.
+
 ### 1. Complete collections
 
 - ~~add a typed `Map<K, V>` with a deliberately small API~~ — shipped (see

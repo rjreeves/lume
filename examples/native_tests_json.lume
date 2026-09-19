@@ -1,0 +1,12 @@
+type User {
+  name: str
+}
+
+test "from_json works inside a test body" {
+  let decoded = result.value(User.from_json("{\"name\":\"Ada\"}"))
+  expect.equal(decoded.name, "Ada")
+}
+
+fn main(args: [str]) -> int {
+  return 0
+}

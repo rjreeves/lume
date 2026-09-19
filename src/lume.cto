@@ -4185,6 +4185,16 @@ fn callPure(code: List<Instruction>, callable: Text, arguments: List<Text>, dead
     } else if Text.eq(current.op, "make_variant") then {
       val built = buildVariant(stack, current.text, current.number)
       stack = List.push(built.stack, built.value)
+    } else if Text.eq(current.op, "decode_json") then {
+      // decodeRecordJson is a pure function (Json.parse plus recursive
+      // schema lookups, no [io]) - mirrors execute()'s own decode_json
+      // handling exactly, closing a gap where `.from_json` previously
+      // fell through to this function's generic "unsupported operation"
+      // fallback below, confirmed live inside a test body.
+      val item = pop(stack)
+      stack = item.stack
+      if Text.eq(valueKind(item.value), "s:") then { stack = List.push(stack, decodeRecordJson(code, current.text, valueBody(item.value))) }
+      else { problem = "E0331 line " ++ intToText(current.line) ++ ": JSON decoder requires str" }
     }
     else if Text.eq(current.op, "load") then {
       if let Some(value) = getBinding(variables, current.text) { stack = List.push(stack, value) }
