@@ -700,6 +700,24 @@ foundation — is next.
   constraint below. An undeclared cross-package `use` now falls
   through to the same `E0701 cannot read module` error a genuinely
   missing module already produces — no new error code needed;
+- ~~consistent manifest error codes~~ — a systematic scan of every
+  `E0NNN` code for accidental reuse found one real inconsistency: "the
+  manifest can't be read" and "the manifest is malformed (missing
+  `name`/`version`)" were two genuinely different conditions, but each
+  got reported under whichever of `E0705`/`E0706` its caller happened
+  to pick — the same condition landed on a different code depending
+  only on whether it was the root package's own manifest
+  (`installPackages`) or a dependency's (`resolveDependencies`), and
+  each code covered both unrelated conditions. Root cause:
+  `installPackages` reimplemented manifest validation inline instead
+  of calling the existing shared `readManifestVersion` helper that
+  `resolveDependencies` already used, so the two independently drifted.
+  Fixed by making `readManifestVersion` the single source of truth —
+  its two `Err` cases now carry their own codes directly (`E0705`
+  unreadable, a new `E0737` malformed), and every caller propagates the
+  message as-is instead of re-deriving or re-wrapping a code (`E0706`
+  is retired, not reassigned, consistent with this file's own
+  monotonic code numbering);
 - cache resolved dependencies by content hash — deferred: not
   meaningful yet for local paths (reading a local directory has no
   fetch cost to cache); revisit once packages can come from anywhere

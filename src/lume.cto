@@ -5392,18 +5392,23 @@ fn loadProgram(path: Text): ModuleLoad [io] = {
   loadModule(path, [], [], pkgContext.allDeps, pkgContext.visibleDeps)
 }
 
+// The single source of truth for "is this manifest valid," root package
+// or dependency alike - every caller propagates its Err message as-is
+// rather than re-deriving its own code, so "unreadable" and "malformed"
+// can never end up reported under different codes depending on where in
+// the dependency tree the manifest happens to sit.
 fn readManifestVersion(manifestPath: Text): Result<Text, Text> = {
   if let Some(source) = readFile(manifestPath) {
     val root = Json.parse(source)
-    if not JsonValue.isObject(root) then { Err("cannot read manifest `" ++ manifestPath ++ "`") }
+    if not JsonValue.isObject(root) then { Err("E0705 cannot read manifest `" ++ manifestPath ++ "`") }
     else {
       val name = JsonValue.get(root, "name")
       val version = JsonValue.get(root, "version")
       if not JsonValue.isString(name) or not JsonValue.isString(version) then {
-        Err("manifest `" ++ manifestPath ++ "` requires string `name` and `version` fields")
+        Err("E0737 manifest `" ++ manifestPath ++ "` requires string `name` and `version` fields")
       } else { Ok(JsonValue.asText(version)) }
     }
-  } else { Err("cannot read manifest `" ++ manifestPath ++ "`") }
+  } else { Err("E0705 cannot read manifest `" ++ manifestPath ++ "`") }
 }
 
 // The plain dependency names a manifest itself declares - used to build
@@ -5502,62 +5507,54 @@ fn resolveDependencies(rootDir: Text, rootRelative: Text, active: List<Text>, re
             if not Text.eq(nested.problem, "") then { problem = nested.problem }
             else { currentResolved = nested.resolved }
           } else if let Err(message) = readManifestVersion(depManifestPath) {
-            problem = "E0706 cannot resolve dependency `" ++ depName ++ "`: " ++ message
+            problem = message
           }
         }
         index = index + 1
       }
     }
     ResolveOutcome { resolved: currentResolved, problem: problem }
-  } else { ResolveOutcome { resolved: resolved, problem: "E0706 cannot read manifest `" ++ manifestPath ++ "`" } }
+  } else { ResolveOutcome { resolved: resolved, problem: "E0705 cannot read manifest `" ++ manifestPath ++ "`" } }
 }
 
 fn installPackages(dir: Text): Unit [io] = {
   val manifestPath = Path.join(dir, "lume.json")
-  if let Some(source) = readFile(manifestPath) {
-    val root = Json.parse(source)
-    val name = JsonValue.get(root, "name")
-    val version = JsonValue.get(root, "version")
-    if not JsonValue.isObject(root) or not JsonValue.isString(name) or not JsonValue.isString(version) then {
-      eprintln("E0705 manifest `" ++ manifestPath ++ "` requires string `name` and `version` fields")
+  if let Err(message) = readManifestVersion(manifestPath) {
+    eprintln(message)
+    Process.quit(1)
+  } else {
+    val outcome = resolveDependencies(dir, "", [], [])
+    if not Text.eq(outcome.problem, "") then {
+      eprintln(outcome.problem)
       Process.quit(1)
     } else {
-      val outcome = resolveDependencies(dir, "", [], [])
-      if not Text.eq(outcome.problem, "") then {
-        eprintln(outcome.problem)
+      val lockDeps = Json.array()
+      for dep in outcome.resolved {
+        val lockEntry = Json.object()
+        JsonValue.set(lockEntry, "name", Json.string(dep.name))
+        JsonValue.set(lockEntry, "path", Json.string(dep.path))
+        JsonValue.set(lockEntry, "version", Json.string(dep.version))
+        val ownNames = Json.array()
+        for depName in dep.dependencyNames { JsonValue.push(ownNames, Json.string(depName)) }
+        JsonValue.set(lockEntry, "dependencies", ownNames)
+        JsonValue.push(lockDeps, lockEntry)
+      }
+      // Which of the root app's own direct dependencies it may `use`
+      // directly - distinct from the full "resolved" list below, which
+      // also contains transitive-only packages a *deeper* dependency
+      // declared, not the app itself (see loadProgram/loadModule).
+      val directNames = Json.array()
+      for name in readManifestDependencyNames(manifestPath) { JsonValue.push(directNames, Json.string(name)) }
+      val lockRoot = Json.object()
+      JsonValue.set(lockRoot, "resolved", lockDeps)
+      JsonValue.set(lockRoot, "direct", directNames)
+      val lockPath = Path.join(dir, "lume.lock.json")
+      if writeFile(lockPath, Json.stringify(lockRoot)) then { println("wrote " ++ lockPath) }
+      else {
+        eprintln("E0707 cannot write lock file `" ++ lockPath ++ "`")
         Process.quit(1)
-      } else {
-        val lockDeps = Json.array()
-        for dep in outcome.resolved {
-          val lockEntry = Json.object()
-          JsonValue.set(lockEntry, "name", Json.string(dep.name))
-          JsonValue.set(lockEntry, "path", Json.string(dep.path))
-          JsonValue.set(lockEntry, "version", Json.string(dep.version))
-          val ownNames = Json.array()
-          for depName in dep.dependencyNames { JsonValue.push(ownNames, Json.string(depName)) }
-          JsonValue.set(lockEntry, "dependencies", ownNames)
-          JsonValue.push(lockDeps, lockEntry)
-        }
-        // Which of the root app's own direct dependencies it may `use`
-        // directly - distinct from the full "resolved" list below, which
-        // also contains transitive-only packages a *deeper* dependency
-        // declared, not the app itself (see loadProgram/loadModule).
-        val directNames = Json.array()
-        for name in readManifestDependencyNames(manifestPath) { JsonValue.push(directNames, Json.string(name)) }
-        val lockRoot = Json.object()
-        JsonValue.set(lockRoot, "resolved", lockDeps)
-        JsonValue.set(lockRoot, "direct", directNames)
-        val lockPath = Path.join(dir, "lume.lock.json")
-        if writeFile(lockPath, Json.stringify(lockRoot)) then { println("wrote " ++ lockPath) }
-        else {
-          eprintln("E0707 cannot write lock file `" ++ lockPath ++ "`")
-          Process.quit(1)
-        }
       }
     }
-  } else {
-    eprintln("E0705 cannot read manifest `" ++ manifestPath ++ "`")
-    Process.quit(1)
   }
 }
 

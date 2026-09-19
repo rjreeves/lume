@@ -1027,6 +1027,26 @@ $cyclicOutput = & $Lume install (Join-Path $PSScriptRoot 'examples\packages\cycl
 if ($LASTEXITCODE -ne 1) { throw "cyclic package install should exit 1" }
 Assert-Equal 'package dependency cycle validation' 'E0709 dependency cycle at `cyclic-b`' ($cyclicOutput -join "`n")
 
+# A malformed manifest (missing name/version) and an unreadable one used to be
+# reported under different, conflated codes depending only on whether it was
+# the root package's own manifest or a dependency's - readManifestVersion is
+# now the single source of truth both paths call through, so the same
+# condition gets the same code everywhere.
+$malformedRootDir = Join-Path $PSScriptRoot 'examples\packages\malformed_root'
+$malformedRootOutput = & $Lume install $malformedRootDir 2>&1
+if ($LASTEXITCODE -ne 1) { throw "malformed root manifest install should exit 1" }
+Assert-Equal 'malformed root manifest reports E0737' "E0737 manifest ``$malformedRootDir/lume.json`` requires string ``name`` and ``version`` fields" ($malformedRootOutput -join "`n")
+
+$malformedDepAppDir = Join-Path $PSScriptRoot 'examples\packages\malformed_dep_app'
+$malformedDepOutput = & $Lume install $malformedDepAppDir 2>&1
+if ($LASTEXITCODE -ne 1) { throw "malformed dependency manifest install should exit 1" }
+Assert-Equal 'malformed dependency manifest reports the same E0737, no extra wrapping' "E0737 manifest ``$malformedDepAppDir/../malformed_dep/lume.json`` requires string ``name`` and ``version`` fields" ($malformedDepOutput -join "`n")
+
+$missingDepAppDir = Join-Path $PSScriptRoot 'examples\packages\missing_dep_app'
+$missingDepOutput = & $Lume install $missingDepAppDir 2>&1
+if ($LASTEXITCODE -ne 1) { throw "missing dependency directory install should exit 1" }
+Assert-Equal 'missing dependency manifest reports E0705, matching an unreadable root manifest' "E0705 cannot read manifest ``$missingDepAppDir/../does_not_exist/lume.json``" ($missingDepOutput -join "`n")
+
 # Package isolation: a package may only `use` what it itself declares in its
 # own lume.json, not merely what's present anywhere in the resolved tree
 # (diamond_app -> foo/bar, both -> baz; isolation_violation_app -> leaky/bar,
