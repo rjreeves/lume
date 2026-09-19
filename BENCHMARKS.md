@@ -1834,3 +1834,51 @@ by the full `test.ps1` suite (all cases passing, unchanged) plus direct
 from `Text -> Int` to `Int -> Int`, but it has exactly one caller
 (`hashName` itself), so no other call sites needed updating; `charAt`
 and `hashName`'s own public signature are both unchanged.
+
+## String literal scanning: slice runs instead of per-character concat (2026-09-20)
+
+A different kind of fix from the previous two checkpoints. `scanString`
+built a string literal's decoded value via `value = value ++
+charAt(source, index)`, once per character. Reading Certo's own
+runtime C source directly (`certo_text_concat`,
+`Certo-latest/crates/stdlib/src/text.rs:37-46`) confirmed `++` is a
+flat `malloc(la + lb + 1)` + two `memcpy`s, with no rope/tree
+structure or small-string optimization - so appending one character at
+a time to a growing string is **O(n²)** in the literal's length, not
+just a constant-factor allocation cost like the lexer and bucket-hash
+rewrites above.
+
+An isolated, correctness-verified probe (`string_scan_perf_probe.cto`,
+identical decoded output both ways across no-escape, single-escape,
+and back-to-back-escape cases) found replacing per-character `++` with
+run-slicing - track an unescaped run's start index, flush it as one
+`Text.sliceUnchecked` call only at an escape or the closing quote
+(the same pattern already used for token text elsewhere in `lex()`) -
+shows the O(n²)→O(n) signature directly: the speedup widens as the
+string gets longer, rather than staying constant.
+
+| String length | Passes | Old (mean) | New (mean) | Speedup |
+| --- | ---: | ---: | ---: | ---: |
+| 203 chars | 60,000 | 16.4 µs | 0.53 µs | ~31x |
+| 2,003 chars | 3,000 | 755 µs | 5.3 µs | ~142x |
+
+End to end: the two standard 10,000-line benchmark files are
+compiler-generated and contain no long string literals, so `lume
+profile` shows no meaningful change on them (as expected - this fix
+targets a different kind of source file). A throwaway benchmark file
+was written instead (fifty ~2,000-character string literals, ~100,000
+characters of string content total) and compiled with both a baseline
+binary (built from the pre-change source) and the new binary:
+
+| Benchmark | Mean, before → after | Speedup |
+| --- | ---: | ---: |
+| 50 × ~2,000-char string literals (`lume check`, 20 iterations) | 153.87 ms → 10.30 ms | ~14.9x |
+
+`lume run` output verified byte-identical between the baseline and new
+binaries on this file. Correctness verified further by the full
+`test.ps1` suite (all cases passing, unchanged) plus targeted manual
+checks of `str.len` on strings with no escapes, only an escape, an
+escape at the start, an escape at the end, back-to-back escapes, a
+single character, and an empty string - all matching hand-computed
+expected lengths exactly. `scanString`'s signature, its single call
+site in `lex()`, and its escape-handling logic are all unchanged.

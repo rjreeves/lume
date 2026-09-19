@@ -1134,6 +1134,24 @@ things rather than writing the obvious thing.
   top of the lexer rewrite above, bigger than the isolated probe alone
   suggested since `hashName` runs throughout scan, verify, and codegen,
   not just one phase;
+- ~~reduce allocation and string-copying hot spots (third instance)~~ —
+  unlike the previous two (constant-factor allocation costs),
+  `scanString`'s value accumulation (`value = value ++ charAt(...)`,
+  one heap-allocated single-character `Text` concatenated per
+  character of every string literal) was a genuine **complexity-class**
+  bug: Certo's `++` (`certo_text_concat`) is a flat `malloc`+`memcpy`
+  with no rope/tree structure, so appending one character at a time is
+  O(n²) in the literal's length, confirmed by reading Certo's own
+  runtime C source directly. Rewritten to accumulate via
+  `Text.sliceUnchecked` over runs of unescaped characters (flushed only
+  at an escape or the closing quote), already the same pattern used for
+  token text elsewhere in `lex()` — measured ~31x faster in isolation
+  on a 203-character string and ~142x on a 2003-character string (the
+  widening gap with length is the O(n²)→O(n) signature), and ~14.9x
+  faster end to end on a throwaway benchmark with fifty ~2000-character
+  string literals (153.87ms → 10.30ms per compile, byte-identical
+  output). The two 10,000-line benchmark files are unaffected (no long
+  string literals in compiler-generated source), as expected;
 - add persistent compiler-process measurements;
 - add one-function incremental rebuild benchmarks;
 - measure 100,000-line modules and multi-module projects;
