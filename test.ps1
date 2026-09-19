@@ -38,6 +38,18 @@ $wordCount = & $Lume run (Join-Path $PSScriptRoot 'examples\word_count.lume') (J
 if ($LASTEXITCODE -ne 0) { throw "word count exited $LASTEXITCODE" }
 Assert-Equal 'word count (character count)' '10' ($wordCount -join "`n")
 
+# Column tracking: multi-char names, single- and two-char symbols, a string
+# literal's column is its opening quote (not its first content character),
+# a tab counts as one column (not visually expanded), and newline/eof each
+# report the column right after the line's last real character.
+$tokenColumns = (& $Lume tokens (Join-Path $PSScriptRoot 'examples\token_columns.lume')) -join "`n"
+Assert-Contains 'token columns: multi-char name' '1:4  name  add' $tokenColumns
+Assert-Contains 'token columns: two-char symbol' '1:24  symbol  ->' $tokenColumns
+Assert-Contains 'token columns: indented name after return' '2:3  name  return' $tokenColumns
+Assert-Contains 'token columns: name after tab indent' '4:2  name  val' $tokenColumns
+Assert-Contains 'token columns: string column is its opening quote' '4:10  string  hi' $tokenColumns
+Assert-Contains 'token columns: eof column' '5:1  eof' $tokenColumns
+
 $control = & $Lume run (Join-Path $PSScriptRoot 'examples\control_flow.lume')
 if ($LASTEXITCODE -ne 0) { throw "control flow exited $LASTEXITCODE" }
 Assert-Equal 'control flow' "control flow works`n10" ($control -join "`n")
