@@ -263,21 +263,24 @@ fn scanString(source: Text, sourceBytes: Bytes, start: Int, line: Int): List<Tok
   var index = start + 1
   val sourceLength = Text.len(source)
   var value = ""
+  var segmentStart = index
   var closed = false
   while index < sourceLength and not closed {
     val code = Bytes.byteAt(sourceBytes, index)
     if code == 34 then {
+      if index > segmentStart then { value = value ++ Text.sliceUnchecked(source, segmentStart, index) }
       closed = true
       index = index + 1
     } else if code == 92 and index + 1 < sourceLength then {
+      if index > segmentStart then { value = value ++ Text.sliceUnchecked(source, segmentStart, index) }
       val escapedCode = Bytes.byteAt(sourceBytes, index + 1)
       if escapedCode == 110 then { value = value ++ newline() }
       else if escapedCode == 116 then { value = value ++ tab() }
       else if escapedCode == 114 then { value = value ++ carriageReturn() }
       else { value = value ++ charAt(source, index + 1) }
       index = index + 2
+      segmentStart = index
     } else {
-      value = value ++ charAt(source, index)
       index = index + 1
     }
   }
