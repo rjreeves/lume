@@ -5970,6 +5970,108 @@ fn lspHandleHover(id: JsonValue, params: JsonValue, documents: LspDocuments): Un
   } else { lspRespond(id, Json.null()) }
 }
 
+// Every name-kind token in the file whose text matches `name` - the
+// declaration site and every call site are textually identical name
+// tokens, so this naturally covers both without special-casing which one
+// is "the" declaration. Simpler than lspDeclarationSites: no keyword-
+// adjacency check, just a text-equality filter over every name token.
+fn lspOccurrences(tokens: List<Token>, name: Text): List<Token> = {
+  var result: List<Token> = []
+  var index = 0
+  while not Text.eq(at(tokens, index).kind, "eof") {
+    val current = at(tokens, index)
+    if Text.eq(current.kind, "name") and Text.eq(current.text, name) then {
+      result = List.push(result, current)
+    }
+    index = index + 1
+  }
+  result
+}
+
+fn lspLocationJson(uri: Text, token: Token): JsonValue = {
+  val startPos = Json.object()
+  JsonValue.set(startPos, "line", Json.int(token.line - 1))
+  JsonValue.set(startPos, "character", Json.int(token.column - 1))
+  val endPos = Json.object()
+  JsonValue.set(endPos, "line", Json.int(token.line - 1))
+  JsonValue.set(endPos, "character", Json.int(token.column - 1 + Text.len(token.text)))
+  val range = Json.object()
+  JsonValue.set(range, "start", startPos)
+  JsonValue.set(range, "end", endPos)
+  val location = Json.object()
+  JsonValue.set(location, "uri", Json.string(uri))
+  JsonValue.set(location, "range", range)
+  location
+}
+
+// context.includeDeclaration isn't read - the response always includes
+// every occurrence, declaration included. Respecting `false` would mean
+// cross-referencing lspDeclarationSites to identify which occurrence to
+// drop, for a flag most real usage doesn't set anyway - not attempted here.
+fn lspHandleReferences(id: JsonValue, params: JsonValue, documents: LspDocuments): Unit [io] = {
+  val textDocument = JsonValue.get(params, "textDocument")
+  val uri = JsonValue.asText(JsonValue.get(textDocument, "uri"))
+  val position = JsonValue.get(params, "position")
+  val requestLine = JsonValue.asInt(JsonValue.get(position, "line")) + 1
+  val requestColumn = JsonValue.asInt(JsonValue.get(position, "character")) + 1
+  val documentIndex = lspDocumentIndex(documents.uris, uri)
+  if documentIndex >= 0 then {
+    val text = List.getOrPanic(documents.texts, documentIndex)
+    val requestTokens = lex(text)
+    val name = lspNameTokenAt(requestTokens, requestLine, requestColumn)
+    if Text.eq(name, "") then { lspRespond(id, Json.null()) }
+    else {
+      val occurrences = lspOccurrences(requestTokens, name)
+      val locations = Json.array()
+      for occurrence in occurrences { JsonValue.push(locations, lspLocationJson(uri, occurrence)) }
+      lspRespond(id, locations)
+    }
+  } else { lspRespond(id, Json.null()) }
+}
+
+// No newName validation (empty/keyword/non-identifier) - the compiler's own
+// subsequent diagnostics catch a bad rename the same way they catch any
+// other invalid identifier; not duplicating that check here.
+fn lspHandleRename(id: JsonValue, params: JsonValue, documents: LspDocuments): Unit [io] = {
+  val textDocument = JsonValue.get(params, "textDocument")
+  val uri = JsonValue.asText(JsonValue.get(textDocument, "uri"))
+  val position = JsonValue.get(params, "position")
+  val newName = JsonValue.asText(JsonValue.get(params, "newName"))
+  val requestLine = JsonValue.asInt(JsonValue.get(position, "line")) + 1
+  val requestColumn = JsonValue.asInt(JsonValue.get(position, "character")) + 1
+  val documentIndex = lspDocumentIndex(documents.uris, uri)
+  if documentIndex >= 0 then {
+    val text = List.getOrPanic(documents.texts, documentIndex)
+    val requestTokens = lex(text)
+    val name = lspNameTokenAt(requestTokens, requestLine, requestColumn)
+    if Text.eq(name, "") then { lspRespond(id, Json.null()) }
+    else {
+      val occurrences = lspOccurrences(requestTokens, name)
+      val edits = Json.array()
+      for occurrence in occurrences {
+        val startPos = Json.object()
+        JsonValue.set(startPos, "line", Json.int(occurrence.line - 1))
+        JsonValue.set(startPos, "character", Json.int(occurrence.column - 1))
+        val endPos = Json.object()
+        JsonValue.set(endPos, "line", Json.int(occurrence.line - 1))
+        JsonValue.set(endPos, "character", Json.int(occurrence.column - 1 + Text.len(occurrence.text)))
+        val range = Json.object()
+        JsonValue.set(range, "start", startPos)
+        JsonValue.set(range, "end", endPos)
+        val edit = Json.object()
+        JsonValue.set(edit, "range", range)
+        JsonValue.set(edit, "newText", Json.string(newName))
+        JsonValue.push(edits, edit)
+      }
+      val changes = Json.object()
+      JsonValue.set(changes, uri, edits)
+      val workspaceEdit = Json.object()
+      JsonValue.set(workspaceEdit, "changes", changes)
+      lspRespond(id, workspaceEdit)
+    }
+  } else { lspRespond(id, Json.null()) }
+}
+
 // Full-document sync only (TextDocumentSyncKind.Full = 1) - the same choice
 // Certo's own LSP makes. Every didOpen/didChange carries the whole new
 // text, so no state is needed to apply an edit - but textDocument/definition
@@ -5986,6 +6088,8 @@ fn lspHandleMessage(parsed: JsonValue, documents: LspDocuments): LspState = {
     JsonValue.set(capabilities, "textDocumentSync", Json.int(1))
     JsonValue.set(capabilities, "definitionProvider", Json.bool(true))
     JsonValue.set(capabilities, "hoverProvider", Json.bool(true))
+    JsonValue.set(capabilities, "referencesProvider", Json.bool(true))
+    JsonValue.set(capabilities, "renameProvider", Json.bool(true))
     val result = Json.object()
     JsonValue.set(result, "capabilities", capabilities)
     lspRespond(id, result)
@@ -6015,6 +6119,10 @@ fn lspHandleMessage(parsed: JsonValue, documents: LspDocuments): LspState = {
     lspHandleDefinition(id, JsonValue.get(parsed, "params"), documents)
   } else if Text.eq(method, "textDocument/hover") then {
     lspHandleHover(id, JsonValue.get(parsed, "params"), documents)
+  } else if Text.eq(method, "textDocument/references") then {
+    lspHandleReferences(id, JsonValue.get(parsed, "params"), documents)
+  } else if Text.eq(method, "textDocument/rename") then {
+    lspHandleRename(id, JsonValue.get(parsed, "params"), documents)
   } else if Text.eq(method, "shutdown") then {
     lspRespond(id, Json.null())
   } else if Text.eq(method, "exit") then {

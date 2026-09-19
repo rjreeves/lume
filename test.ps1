@@ -1230,6 +1230,8 @@ try {
   Assert-Equal 'lsp initialize advertises full-document sync' '1' "$($initResponse.result.capabilities.textDocumentSync)"
   Assert-Equal 'lsp initialize advertises definitionProvider' 'True' "$($initResponse.result.capabilities.definitionProvider)"
   Assert-Equal 'lsp initialize advertises hoverProvider' 'True' "$($initResponse.result.capabilities.hoverProvider)"
+  Assert-Equal 'lsp initialize advertises referencesProvider' 'True' "$($initResponse.result.capabilities.referencesProvider)"
+  Assert-Equal 'lsp initialize advertises renameProvider' 'True' "$($initResponse.result.capabilities.renameProvider)"
 
   Send-LspMessage $lspProc '{"jsonrpc":"2.0","method":"initialized","params":{}}'
 
@@ -1309,6 +1311,35 @@ try {
   Send-LspMessage $lspProc $hoverReqWhitespace
   $hoverRespWhitespace = Read-LspMessage $lspProc | ConvertFrom-Json
   Assert-Equal 'hover on whitespace returns null' '' "$($hoverRespWhitespace.result)"
+
+  # references/rename: reuses $defUri (fn add declared once, called once from
+  # main - 2 occurrences total: the declaration at line 0 and the call site
+  # at line 5). context.includeDeclaration isn't read by the server - the
+  # response always includes every occurrence regardless of that flag.
+  $refsReq = @{ jsonrpc = '2.0'; id = 15; method = 'textDocument/references'; params = @{ textDocument = @{ uri = $defUri }; position = @{ line = 5; character = 9 }; context = @{ includeDeclaration = $true } } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $refsReq
+  $refsResp = Read-LspMessage $lspProc | ConvertFrom-Json
+  Assert-Equal 'references finds both the declaration and the call site' '2' "$($refsResp.result.Count)"
+  Assert-Equal 'references first location is the declaration' '0' "$($refsResp.result[0].range.start.line)"
+  Assert-Equal 'references second location is the call site' '5' "$($refsResp.result[1].range.start.line)"
+
+  $refsReqWhitespace = @{ jsonrpc = '2.0'; id = 16; method = 'textDocument/references'; params = @{ textDocument = @{ uri = $defUri }; position = @{ line = 5; character = 0 } } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $refsReqWhitespace
+  $refsRespWhitespace = Read-LspMessage $lspProc | ConvertFrom-Json
+  Assert-Equal 'references on whitespace returns null' '' "$($refsRespWhitespace.result)"
+
+  $renameReq = @{ jsonrpc = '2.0'; id = 17; method = 'textDocument/rename'; params = @{ textDocument = @{ uri = $defUri }; position = @{ line = 5; character = 9 }; newName = 'sum' } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $renameReq
+  $renameResp = Read-LspMessage $lspProc | ConvertFrom-Json
+  $renameEdits = $renameResp.result.changes.$defUri
+  Assert-Equal 'rename produces edits for both occurrences' '2' "$($renameEdits.Count)"
+  Assert-Equal 'rename edit newText matches the requested name' 'sum' $renameEdits[0].newText
+  Assert-Equal 'rename edit range matches the declaration' '0' "$($renameEdits[0].range.start.line)"
+
+  $renameReqWhitespace = @{ jsonrpc = '2.0'; id = 18; method = 'textDocument/rename'; params = @{ textDocument = @{ uri = $defUri }; position = @{ line = 5; character = 0 }; newName = 'sum' } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $renameReqWhitespace
+  $renameRespWhitespace = Read-LspMessage $lspProc | ConvertFrom-Json
+  Assert-Equal 'rename on whitespace returns null' '' "$($renameRespWhitespace.result)"
 
   Send-LspMessage $lspProc '{"jsonrpc":"2.0","id":2,"method":"shutdown"}'
   $shutdownResponse = Read-LspMessage $lspProc | ConvertFrom-Json

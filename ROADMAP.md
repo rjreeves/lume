@@ -1122,8 +1122,19 @@ things rather than writing the obvious thing.
   existing, compiler-wide gap in how the scan helpers trust well-
   formed input (confirmed directly: `lume check` on the same
   malformed source already panics with "list index out of bounds"
-  today), unrelated to hover itself. Completion, references, rename,
-  and code actions, plus cross-file resolution, remain open;
+  today), unrelated to hover itself. `textDocument/references` and
+  `textDocument/rename` shipped together (both reduce to the same
+  core - every `name`-kind token in the file matching a given name,
+  simpler than the declaration index since it needs no keyword-
+  adjacency check; rename just re-emits that same list as a
+  `WorkspaceEdit` instead of `Location[]`). Two explicit v1 skips:
+  `references`' `context.includeDeclaration` flag isn't read (the
+  response always includes the declaration), and `rename` doesn't
+  validate `newName` is a legal identifier before building the edit
+  (a genuinely bad rename surfaces via the compiler's own diagnostics
+  on the next compile, same as any other invalid identifier).
+  Completion and code actions, plus cross-file resolution for every
+  capability above, remain open;
 - project-wide symbol indexing without slowing single-file checks;
 - debugger protocol support after bytecode/source maps stabilize;
 - ~~generated API documentation~~ — shipped as `lume api-docs`, a
