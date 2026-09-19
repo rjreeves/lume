@@ -451,6 +451,19 @@ Assert-Equal 'api-docs starts with the reference heading' '# Lume Builtin Refere
 Assert-Contains 'api-docs groups builtins by namespace' '## str' ($apiDocs -join "`n")
 Assert-Contains 'api-docs lists a known builtin with its arity' '- `str.upper` - 1 argument(s)' ($apiDocs -join "`n")
 
+# Timing output isn't a good fit for exact-match assertions (matches the
+# existing `benchmark` command, which has zero test.ps1 coverage of its own
+# for the same reason) - just confirm profile runs and reports every
+# expected bucket, not any particular value.
+$profileOutput = & $Lume profile (Join-Path $PSScriptRoot 'examples\functions.lume') 5
+if ($LASTEXITCODE -ne 0) { throw "profile exited $LASTEXITCODE" }
+$profileText = $profileOutput -join "`n"
+Assert-Contains 'profile reports iterations' 'iterations=5' $profileText
+Assert-Contains 'profile reports lex time' 'lex_total_ms=' $profileText
+Assert-Contains 'profile reports scan time' 'scan_total_ms=' $profileText
+Assert-Contains 'profile reports compile time' 'compile_total_ms=' $profileText
+Assert-Contains 'profile reports an estimated remaining-phases bucket' 'estimated_codegen_verify_patch_total_ms=' $profileText
+
 $fmtEdgeCasesPath = Join-Path $PSScriptRoot 'examples\fmt_edge_cases.lume'
 $fmtEdgeCasesCheck = & $Lume fmt $fmtEdgeCasesPath --check
 if ($LASTEXITCODE -ne 0) { throw "fmt --check should not be confused by braces inside comments/strings" }
