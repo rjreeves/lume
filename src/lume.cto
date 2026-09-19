@@ -1150,6 +1150,17 @@ fn validateExpression(code: List<Instruction>, nameBuckets: List<List<Text>>, mu
       val boundary = List.getOrPanic(matchBoundaries, List.len(matchBoundaries) - 1)
       matchBoundaries = List.slice(matchBoundaries, 0, List.len(matchBoundaries) - 1)
       localNames = List.slice(localNames, 0, boundary)
+    } else if Text.eq(problem, "") and Text.eq(item.op, "fn_ref") and Text.contains(item.text, ".") and containsName(genericNames, beforeDot(item.text)) then {
+      // A generic dispatch call (`T.name(value)`) gets a deliberate exemption
+      // a few branches below so verifyTypes's checkGenericProtocolCall can
+      // fully validate it - but `&T.name` compiles to this fn_ref branch
+      // instead of a "call" instruction, and generic dispatch was never
+      // given runtime support for being taken as a function value (that
+      // would need dispatch-at-call-time support everywhere an "f:"-tagged
+      // value gets invoked). Reject it here, specifically, rather than
+      // falling into the plain "unknown function" check right below and
+      // reporting the same message a genuine typo would produce.
+      problem = "E0740 line " ++ intToText(item.line) ++ ": generic dispatch `" ++ item.text ++ "` cannot be used as a function value"
     } else if Text.eq(problem, "") and Text.eq(item.op, "fn_ref") and not containsName(functionNames, item.text) then {
       problem = "E0216 line " ++ intToText(item.line) ++ ": unknown function `" ++ item.text ++ "`"
     } else if Text.eq(problem, "") and Text.eq(item.op, "load") and List.len(closureBoundaries) > 0 and bucketsContains(mutableBuckets, item.text) then {

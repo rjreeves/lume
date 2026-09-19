@@ -853,6 +853,10 @@ $genericDispatchAmbiguous = & $Lume check (Join-Path $PSScriptRoot 'examples\inv
 if ($LASTEXITCODE -ne 1) { throw "generic dispatch ambiguous method should exit 1" }
 Assert-Equal 'generic dispatch ambiguous method' 'E0694 line 10: call to `T.describe` is ambiguous - Named, Labeled all declare method `describe`' ($genericDispatchAmbiguous -join "`n")
 
+$genericDispatchFunctionValue = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_generic_dispatch_function_value.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "generic dispatch as a function value should exit 1" }
+Assert-Equal 'generic dispatch cannot be used as a function value' 'E0740 line 16: generic dispatch `T.name` cannot be used as a function value' ($genericDispatchFunctionValue -join "`n")
+
 $multiConstraintUnsatisfied = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_multi_constraint_unsatisfied.lume') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "multi-constraint unsatisfied should exit 1" }
 Assert-Equal 'multi-constraint unsatisfied' 'E0680 line 20: type `User` does not satisfy `Number` for `T` calling `keep`' ($multiConstraintUnsatisfied -join "`n")

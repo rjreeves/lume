@@ -634,6 +634,22 @@ building it, and a dedicated benchmark confirming the mechanism scales
 linearly. That milestone is closed; this one — production scripting
 foundation — is next.
 
+Adversarially testing this area later (Self in a non-first parameter
+position, dispatch from inside closures, three-way multi-constraint
+ambiguity) found it solid, plus one real, previously-undocumented gap:
+`&T.method` (taking a generic dispatch as a first-class function value,
+e.g. to pass into `list.map`) reported `E0216 unknown function` -
+identical to a genuine typo, with no hint that the actual issue is
+specific to generic dispatch. Root cause: a plain `T.method(...)` call
+gets a deliberate exemption in `validateExpression` deferring to
+`verifyTypes`'s full generic-dispatch validation, but `&T.method`
+compiles to a different instruction (`fn_ref`) that exemption was never
+extended to. Fixed with a precise `E0740` instead - not full runtime
+support for calling generic dispatch indirectly through a function
+value, which would need dispatch-at-call-time support added everywhere
+an `"f:"`-tagged value gets invoked, a materially larger change to a
+core mechanism.
+
 ### 1. Complete collections
 
 - ~~add a typed `Map<K, V>` with a deliberately small API~~ — shipped (see

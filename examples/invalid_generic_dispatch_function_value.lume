@@ -1,0 +1,22 @@
+protocol Named {
+  fn name(value: Self) -> str
+}
+
+type User {
+  label: str
+}
+
+impl Named for User {
+  fn name(value: User) -> str {
+    return value.label
+  }
+}
+
+fn announceAll<T: Named>(items: [T]) -> [str] {
+  return list.map(items, &T.name)
+}
+
+fn main(args: [str]) -> int {
+  print(announceAll([User(label: "Ada")]))
+  return 0
+}
