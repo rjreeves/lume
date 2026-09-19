@@ -1,0 +1,6 @@
+use mathutils.ops
+
+fn main(args: [str]) -> int {
+  print(ops.square(6))
+  return 0
+}

@@ -5316,15 +5316,29 @@ fn readDependencyNames(namesArray: JsonValue): List<Text> = {
 type PackageContext = {
   allDeps: List<PackageDep>
   visibleDeps: List<PackageDep>
+  problem: Text
 }
 
+// The file's absence means "no dependencies" (an ordinary project with
+// no lume.json/lume.lock.json), reported as no problem at all - but a
+// PRESENT file that doesn't have the shape lume install always writes
+// (not an object, or "resolved"/"direct" not arrays) is corruption, not
+// an empty project, and is reported as one instead of silently resolving
+// to zero dependencies - confirmed live that the latter produces a
+// confusing "cannot read module" error pointing nowhere near the real
+// cause. A resolved entry's own "dependencies" being missing/empty is
+// left alone: readDependencyNames already treats that as an ordinary
+// leaf package with nothing further to declare, not corruption.
 fn loadPackageContext(dir: Text): PackageContext [io] = {
   val lockPath = Path.join(dir, "lume.lock.json")
   if let Some(source) = readFile(lockPath) {
     val root = Json.parse(source)
     val depsArray = JsonValue.get(root, "resolved")
-    var allDeps: List<PackageDep> = []
-    if JsonValue.isArray(depsArray) then {
+    val directArray = JsonValue.get(root, "direct")
+    if not JsonValue.isObject(root) or not JsonValue.isArray(depsArray) or not JsonValue.isArray(directArray) then {
+      PackageContext { allDeps: [], visibleDeps: [], problem: "E0738 cannot parse lock file `" ++ lockPath ++ "`" }
+    } else {
+      var allDeps: List<PackageDep> = []
       var index = 0
       while index < JsonValue.length(depsArray) {
         val entry = Json.parse(JsonValue.atText(depsArray, index))
@@ -5334,10 +5348,10 @@ fn loadPackageContext(dir: Text): PackageContext [io] = {
         allDeps = List.push(allDeps, PackageDep { name: name, path: Path.join(dir, relativePath), dependencyNames: ownNames })
         index = index + 1
       }
+      val directNames = readDependencyNames(directArray)
+      PackageContext { allDeps: allDeps, visibleDeps: depsVisibleTo(allDeps, directNames), problem: "" }
     }
-    val directNames = readDependencyNames(JsonValue.get(root, "direct"))
-    PackageContext { allDeps: allDeps, visibleDeps: depsVisibleTo(allDeps, directNames) }
-  } else { PackageContext { allDeps: [], visibleDeps: [] } }
+  } else { PackageContext { allDeps: [], visibleDeps: [], problem: "" } }
 }
 
 fn resolveModulePath(path: Text, moduleName: Text, visibleDeps: List<PackageDep>): ModulePathResult = {
@@ -5389,7 +5403,9 @@ fn loadModule(path: Text, active: List<Text>, alreadyLoaded: List<Text>, allDeps
 
 fn loadProgram(path: Text): ModuleLoad [io] = {
   val pkgContext = loadPackageContext(Path.dirname(path))
-  loadModule(path, [], [], pkgContext.allDeps, pkgContext.visibleDeps)
+  if not Text.eq(pkgContext.problem, "") then {
+    ModuleLoad { source: "", loadedPaths: [], problem: pkgContext.problem }
+  } else { loadModule(path, [], [], pkgContext.allDeps, pkgContext.visibleDeps) }
 }
 
 // The single source of truth for "is this manifest valid," root package
