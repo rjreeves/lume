@@ -942,6 +942,15 @@ $filteredTests = & $Lume test (Join-Path $PSScriptRoot 'examples\native_tests.lu
 if ($LASTEXITCODE -ne 0) { throw "filtered native test runner exited $LASTEXITCODE" }
 Assert-Equal 'native test filtering' "PASS recognizes present values`n1 passed; 0 failed" ($filteredTests -join "`n")
 
+# from_json's decode_json op previously had no handler in callPure (the
+# restricted evaluator a test body runs through), so it fell into that
+# function's generic "uses unsupported operation" fallback - confirmed
+# live before this fixture existed. decodeRecordJson is pure (no [io]),
+# so callPure now handles it directly, mirroring execute()'s own handling.
+$nativeTestsJson = & $Lume test (Join-Path $PSScriptRoot 'examples\native_tests_json.lume')
+if ($LASTEXITCODE -ne 0) { throw "from_json inside a test body exited $LASTEXITCODE" }
+Assert-Equal 'from_json works inside a test body' "PASS from_json works inside a test body`n1 passed; 0 failed" ($nativeTestsJson -join "`n")
+
 $nativeSuite = & $Lume test (Join-Path $PSScriptRoot 'examples\native_suite')
 if ($LASTEXITCODE -ne 0) { throw "native test directory discovery exited $LASTEXITCODE" }
 Assert-Contains 'native test directory math discovery' 'PASS math works' ($nativeSuite -join "`n")
