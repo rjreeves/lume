@@ -1133,8 +1133,19 @@ things rather than writing the obvious thing.
   validate `newName` is a legal identifier before building the edit
   (a genuinely bad rename surfaces via the compiler's own diagnostics
   on the next compile, same as any other invalid identifier).
-  Completion and code actions, plus cross-file resolution for every
-  capability above, remain open;
+  `textDocument/completion` closes out five of the six candidates -
+  the one genuinely different in kind from the other five, since it
+  has to suggest names *before* the user finishes typing one, which
+  normally means real scope resolution (locals, parameters, imports,
+  shadowing). Scoped down to match this arc's own established
+  trade-off instead: every builtin name (`builtinNames()`, the same
+  data `lume api`/`lume api-docs` already expose) plus every file-
+  local `fn`/`type`/`enum` declaration, unfiltered by cursor position
+  or partial-word prefix - real editors already fuzzy-filter
+  completion items against whatever's typed client-side, so this
+  isn't a workaround, just the same flat/name-based scope this arc
+  chose five times already. Only code actions, plus cross-file
+  resolution for every capability above, remain open;
 - project-wide symbol indexing without slowing single-file checks;
 - debugger protocol support after bytecode/source maps stabilize;
 - ~~generated API documentation~~ — shipped as `lume api-docs`, a
