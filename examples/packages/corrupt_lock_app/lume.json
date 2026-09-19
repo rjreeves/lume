@@ -1,0 +1,7 @@
+{
+  "name": "corrupt_lock_app",
+  "version": "0.1.0",
+  "dependencies": [
+    { "name": "mathutils", "path": "../mathutils" }
+  ]
+}

@@ -718,6 +718,23 @@ foundation — is next.
   message as-is instead of re-deriving or re-wrapping a code (`E0706`
   is retired, not reassigned, consistent with this file's own
   monotonic code numbering);
+- ~~detect a corrupted lock file~~ — investigating package installer
+  edge cases (self-referencing dependencies already worked correctly,
+  caught as `E0709` with no crash) found `loadPackageContext` read and
+  parsed `lume.lock.json` with no shape validation: a present-but-
+  invalid file (bad JSON, or valid JSON missing `resolved`/`direct` as
+  arrays) silently fell back to an empty dependency list rather than
+  reporting a problem. Confirmed live on a real two-package project:
+  three different corruption modes (invalid JSON, an empty `{}`, and a
+  resolved entry missing its own `path`) all produced the same
+  misleading `E0701 cannot read module` pointing at a path that looked
+  like a local-import mistake, with nothing indicating the real cause
+  was the lock file. Only the file's *absence* is meant to mean "no
+  dependencies" (an ordinary project with neither file); fixed by
+  giving `PackageContext` a `problem` field, set when the file exists
+  but doesn't have the shape `lume install` always writes, reported
+  through `loadProgram`'s existing `ModuleLoad.problem` path as a new
+  `E0738`;
 - cache resolved dependencies by content hash — deferred: not
   meaningful yet for local paths (reading a local directory has no
   fetch cost to cache); revisit once packages can come from anywhere
