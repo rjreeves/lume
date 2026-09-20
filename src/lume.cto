@@ -172,6 +172,15 @@ type ArtifactResult = {
   problem: Text
 }
 
+// The cheap-to-check subset of an ArtifactResult - everything
+// compileOrCache needs to decide whether a cache hit is even possible,
+// without paying decodeArtifact's own instruction-body decode cost.
+type ArtifactHeader = {
+  sourceHash: Text
+  buildHash: Text
+  problem: Text
+}
+
 type ModuleLoad = {
   source: Text
   loadedPaths: List<Text>
@@ -5232,18 +5241,36 @@ fn encodeArtifact(source: Text, code: List<Instruction>): Bytes = {
 // instruction - bumped from LBC4's 76-byte header (no build hash field)
 // when this file gained the ability to tell "same source, different
 // compiler build" apart from a genuine cache hit; see compileOrCache.
-fn decodeArtifact(content: Bytes): ArtifactResult = {
-  var code: List<Instruction> = []
-  var problem = ""
-  var sourceHash = ""
-  var buildHash = ""
+//
+// Split out from decodeArtifact so a caller that only needs to check
+// whether a cache hit is even possible (compileOrCache) never pays the
+// cost of decoding the instruction body below - confirmed live
+// (BENCHMARKS.md's "one-function incremental rebuild" checkpoint) that
+// a stale cache used to cost *more* to detect and discard than a
+// genuinely cold build with no cache file at all, since the full
+// instruction list was always decoded before anyone checked the hash.
+fn decodeArtifactHeader(content: Bytes): ArtifactHeader = {
   val contentLength = Bytes.length(content)
-  if contentLength < 140 then { problem = "E0401 invalid bytecode artifact" }
+  if contentLength < 140 then { ArtifactHeader { sourceHash: "", buildHash: "", problem: "E0401 invalid bytecode artifact" } }
   else if not Text.eq(Bytes.toText(Bytes.slice(content, 0, 4)), "LBC5") then {
-    problem = "E0402 unsupported bytecode format"
+    ArtifactHeader { sourceHash: "", buildHash: "", problem: "E0402 unsupported bytecode format" }
   } else {
-    sourceHash = Bytes.toText(Bytes.slice(content, 4, 68))
-    buildHash = Bytes.toText(Bytes.slice(content, 68, 132))
+    ArtifactHeader {
+      sourceHash: Bytes.toText(Bytes.slice(content, 4, 68)),
+      buildHash: Bytes.toText(Bytes.slice(content, 68, 132)),
+      problem: ""
+    }
+  }
+}
+
+fn decodeArtifact(content: Bytes): ArtifactResult = {
+  val header = decodeArtifactHeader(content)
+  if not Text.eq(header.problem, "") then {
+    ArtifactResult { code: [], sourceHash: "", buildHash: "", problem: header.problem }
+  } else {
+    var code: List<Instruction> = []
+    var problem = ""
+    val contentLength = Bytes.length(content)
     val instructionCount = Bytes.readInt64LE(content, 132)
     var cursor = 140
     var index = 0
@@ -5288,8 +5315,8 @@ fn decodeArtifact(content: Bytes): ArtifactResult = {
       index = index + 1
     }
     if Text.eq(problem, "") and cursor != contentLength then { problem = "E0403 trailing bytecode data" }
+    ArtifactResult { code: code, sourceHash: header.sourceHash, buildHash: header.buildHash, problem: problem }
   }
-  ArtifactResult { code: code, sourceHash: sourceHash, buildHash: buildHash, problem: problem }
 }
 
 fn saveArtifact(path: Text, source: Text, code: List<Instruction>): Text [io] = {
@@ -6801,28 +6828,28 @@ fn runLspServer(): Unit [io] = {
 
 fn cachePath(sourcePath: Text): Text = sourcePath ++ ".lbc"
 
+fn compileAndCache(pathToCache: Text, source: Text, hash: Text): ArtifactResult [io] = {
+  val compiled = compileSource(source)
+  if not Text.eq(compiled.problem, "") then { ArtifactResult { code: [], sourceHash: hash, buildHash: compilerBuildHash(), problem: compiled.problem } }
+  else {
+    val saveProblem = saveArtifact(pathToCache, source, compiled.code)
+    ArtifactResult { code: compiled.code, sourceHash: hash, buildHash: compilerBuildHash(), problem: saveProblem }
+  }
+}
+
 fn compileOrCache(path: Text, source: Text): ArtifactResult [io] = {
   val pathToCache = cachePath(path)
   val hash = Crypto.sha256(source)
-  if fileExists(pathToCache) then {
-    val cached = loadArtifact(pathToCache)
-    if Text.eq(cached.problem, "") and Text.eq(cached.sourceHash, hash) and Text.eq(cached.buildHash, compilerBuildHash()) then { cached }
-    else {
-      val compiled = compileSource(source)
-      if not Text.eq(compiled.problem, "") then { ArtifactResult { code: [], sourceHash: hash, buildHash: compilerBuildHash(), problem: compiled.problem } }
-      else {
-        val saveProblem = saveArtifact(pathToCache, source, compiled.code)
-        ArtifactResult { code: compiled.code, sourceHash: hash, buildHash: compilerBuildHash(), problem: saveProblem }
-      }
-    }
-  } else {
-    val compiled = compileSource(source)
-    if not Text.eq(compiled.problem, "") then { ArtifactResult { code: [], sourceHash: hash, buildHash: compilerBuildHash(), problem: compiled.problem } }
-    else {
-      val saveProblem = saveArtifact(pathToCache, source, compiled.code)
-      ArtifactResult { code: compiled.code, sourceHash: hash, buildHash: compilerBuildHash(), problem: saveProblem }
-    }
-  }
+  // Read the cache file's bytes once and check just the cheap header
+  // first - only decode the full instruction body (the expensive part)
+  // once the header itself confirms a hit is possible, so a miss never
+  // pays for decoding instructions it's about to throw away.
+  if let Some(content) = readFileBytes(pathToCache) {
+    val header = decodeArtifactHeader(content)
+    if Text.eq(header.problem, "") and Text.eq(header.sourceHash, hash) and Text.eq(header.buildHash, compilerBuildHash()) then {
+      decodeArtifact(content)
+    } else { compileAndCache(pathToCache, source, hash) }
+  } else { compileAndCache(pathToCache, source, hash) }
 }
 
 fn printTokens(tokens: List<Token>): Unit [io] = {

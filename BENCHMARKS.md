@@ -2041,3 +2041,43 @@ decoding the instruction body, not after), but fixing it is out of
 scope for a measurement task - flagged as a follow-up rather than
 fixed inline here, the same way this file has separated "found via
 benchmarking" from "fixed as its own change" before.
+
+## Fixing the header-before-decode inefficiency - a real, partial win (2026-09-20)
+
+The follow-up flagged in the previous checkpoint. `decodeArtifact` now
+delegates to a new `decodeArtifactHeader` (magic bytes, source hash,
+build hash - no instruction loop) that `compileOrCache` checks first;
+the full instruction-decoding body only runs once the header actually
+confirms a hit is possible. `compileOrCache` was also restructured to
+read the cache file's bytes exactly once (`readFileBytes`, already
+`Option`-returning) rather than checking `fileExists` and then
+separately loading it, and its two previously-duplicated "compile
+fresh and save" branches were factored into one `compileAndCache`
+helper. No format change, no new error codes - a read-path
+optimization only. Full `test.ps1` suite passes unchanged (a
+transient, unrelated `httpbin.org` network flake on the first run
+resolved cleanly on retry - nothing this change touches).
+
+| Benchmark | Cold | Changed (before → after) | Excess over cold (before → after) |
+| --- | ---: | ---: | ---: |
+| Single file (100,000 lines) | 1,070.28 ms | 1,331.74 ms → 1,296.00 ms | +264.7 ms (+25%) → +225.7 ms (+21%) |
+| Multi-module (10 files) | 1,043.57 ms | 1,124.36 ms → 1,106.15 ms | +84.8 ms (+8%) → +62.6 ms (+6%) |
+
+**A real, verified improvement, but a partial one - "changed" still
+costs measurably more than "cold", not close to it as hoped.**
+Re-read `compileOrCache`'s new logic directly to rule out a bug in the
+fix itself before accepting this (confirmed correct: `decodeArtifact`
+is only ever reached from the header-match branch, never from a
+mismatch). The residual cost is a different, shallower inefficiency
+than the one just fixed: `readFileBytes` still reads the *entire*
+stale artifact's bytes into memory before `decodeArtifactHeader` ever
+looks at them - cheap to decode once read, but not cheap to read in
+the first place for a large artifact (a 100,000-line program's
+instruction stream is multi-megabyte). Checked whether Certo exposes a
+way to read only a fixed byte range from a file rather than the whole
+thing - it doesn't (`readBytes(n)` exists, but reads from the LSP
+stdin stream for `Content-Length` framing, not from an arbitrary file
+by path). Fully closing this gap would need a new Certo primitive, the
+same "blocked on an upstream primitive" pattern several other items in
+this file and `ROADMAP.md` already carry - flagged as a further
+follow-up rather than attempted here.
