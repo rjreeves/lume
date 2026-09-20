@@ -1102,15 +1102,38 @@ things rather than writing the obvious thing.
   Revisit once packages can come from somewhere other than the local
   filesystem, the same trigger condition already on record for the
   content-hash-caching item.
-  One real, narrower gap exists independently of signing, confirmed
+  ~~One real, narrower gap exists independently of signing, confirmed
   live: the lock file records each dependency's *declared* metadata
   but never a hash of its actual `.lume` source files, so `lume
   install --check` catches a manifest that drifted but not source
-  files quietly hand-edited without re-running install. Left open
-  rather than bundled into this item - it's a drift-detection
-  improvement to the existing local-path package system, not signing
-  or checksum verification in the sense this bullet means, and doesn't
-  need a registry to be worth doing on its own;
+  files quietly hand-edited without re-running install.~~ Shipped:
+  each `lume.lock.json` dependency entry now carries a `sourceHash`
+  field (`hashPackageSource`/`computeLockContent`, `:5704`) - every
+  `.lume` file under the dependency's own directory, walked recursively
+  (`walkDir`, matching how a module can live at any depth under a
+  dependency's root, not just its top level), sorted by path so the
+  hash doesn't depend on directory-listing order, each entry prefixed
+  with its path relative to the dependency's own directory (so a rename
+  is also caught, not just a content edit) and `Crypto.sha256`'d -
+  reusing the same hashing convention the bytecode cache already uses.
+  Needed writing a manual byte-by-byte comparison (`textLessThan`) to
+  sort the file list: Certo's own `<`/`<=` type-checks on two `Text`
+  operands (`infer_expr.rs` only unifies both operand types, doesn't
+  require them numeric) but its codegen falls back to a raw C `<` for
+  any non-`Decimal` type (`emit_mir.rs`), which for `Text`'s C
+  representation would be a pointer comparison, not a content one - not
+  safe to use for a stable sort. `installPackages`'s existing `--check`
+  comparison is an exact string match against the whole recomputed lock
+  JSON, so this migrated for free: no format-version bump needed, an
+  old lock file without `sourceHash` simply reports E0739 on the next
+  `--check` like any other out-of-date lock file. Verified live: hand-
+  editing a dependency's `.lume` file with its manifest left untouched
+  now correctly fails `--check`, where before this change it silently
+  passed. This is a drift-detection improvement to the existing
+  local-path package system, not signing or checksum verification in
+  the sense this bullet means, and doesn't need a registry to be worth
+  doing on its own - the signing/checksum-verification item itself
+  remains deferred, unaffected by this;
 - ~~a stable bytecode version and compatibility policy~~ — the
   version-*format* half was already covered (`LBC4`'s own magic
   number), but investigating the `.lbc` cache directly found a real,

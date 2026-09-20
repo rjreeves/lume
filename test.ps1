@@ -1107,7 +1107,7 @@ $packagesAppDir = Join-Path $PSScriptRoot 'examples\packages\app'
 $installOutput = & $Lume install $packagesAppDir
 if ($LASTEXITCODE -ne 0) { throw "lume install exited $LASTEXITCODE" }
 $lockContent = Get-Content -LiteralPath (Join-Path $packagesAppDir 'lume.lock.json') -Raw
-Assert-Equal 'package install writes lock file' '{"resolved":[{"name":"mathutils","path":"../mathutils","version":"0.1.0","dependencies":["formatting"]},{"name":"formatting","path":"../formatting","version":"0.1.0","dependencies":[]}],"direct":["mathutils","formatting"]}' $lockContent.Trim()
+Assert-Equal 'package install writes lock file' '{"resolved":[{"name":"mathutils","path":"../mathutils","version":"0.1.0","sourceHash":"6b53f84c580e3285c01ccfa13b07a2f7a8592bba89325bb4120ccaeb2ab484ea","dependencies":["formatting"]},{"name":"formatting","path":"../formatting","version":"0.1.0","sourceHash":"4a58d481645fa9d0403919f63b051df4cc63fe1a30395b8be816d3387159301c","dependencies":[]}],"direct":["mathutils","formatting"]}' $lockContent.Trim()
 
 $packagesRun = & $Lume run (Join-Path $packagesAppDir 'app.lume')
 if ($LASTEXITCODE -ne 0) { throw "package app example exited $LASTEXITCODE" }
@@ -1139,6 +1139,36 @@ $checkMissing = & $Lume install $missingLockDir --check 2>&1
 if ($LASTEXITCODE -ne 1) { throw "install --check with no lock file at all should exit 1" }
 Assert-Equal 'install --check rejects a missing lock file' "E0739 lock file ``$missingLockDir/lume.lock.json`` is out of date with ``$missingLockDir/lume.json``" ($checkMissing -join "`n")
 Remove-Item -LiteralPath $missingLockDir -Recurse -Force
+
+# `install --check`'s lock comparison also has to catch a dependency's own
+# `.lume` source being hand-edited after the lock file was written, even
+# though the dependency's manifest (name/version) never changed - a
+# manifest-only comparison can't see that, only a hash of the dependency's
+# actual source can (lume.lock.json's per-dependency `sourceHash` field).
+# Uses a private copy of mathutils, not the shared examples\packages\
+# mathutils fixture other tests depend on, since this test needs to
+# actually mutate a dependency's source file on disk.
+$driftDepDir = Join-Path $PSScriptRoot 'examples\packages\source_drift_dep'
+if (Test-Path -LiteralPath $driftDepDir) { Remove-Item -LiteralPath $driftDepDir -Recurse -Force }
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'examples\packages\mathutils') -Destination $driftDepDir -Recurse
+$driftAppDir = Join-Path $PSScriptRoot 'examples\packages\source_drift_app'
+if (Test-Path -LiteralPath $driftAppDir) { Remove-Item -LiteralPath $driftAppDir -Recurse -Force }
+New-Item -ItemType Directory -Path $driftAppDir | Out-Null
+Set-Content -LiteralPath (Join-Path $driftAppDir 'lume.json') -Value '{"name":"source_drift_app","version":"0.1.0","dependencies":[{"name":"mathutils","path":"../source_drift_dep"}]}' -NoNewline
+
+$driftInstall = & $Lume install $driftAppDir
+if ($LASTEXITCODE -ne 0) { throw "source drift app install exited $LASTEXITCODE" }
+$driftCheckClean = & $Lume install $driftAppDir --check
+if ($LASTEXITCODE -ne 0) { throw "install --check on an untouched dependency should exit 0" }
+Assert-Equal 'install --check accepts a dependency whose source is untouched' 'ok' ($driftCheckClean -join "`n")
+
+Add-Content -LiteralPath (Join-Path $driftDepDir 'ops.lume') -Value "`npub fn ops.cube(value: int) -> int {`n  return value * value * value`n}"
+$driftCheckDirty = & $Lume install $driftAppDir --check 2>&1
+if ($LASTEXITCODE -ne 1) { throw "install --check on a hand-edited dependency source file should exit 1" }
+Assert-Equal 'install --check catches a dependency source file edited without re-running install' "E0739 lock file ``$driftAppDir/lume.lock.json`` is out of date with ``$driftAppDir/lume.json``" ($driftCheckDirty -join "`n")
+
+Remove-Item -LiteralPath $driftAppDir -Recurse -Force
+Remove-Item -LiteralPath $driftDepDir -Recurse -Force
 
 $cyclicOutput = & $Lume install (Join-Path $PSScriptRoot 'examples\packages\cyclic-a') 2>&1
 if ($LASTEXITCODE -ne 1) { throw "cyclic package install should exit 1" }
