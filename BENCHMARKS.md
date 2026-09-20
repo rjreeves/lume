@@ -1882,3 +1882,37 @@ escape at the start, an escape at the end, back-to-back escapes, a
 single character, and an empty string - all matching hand-computed
 expected lengths exactly. `scanString`'s signature, its single call
 site in `lex()`, and its escape-handling logic are all unchanged.
+
+## Health check after the LSP developer-experience arc (2026-09-20)
+
+No compiler performance work landed in this checkpoint - a routine
+re-run of the full fresh-process suite after four LSP-only PRs
+(`textDocument/codeAction`'s two follow-ups, "did you mean" and "add
+missing `use` import", plus `textDocument/documentSymbol` and
+`workspace/symbol`), none of which touch `check`/`run`/`build`'s own
+code path at all (`lspHandleMessage` and everything it calls are only
+ever reached from `lume lsp`). Run to confirm that's actually true
+rather than assumed, and to have a fresh baseline on record after the
+string-literal-scanning fix above (which never got its own end-to-end
+10,000-line numbers, since it targets long string literals neither
+generated benchmark file contains).
+
+| Benchmark | Mean | Lines/second | Target | Result |
+| --- | ---: | ---: | ---: | --- |
+| Trivial (`functions.lume`, `lume check`, 100 iterations) | 9.22 ms | - | - | consistent with the ~9 ms process-startup floor noted above |
+| Trivial 10,000-line (`benchmark-10000.ps1`, 20 iterations) | 28.10 ms | 355,872 | 10,000 | `TargetMet: True`, ~36x over target |
+| Feature-mix (`benchmark-10000-features.ps1`, 30 fresh-process samples) | 107.92 ms (median 107.49, p95 113.73, stddev 3.08) | 92,666 | 10,000 | `TargetMet: True`, ~9.3x over target |
+| Generic dispatch (`benchmark-10000-generic-dispatch.ps1`, 9,978 call sites, 20 iterations) | 71.10 ms | 140,647 | 10,000 | `TargetMet: True`, ~14x over target |
+
+The trivial and feature-mix figures sit within normal run-to-run noise
+of the previous checkpoint's own post-bucket-hash-rewrite numbers
+(25.75 ms / 388,350 lines-per-second and 109.23 ms / 91,554
+lines-per-second respectively) - trivial is about 9% slower this run,
+feature-mix about 1% faster, neither a meaningful regression or
+improvement. Confirms the LSP arc's own code additions (several new
+top-level functions in `lume.cto`, none reachable from a normal
+compile) carry no measurable compile-time cost, as expected from a
+purely additive, dead-code-for-this-path change. No dedicated
+generic-dispatch figure had been recorded in this table's format
+before, so this run establishes that baseline going forward rather
+than reporting a delta.
