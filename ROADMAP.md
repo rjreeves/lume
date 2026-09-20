@@ -1015,10 +1015,19 @@ run against the real compiler, not assumed:
   result operation requires result value`. `Option<T>` has no such
   split — every source of an `Option` (`list.find`, `map.get`, or a
   hand-declared `-> Option<T>` function) interoperates freely with
-  `match`. This asymmetry is confirmed, not yet designed around or
-  fixed — filing it here since a consumer (this manual, and presumably
-  any AI generating Lume from a prompt) needs to know it exists, even
-  before deciding whether the two conventions should be unified;
+  `match`. ~~This asymmetry is confirmed, not yet designed around or
+  fixed~~ — a bridge shipped rather than a full unification: full
+  unification would mean rewriting all 36 existing call sites that
+  produce the shorthand shape plus `result.is_ok`/`value`/`error`'s own
+  dispatch to use the enum representation directly, a much larger,
+  higher-risk change than the gap actually requires. `result.to_result(x):
+  Result<T, E>` lifts a builtin's own shorthand result into a real,
+  matchable `Result<T, E>` value on demand - confirmed live it can be
+  `match`ed and passed where a `Result<T, E>`-typed parameter is
+  expected. One-directional (shorthand → generic only) and leaves every
+  existing `result.*` builtin and call site untouched; the split itself
+  still exists by design, now with an escape hatch where it actually
+  blocked something;
 - **a function call's return value cannot have a field accessed
   directly** — `result.value(decoded).name` is a syntax error (`E0206
   expected )`); the call's result must be bound to a `let` first, then

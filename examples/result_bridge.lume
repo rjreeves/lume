@@ -1,0 +1,12 @@
+fn describe(outcome: Result<str, str>) -> str {
+  return match outcome {
+    Ok(value) => "ok: " + value
+    Err(error) => "err: " + error
+  }
+}
+
+fn main(args: [str]) -> int {
+  let outcome = fs.try_read_text(args.get(0))
+  print(describe(result.to_result(outcome)))
+  return 0
+}

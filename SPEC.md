@@ -363,6 +363,29 @@ This shape is inspected with `match { Ok(value) => ... Err(error) => ... }`
 — the `result.*` builtins reject it outright (`result operation requires
 result value`) because they only recognize the shorthand shape above.
 
+`result.to_result(x)` bridges the shorthand shape into the fully generic
+one, so a builtin's own result can be `match`ed or passed where a
+`Result<T, E>`-typed parameter is expected:
+
+```lume
+fn describe(outcome: Result<str, str>) -> str {
+  return match outcome {
+    Ok(value) => "ok: " + value
+    Err(error) => "err: " + error
+  }
+}
+
+fn main(args: [str]) -> int {
+  print(describe(result.to_result(fs.try_read_text(args.get(0)))))
+  return 0
+}
+```
+
+This is one-directional (shorthand → generic only) and does not remove
+the split above — it's an escape hatch for the one place the split
+actually blocks something (matching, or passing to a `Result<T, E>`-typed
+signature), not a unification of the two representations.
+
 `?` (and the compatibility spelling `!`) propagates an error out of the
 current function immediately in both shapes, as long as the enclosing
 function's own error type matches:

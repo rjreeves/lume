@@ -1,0 +1,4 @@
+fn main(args: [str]) -> int {
+  let bridged = result.to_result("just a string")
+  return 0
+}
