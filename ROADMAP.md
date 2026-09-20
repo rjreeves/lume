@@ -1242,9 +1242,40 @@ things rather than writing the obvious thing.
   per file rather than guessing - each already disambiguated by its own
   module name. Verified live the same way as `fn main`'s own fix
   (applying the edit produces source that actually compiles), plus the
-  insertion-position and multiple-match branches specifically. A "did
-  you mean" fix for a genuine typo still needs real string-similarity
-  logic and remains the one open follow-up here.
+  insertion-position and multiple-match branches specifically. "Did you
+  mean" closes out this arc's last open follow-up, scoped to `E0216`
+  only (not `E0210 undefined binding` - a bare-identifier typo is
+  usually a local `val`/`var`/parameter mistake, and this compiler has
+  no index of local-binding names at all, only file-level declarations;
+  building one would mean real position-aware scope tracking, a
+  materially bigger feature than this slice). Candidate pool is the
+  same flat one `add-import`/`completion` already use - file-local `fn`
+  declarations plus `builtinNames()` - scored by a new
+  `lspLevenshtein` edit-distance helper (space-optimized DP; this
+  codebase has no `List.set`, so each row is built fresh via
+  `List.push` rather than mutated in place, the same accumulate-then-
+  push idiom used throughout this file) against a length-scaled
+  threshold (`lspDidYouMeanThreshold`: 1 edit up to 3 characters, 2 up
+  to 6, 3 beyond). The closest candidate under threshold becomes
+  "Change to `<name>`"; ties keep whichever was found first, same
+  philosophy `lspFindDeclaration` already uses. A published diagnostic's
+  own range never carries the real column (`lspPublishDiagnostics`
+  always reports `character: 0`) - `lspTypoRange` relocates the actual
+  token by re-scanning the diagnostic's own (exact) line for a
+  name-kind token matching the misspelled text, since the compiler only
+  ever reports one error per file. Can coexist with an add-import
+  action on the same diagnostic (a real typo of a builtin and a
+  coincidentally-similar sibling function both being possible) - both
+  are offered, not one preferred over the other. Verified live the same
+  way as every other fix here (a misspelled builtin and a misspelled
+  file-local function, both edits applied and actually compiling), plus
+  that no close match returns zero actions rather than a wild guess.
+  One minor Certo finding along the way, not upstreamed (trivially
+  avoided rather than a real bug): a Lume-level function literally
+  named `minInt` collided with an internal `certo_min_int` symbol
+  Certo's own codegen already emits, confirmed live via the C
+  compiler's own "redefinition" error - renamed to `lspMinInt` instead
+  of pursuing it further upstream.
 - project-wide symbol indexing without slowing single-file checks;
 - debugger protocol support after bytecode/source maps stabilize;
 - ~~generated API documentation~~ — shipped as `lume api-docs`, a

@@ -1575,6 +1575,70 @@ try {
   $addImportAmbiguousTitles = $addImportAmbiguousResp.result | ForEach-Object { $_.title } | Sort-Object
   Assert-Equal 'ambiguous add-use-import titles name each distinct sibling' 'Add `use alpha`,Add `use beta`' ($addImportAmbiguousTitles -join ',')
 
+  # code actions: "did you mean" - a genuine typo of a known name, not a
+  # missing import. Candidate pool is builtins plus file-local fn
+  # declarations (the same flat pool completion/add-import already use),
+  # scored by edit distance. Applying the edit must actually compile, same
+  # bar as every other fix in this arc.
+  $dymBuiltinUri = 'file:///dym_builtin.lume'
+  $dymBuiltinSource = "fn main(args: [str]) -> int {`n  print(str.form_int(1))`n  return 0`n}`n"
+  $didOpenDymBuiltin = @{ jsonrpc = '2.0'; method = 'textDocument/didOpen'; params = @{ textDocument = @{ uri = $dymBuiltinUri; text = $dymBuiltinSource } } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $didOpenDymBuiltin
+  $dymBuiltinDiag = Read-LspMessage $lspProc | ConvertFrom-Json
+  Assert-Equal 'lsp reports unknown function for the misspelled builtin' 'E0216' $dymBuiltinDiag.params.diagnostics[0].code
+
+  $dymBuiltinReq = @{ jsonrpc = '2.0'; id = 31; method = 'textDocument/codeAction'; params = @{ textDocument = @{ uri = $dymBuiltinUri }; range = @{ start = @{ line = 1; character = 0 }; end = @{ line = 1; character = 0 } }; context = @{ diagnostics = $dymBuiltinDiag.params.diagnostics } } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $dymBuiltinReq
+  $dymBuiltinResp = Read-LspMessage $lspProc | ConvertFrom-Json
+  Assert-Equal 'did-you-mean offers exactly one fix for a misspelled builtin' '1' "$($dymBuiltinResp.result.Count)"
+  Assert-Equal 'did-you-mean title names the closest builtin' 'Change to `str.from_int`' $dymBuiltinResp.result[0].title
+  Assert-Equal 'did-you-mean kind is quickfix' 'quickfix' $dymBuiltinResp.result[0].kind
+
+  $dymBuiltinEdit = $dymBuiltinResp.result[0].edit.changes.$dymBuiltinUri[0]
+  Assert-Equal 'did-you-mean edit targets the misspelled token, not column 0' '8' "$($dymBuiltinEdit.range.start.character)"
+  $dymBuiltinFixedSource = $dymBuiltinSource.Substring(0, [int]$dymBuiltinSource.IndexOf('str.form_int')) + $dymBuiltinEdit.newText + $dymBuiltinSource.Substring([int]$dymBuiltinSource.IndexOf('str.form_int') + 'str.form_int'.Length)
+  $dymBuiltinFixedPath = Join-Path $env:TEMP 'code_action_dym_builtin_fixed_temp.lume'
+  Set-Content -LiteralPath $dymBuiltinFixedPath -Value $dymBuiltinFixedSource -NoNewline
+  try {
+    & $Lume check $dymBuiltinFixedPath | Out-Null
+    Assert-Equal 'applying the did-you-mean builtin edit produces source that compiles' '0' "$LASTEXITCODE"
+  } finally {
+    Remove-Item -LiteralPath $dymBuiltinFixedPath -ErrorAction SilentlyContinue
+  }
+
+  $dymLocalUri = 'file:///dym_local.lume'
+  $dymLocalSource = "fn add_numbers(a: int, b: int) -> int {`n  return a + b`n}`n`nfn main(args: [str]) -> int {`n  print(str.from_int(add_numbrs(1, 2)))`n  return 0`n}`n"
+  $didOpenDymLocal = @{ jsonrpc = '2.0'; method = 'textDocument/didOpen'; params = @{ textDocument = @{ uri = $dymLocalUri; text = $dymLocalSource } } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $didOpenDymLocal
+  $dymLocalDiag = Read-LspMessage $lspProc | ConvertFrom-Json
+  $dymLocalReq = @{ jsonrpc = '2.0'; id = 32; method = 'textDocument/codeAction'; params = @{ textDocument = @{ uri = $dymLocalUri }; range = @{ start = @{ line = 5; character = 0 }; end = @{ line = 5; character = 0 } }; context = @{ diagnostics = $dymLocalDiag.params.diagnostics } } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $dymLocalReq
+  $dymLocalResp = Read-LspMessage $lspProc | ConvertFrom-Json
+  Assert-Equal 'did-you-mean offers exactly one fix for a misspelled file-local function' '1' "$($dymLocalResp.result.Count)"
+  Assert-Equal 'did-you-mean title names the closest file-local function' 'Change to `add_numbers`' $dymLocalResp.result[0].title
+
+  $dymLocalEdit = $dymLocalResp.result[0].edit.changes.$dymLocalUri[0]
+  $dymLocalFixedSource = $dymLocalSource -replace 'add_numbrs', $dymLocalEdit.newText
+  $dymLocalFixedPath = Join-Path $env:TEMP 'code_action_dym_local_fixed_temp.lume'
+  Set-Content -LiteralPath $dymLocalFixedPath -Value $dymLocalFixedSource -NoNewline
+  try {
+    & $Lume check $dymLocalFixedPath | Out-Null
+    Assert-Equal 'applying the did-you-mean local-function edit produces source that compiles' '0' "$LASTEXITCODE"
+  } finally {
+    Remove-Item -LiteralPath $dymLocalFixedPath -ErrorAction SilentlyContinue
+  }
+
+  # No close match at all must return zero actions, not a wild guess.
+  $dymNoneUri = 'file:///dym_none.lume'
+  $dymNoneSource = "fn main(args: [str]) -> int {`n  print(str.from_int(zzzqqqxxxwwwnoclose()))`n  return 0`n}`n"
+  $didOpenDymNone = @{ jsonrpc = '2.0'; method = 'textDocument/didOpen'; params = @{ textDocument = @{ uri = $dymNoneUri; text = $dymNoneSource } } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $didOpenDymNone
+  $dymNoneDiag = Read-LspMessage $lspProc | ConvertFrom-Json
+  $dymNoneReq = @{ jsonrpc = '2.0'; id = 33; method = 'textDocument/codeAction'; params = @{ textDocument = @{ uri = $dymNoneUri }; range = @{ start = @{ line = 1; character = 0 }; end = @{ line = 1; character = 0 } }; context = @{ diagnostics = $dymNoneDiag.params.diagnostics } } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $dymNoneReq
+  $dymNoneResp = Read-LspMessage $lspProc | ConvertFrom-Json
+  Assert-Equal 'did-you-mean returns zero actions when nothing is close enough' '0' "$($dymNoneResp.result.Count)"
+
   # completion: no scope resolution - every builtin plus every fn/type/enum
   # declared in the open document, unfiltered by cursor position or partial
   # word. Spot checks, not an exhaustive enumeration of every builtin (the

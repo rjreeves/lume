@@ -6384,6 +6384,132 @@ fn lspSiblingUseCandidates(documents: LspDocuments, currentPath: Text, currentTe
   actions
 }
 
+// Named lspMinInt, not minInt - a plain "minInt" collides at the
+// generated-C level with an internal certo_min_int symbol Certo's own
+// codegen already emits, confirmed live ("redefinition of
+// 'certo_min_int'" from the C compiler) before this rename.
+fn lspMinInt(a: Int, b: Int): Int = if a < b then a else b
+
+// Classic space-optimized DP edit distance. No List.set exists in this
+// codebase (only push/getOrPanic/concat), so each row is built fresh via
+// List.push in a loop instead of mutated in place - the same
+// accumulate-via-var-then-push idiom used everywhere else in this file
+// (importedModules and friends). A cold path (runs at most a few dozen
+// times per code-action request), so plain charAt-based comparison is
+// fine - no need for the Bytes.byteAt hot-path rewrite lex() itself
+// needed.
+fn lspLevenshtein(a: Text, b: Text): Int = {
+  val aLen = Text.len(a)
+  val bLen = Text.len(b)
+  var prevRow: List<Int> = []
+  var j = 0
+  while j <= bLen {
+    prevRow = List.push(prevRow, j)
+    j = j + 1
+  }
+  var i = 1
+  while i <= aLen {
+    var currRow: List<Int> = [i]
+    val aChar = charAt(a, i - 1)
+    var k = 1
+    while k <= bLen {
+      val cost = if Text.eq(aChar, charAt(b, k - 1)) then 0 else 1
+      val deletion = List.getOrPanic(prevRow, k) + 1
+      val insertion = List.getOrPanic(currRow, k - 1) + 1
+      val substitution = List.getOrPanic(prevRow, k - 1) + cost
+      currRow = List.push(currRow, lspMinInt(lspMinInt(deletion, insertion), substitution))
+      k = k + 1
+    }
+    prevRow = currRow
+    i = i + 1
+  }
+  List.getOrPanic(prevRow, bLen)
+}
+
+// A short name tolerates fewer edits before a "close" match stops
+// meaning anything - the same degrading-threshold shape common typo
+// tools (rustc, ESLint) use, not one flat constant for every length.
+fn lspDidYouMeanThreshold(len: Int): Int = {
+  if len <= 3 then 1 else if len <= 6 then 2 else 3
+}
+
+// First-match-wins on a tie (a candidate only replaces the current best
+// on a strictly lower distance) - same philosophy lspFindDeclaration
+// already uses for name collisions. "" (this file's usual empty
+// sentinel) if nothing in `candidates` is within threshold.
+fn lspClosestMatch(candidates: List<Text>, name: Text): Text = {
+  val threshold = lspDidYouMeanThreshold(Text.len(name))
+  var best = ""
+  var bestDistance = threshold + 1
+  for candidate in candidates {
+    if not Text.eq(candidate, name) then {
+      val distance = lspLevenshtein(candidate, name)
+      if distance <= threshold and distance < bestDistance then {
+        best = candidate
+        bestDistance = distance
+      }
+    }
+  }
+  best
+}
+
+fn lspFunctionDeclarationNames(tokens: List<Token>): List<Text> = {
+  var names: List<Text> = []
+  for site in lspDeclarationSites(tokens) {
+    if Text.eq(site.keyword, "fn") then { names = List.push(names, site.name.text) }
+  }
+  names
+}
+
+// The diagnostic's own range doesn't carry the real column -
+// lspPublishDiagnostics always reports character: 0 - so the typo's
+// exact token has to be relocated here. The compile pipeline only ever
+// reports one error, so `line` is exact and unambiguous; scanning for
+// the first name-kind token on that line matching `name` is enough,
+// no need to disambiguate multiple occurrences. Defaults to column 0
+// if somehow not found (defensive, matches this file's own style
+// elsewhere), never panics.
+fn lspTypoRange(tokens: List<Token>, line: Int, name: Text): JsonValue = {
+  var index = 0
+  var found = false
+  var column = 1
+  while not found and not Text.eq(at(tokens, index).kind, "eof") {
+    val current = at(tokens, index)
+    if Text.eq(current.kind, "name") and current.line == line and Text.eq(current.text, name) then {
+      found = true
+      column = current.column
+    }
+    index = index + 1
+  }
+  val startPos = Json.object()
+  JsonValue.set(startPos, "line", Json.int(line - 1))
+  JsonValue.set(startPos, "character", Json.int(column - 1))
+  val endPos = Json.object()
+  JsonValue.set(endPos, "line", Json.int(line - 1))
+  JsonValue.set(endPos, "character", Json.int(column - 1 + Text.len(name)))
+  val range = Json.object()
+  JsonValue.set(range, "start", startPos)
+  JsonValue.set(range, "end", endPos)
+  range
+}
+
+fn lspDidYouMeanCodeAction(uri: Text, range: JsonValue, suggestion: Text): JsonValue = {
+  val edit = Json.object()
+  JsonValue.set(edit, "range", range)
+  JsonValue.set(edit, "newText", Json.string(suggestion))
+  val edits = Json.array()
+  JsonValue.push(edits, edit)
+  val changes = Json.object()
+  JsonValue.set(changes, uri, edits)
+  val workspaceEdit = Json.object()
+  JsonValue.set(workspaceEdit, "changes", changes)
+  val action = Json.object()
+  JsonValue.set(action, "title", Json.string("Change to `" ++ suggestion ++ "`"))
+  JsonValue.set(action, "kind", Json.string("quickfix"))
+  JsonValue.set(action, "edit", workspaceEdit)
+  action
+}
+
 fn lspHandleCodeAction(id: JsonValue, params: JsonValue, documents: LspDocuments): Unit [io] = {
   val textDocument = JsonValue.get(params, "textDocument")
   val uri = JsonValue.asText(JsonValue.get(textDocument, "uri"))
@@ -6403,9 +6529,18 @@ fn lspHandleCodeAction(id: JsonValue, params: JsonValue, documents: LspDocuments
       } else if Text.eq(code, "E0216") then {
         val name = lspBacktickName(JsonValue.asText(JsonValue.get(diagnostic, "message")))
         if not Text.eq(name, "") then {
-          val insertPos = lspUseInsertPosition(lex(text))
+          val tokens = lex(text)
+          val insertPos = lspUseInsertPosition(tokens)
           for action in lspSiblingUseCandidates(documents, currentPath, text, name, uri, insertPos) {
             JsonValue.push(actions, action)
+          }
+          val candidates = List.concat(lspFunctionDeclarationNames(tokens), builtinNames())
+          val suggestion = lspClosestMatch(candidates, name)
+          if not Text.eq(suggestion, "") then {
+            val diagStart = JsonValue.get(JsonValue.get(diagnostic, "range"), "start")
+            val diagLine = JsonValue.asInt(JsonValue.get(diagStart, "line")) + 1
+            val range = lspTypoRange(tokens, diagLine, name)
+            JsonValue.push(actions, lspDidYouMeanCodeAction(uri, range, suggestion))
           }
         }
       }
