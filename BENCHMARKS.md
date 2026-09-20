@@ -2237,3 +2237,78 @@ cache-miss path. Not chased further here, per this investigation's own
 scope - a real, reproducible, but small and now well-isolated
 oddity, not a correctness problem, and not worth an open-ended
 investigation without a third concrete hypothesis to test.
+
+## Persistent compiler-process measurements (2026-09-20)
+
+This file's own methodology says "Exclude process startup only in a
+separately labelled persistent-daemon test" - a promise never actually
+delivered on. Every benchmark here either times a fresh `lume.exe`
+process per sample (startup included) or, historically, excluded
+startup unconditionally via `lume benchmark`'s in-process loop without
+ever labelling that as the daemon-mode test the methodology carves out
+(the "Fixing `lume benchmark`'s out-of-memory crash" checkpoint already
+flagged this as a contract violation in passing). This checkpoint is
+that labelled test, via a new `benchmark-persistent-process.ps1`.
+
+Lume has no real daemon - no persistent process serving distinct
+requests over IPC, and building one is a separate, much larger feature
+than this roadmap item asks for. `lume benchmark <path> <N>` (unchanged,
+`src/lume.cto:7425`) is the only same-process, repeated-compile proxy
+that exists: it calls `compileSource` on already-loaded source text `N`
+times in one process without ever restarting it. Its known limitation,
+confirmed in the out-of-memory checkpoint: Certo has no garbage
+collector, so every iteration's Tokens/Instructions/strings are
+retained for the process's lifetime (~110-140 MB/iteration on the
+feature-mix file). This raised a real question worth answering rather
+than assuming away: does per-iteration compile time drift upward as
+that retained heap grows?
+
+**Method**: for each of the two standard 10,000-line files (trivial,
+feature-mix), measure (a) a fresh-process mean over 10 samples (`lume
+check`, timing included from process launch, mirroring every other
+fresh-process benchmark in this file) and (b) a persistent-process
+sweep - `lume benchmark <path> <N>` for `N` in `{1, 5, 20}`, each `N`
+run in its own fresh `lume.exe` invocation (so retained memory is
+bounded to within one `N`, not accumulated across the whole sweep),
+averaged over 8 repeats per `N` after 3 repeats proved too noisy on the
+trivial file's small absolute magnitudes to read a stable drift signal.
+20 iterations retains ~2.2-2.8 GB on the feature-mix file per the
+out-of-memory checkpoint's own measured rate - comfortably inside this
+machine's headroom, not close to the crash threshold.
+
+| Benchmark | Fresh-process mean | Persistent mean (N=1) | Persistent mean (N=20) | Drift | Startup+IO gap |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Trivial 10,000-line | 45.24 ms | 27.38 ms | 26.06 ms | -4.8% | 17.87 ms |
+| Feature-mix 10,000-line | 108.97 ms | 72.38 ms | 73.06 ms | +0.9% | 36.59 ms |
+
+**No meaningful drift up to N=20.** Across five separate runs while
+tuning the repeat count (3 and 8 repeats/N, several independent
+invocations), feature-mix stayed consistently small and centered near
+zero (-6.8%, -6.3%, -4.5%, -3.2%, +0.9%); trivial was noisier at low
+repeat counts (as low as -16.1%, as high as +28.6% with only 3 repeats)
+but settled to small single-digit swings once repeats reached 8
+(+6.7%, +4.7%, -4.8%) - consistent with sampling noise on a workload
+whose absolute per-iteration time is small enough (tens of ms) for OS
+scheduling jitter to dominate a handful of samples, not with a
+systematic slowdown from the retained heap. At this scale (≤20
+iterations, ≤~2.8 GB retained), the known memory leak does not manifest
+as measurable per-iteration cost growth - it is a real, unbounded
+correctness/scalability limitation for a genuinely long-running process
+(confirmed separately by the out-of-memory checkpoint), just not one
+that shows up in compile *latency* within this bounded range.
+
+**The startup+IO gap is real and substantial**: 17.87 ms and 36.59 ms
+respectively - named that way, not "process startup," because `lume
+benchmark`'s loop times `compileSource` alone on source text already
+read into memory before the loop starts, so the gap is process launch
++ one disk read + CLI dispatch combined, not OS process startup in
+isolation. Notably larger than the ~9 ms process-startup floor this
+file already established via the tiny `functions.lume` probe (see the
+"Health check after the LSP developer-experience arc" checkpoint) -
+expected, since that floor was measured on a file small enough that
+disk I/O and dispatch cost dominate completely, while a 10,000-line
+file's read cost is itself no longer negligible.
+
+`benchmark-persistent-process.ps1` is a same-process repeated-compile
+proxy, not a real request-serving daemon - Lume has no IPC or persistent
+server, and this checkpoint doesn't claim to have measured one.
