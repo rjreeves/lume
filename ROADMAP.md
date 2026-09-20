@@ -1028,22 +1028,40 @@ run against the real compiler, not assumed:
   existing `result.*` builtin and call site untouched; the split itself
   still exists by design, now with an escape hatch where it actually
   blocked something;
-- **a function call's return value cannot have a field accessed
-  directly** — `result.value(decoded).name` is a syntax error (`E0206
-  expected )`); the call's result must be bound to a `let` first, then
-  the field read off that binding. **Scope corrected after further
-  investigation**: this is not a small, bounded parser fix. The lexer
-  treats a whole dotted name (`user.name`, `str.len`, `Result.Ok`) as
-  one identifier token (`isAlphaNumeric` includes `.`); every dotted
-  access in this compiler is a string-split on that one token's text
-  (`beforeDot`/`afterDot`/`Text.split(..., ".")`), not a recursive
-  postfix-application grammar production. `)` ends that token, so
-  there is no mechanism at all for attaching a trailing `.field` onto
-  an arbitrary expression (a call, a parenthesized expression, and so
-  on) — real support would mean inventing a genuine postfix-parsing
-  loop and changing how every existing dotted form (`str.len`,
-  `list.map`, `Result.Ok`, `User.from_json`, namespaced builtins in
-  general) is recognized, not a quick, isolated addition.
+- ~~a function call's return value cannot have a field accessed
+  directly~~ — `result.value(decoded).name` used to be a syntax error
+  (`E0206 expected )`); the call's result had to be bound to a `let`
+  first. **The earlier "scope corrected" note above overestimated the
+  fix's size** — it assumed real support would mean rebuilding how
+  every dotted form (`str.len`, `list.map`, `Result.Ok`, namespaced
+  builtins) is recognized, since the lexer folds a whole dotted path
+  into one identifier token and 19 call sites split that token's text
+  on `.`. Investigating further (reading the lexer's own character
+  classification and the runtime `get_field` instruction directly)
+  found the real gap was much narrower: identifier scanning only
+  *starts* on a letter, and its own inner loop always consumes every
+  alphanumeric-or-dot character before returning control - so a
+  *standalone* `.` (one the lexer's main dispatch loop actually sees)
+  can only occur right after something that isn't a name at all (`)`,
+  `]`, a literal), a case the existing dotted-identifier mechanism
+  never touches. Two small, additive, non-conflicting pieces closed
+  it: the lexer now recognizes a standalone `.` as its own symbol
+  token (previously `E0001 unexpected character`), and `parsePrimary`
+  gained one more postfix stage - after the existing `?`/`!`
+  propagation check - looping on `.name` and emitting the exact same
+  `get_field` instruction `loadPath` already emits for `user.name`.
+  `get_field`'s own type-checking and runtime already operate
+  generically on whatever's on the stack regardless of how it got
+  there, so nothing else needed to change - not the 19 existing
+  `beforeDot`/`afterDot` call sites, not the type-checker, not
+  codegen. Scoped to field access only (`.name`, no `.method(...)`
+  calls - this language has no OOP-style methods, only static
+  `T.method(value)` protocol dispatch, a separate feature chaining
+  would need its own design for). Verified live against the exact
+  reported case plus a parenthesized `with`-update expression, and
+  confirmed every existing dotted form (`str.len`, `Result.Ok`,
+  `list.map`, plain `user.name`, a namespaced module call) is
+  unaffected via the full example/test suite.
 
 None of these blocked the manual's own examples once corrected, but
 they're real ergonomic gaps for a language whose own stated top-level
