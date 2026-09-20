@@ -1448,6 +1448,29 @@ try {
   $sameFileRefsResp = Read-LspMessage $lspProc | ConvertFrom-Json
   Assert-Equal 'same-file references still resolves unchanged' '2' "$($sameFileRefsResp.result.Count)"
 
+  # cross-file rename: same fixture, same shape as cross-file references,
+  # but a WorkspaceEdit's changes field is keyed by uri rather than a flat
+  # array - the imported file's edits (its declaration and the internal
+  # call inside add_three) get their own key, not entries appended to the
+  # current document's own edit list.
+  $crossFileRenameReq = @{ jsonrpc = '2.0'; id = 25; method = 'textDocument/rename'; params = @{ textDocument = @{ uri = $crossFileMainUri }; position = @{ line = 3; character = 9 }; newName = 'sum' } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $crossFileRenameReq
+  $crossFileRenameResp = Read-LspMessage $lspProc | ConvertFrom-Json
+  $crossFileRenameKeys = $crossFileRenameResp.result.changes.PSObject.Properties.Name
+  Assert-Equal 'cross-file rename touches both files' '2' "$($crossFileRenameKeys.Count)"
+  $crossFileRenameMainEdits = $crossFileRenameResp.result.changes.$crossFileMainUri
+  $crossFileRenameHelperEdits = $crossFileRenameResp.result.changes.$crossFileHelperUri
+  Assert-Equal 'cross-file rename edits one occurrence in the current document' '1' "$($crossFileRenameMainEdits.Count)"
+  Assert-Equal 'cross-file rename edits both occurrences in the imported file' '2' "$($crossFileRenameHelperEdits.Count)"
+  Assert-Equal 'cross-file rename newText matches the requested name' 'sum' $crossFileRenameHelperEdits[0].newText
+
+  # Regression check: same-file-only rename must still produce a single-key
+  # WorkspaceEdit, unchanged.
+  Send-LspMessage $lspProc $renameReq
+  $sameFileRenameResp = Read-LspMessage $lspProc | ConvertFrom-Json
+  $sameFileRenameKeys = $sameFileRenameResp.result.changes.PSObject.Properties.Name
+  Assert-Equal 'same-file rename still touches only one file' '1' "$($sameFileRenameKeys.Count)"
+
   # completion: no scope resolution - every builtin plus every fn/type/enum
   # declared in the open document, unfiltered by cursor position or partial
   # word. Spot checks, not an exhaustive enumeration of every builtin (the
