@@ -1429,6 +1429,25 @@ try {
   $sameFileHoverResp = Read-LspMessage $lspProc | ConvertFrom-Json
   Assert-Equal 'same-file hover still resolves unchanged' 'fn add(a: int, b: int): int' $sameFileHoverResp.result.contents.value
 
+  # cross-file references: examples\cross_file_lsp_helper.lume also declares
+  # add_three, which calls add(a, b) internally - a real occurrence inside
+  # the imported file itself, not just its declaration. Three locations
+  # expected total: the call site in the current document, the declaration
+  # in the imported file, and that internal call inside add_three.
+  $crossFileRefsReq = @{ jsonrpc = '2.0'; id = 24; method = 'textDocument/references'; params = @{ textDocument = @{ uri = $crossFileMainUri }; position = @{ line = 3; character = 9 } } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $crossFileRefsReq
+  $crossFileRefsResp = Read-LspMessage $lspProc | ConvertFrom-Json
+  Assert-Equal 'cross-file references finds occurrences across both files' '3' "$($crossFileRefsResp.result.Count)"
+  Assert-Equal 'cross-file references first location is the current document call site' $crossFileMainUri $crossFileRefsResp.result[0].uri
+  Assert-Equal 'cross-file references second location is the imported declaration' $crossFileHelperUri $crossFileRefsResp.result[1].uri
+  Assert-Equal 'cross-file references third location is an internal call inside the import' $crossFileHelperUri $crossFileRefsResp.result[2].uri
+  Assert-Equal 'cross-file references internal-call line is correct' '5' "$($crossFileRefsResp.result[2].range.start.line)"
+
+  # Regression check: same-file-only references must be unaffected.
+  Send-LspMessage $lspProc $refsReq
+  $sameFileRefsResp = Read-LspMessage $lspProc | ConvertFrom-Json
+  Assert-Equal 'same-file references still resolves unchanged' '2' "$($sameFileRefsResp.result.Count)"
+
   # completion: no scope resolution - every builtin plus every fn/type/enum
   # declared in the open document, unfiltered by cursor position or partial
   # word. Spot checks, not an exhaustive enumeration of every builtin (the

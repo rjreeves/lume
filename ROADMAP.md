@@ -1192,8 +1192,20 @@ things rather than writing the obvious thing.
   one canonical walk both capabilities share, rather than building a
   second near-duplicate one - the existing definition test suite
   (same-file and cross-file) re-verified clean after that refactor,
-  since it touched already-shipped code. References/rename/completion
-  remain single-file only; code actions remain unaddressed.
+  since it touched already-shipped code. `textDocument/references`
+  followed with the same one-level scope, but a different shape:
+  unlike definition/hover's "first match wins," references needs
+  *every* match, so it's a second loop over direct `use` imports
+  appending into the same locations array, not a shared resolver -
+  and it searches an imported file's *whole* token stream
+  (`lspOccurrences`, not just its declarations), so an internal call
+  inside the imported file itself shows up too, not only its
+  declaration. Not attempted: finding usages in *other* files that
+  also import the same helper but aren't related to the currently
+  open document - a reverse, project-wide "which files import this
+  one" index, a materially bigger feature than "look at what I use".
+  Rename/completion remain single-file only; code actions remain
+  unaddressed.
 - project-wide symbol indexing without slowing single-file checks;
 - debugger protocol support after bytecode/source maps stabilize;
 - ~~generated API documentation~~ — shipped as `lume api-docs`, a
