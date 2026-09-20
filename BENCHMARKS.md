@@ -2,6 +2,60 @@
 
 “Quickest” and “fastest for AI” are meaningless without reproducible measurements. Lume should be compared against Lua, Python, Go, TypeScript, Bun, and a small bytecode language on the same machine.
 
+## Hardware environment
+
+Every number in this file, from the very first checkpoint onward, was
+measured on the same single machine - never previously written down,
+which made every figure here technically unreproducible by anyone
+else without asking. Recorded now, not backfilled with guesses:
+
+| Component | Value |
+| --- | --- |
+| CPU | Intel(R) Core(TM) Ultra 9 275HX, 24 cores / 24 logical processors |
+| RAM | 31.3 GB |
+| Storage | NVMe SSD (Micron MTFDKBA1T0TGD) |
+| OS | Windows 11 Pro, build 10.0.26200, 64-bit |
+| Toolchain | Certo release build (`cargo build --release`), clang/lld-link Windows target |
+
+This is one machine, not "representative hardware" in the sense the
+roadmap item means - the roadmap explicitly wants results *across*
+multiple different machines, which this session has no access to
+beyond this one. What's recorded here is the honest single-machine
+baseline plus a reproduction path (below), so a second machine's
+numbers - whenever someone runs them - land in a comparable table
+instead of a disconnected one-off.
+
+### Reproducing these numbers on another machine
+
+1. Build `lume.exe` via `.\build.ps1` (needs a release `certo.exe` on
+   `PATH` or passed via `-Certo <path>`, matching this repo's own
+   `Certo` dependency - see `README.md`/this file's own toolchain row
+   above for what "matching" means: the same Certo commit, a release
+   build, same target platform).
+2. Run the four core scripts from a clean `dist\` (delete any stale
+   `.lbc`/generated `.lume` files first, so no cache or previous run's
+   generated fixture leaks in): `benchmark.ps1`, `benchmark-10000.ps1`,
+   `benchmark-10000-features.ps1`, `benchmark-10000-generic-dispatch.ps1`.
+   Add `benchmark-100000.ps1`/`benchmark-multi-module.ps1` and
+   `benchmark-incremental-rebuild.ps1` for the larger/incremental
+   checkpoints later in this file.
+3. Record the same hardware table shown above for the new machine (CPU
+   model and core count, RAM, storage type, OS build, architecture) -
+   without it, a second machine's numbers are exactly as
+   unreproducible as this file's own numbers were before this section
+   existed.
+4. Report results the same way every checkpoint in this file already
+   does: mean, median, p95, and stddev over the same iteration counts
+   the scripts already default to (this file's own "at least 30 runs"
+   contract), not a single sample.
+
+A meaningful hardware comparison needs at least one genuinely
+different machine class (different CPU architecture/generation, not
+just a second Windows box with similar specs) to say anything the
+single-machine numbers here don't already show - noted so a future
+contributor knows what "done" looks like for this item, not just that
+a second number exists.
+
 ## Compiler measurements
 
 Measure cold and warm runs separately:

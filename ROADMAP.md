@@ -1446,7 +1446,16 @@ things rather than writing the obvious thing.
   plausibly because ten smaller per-function scans beat one very long
   one - not root-caused further here, a number on record rather than a
   full investigation;
-- publish results across representative hardware.
+- publish results across representative hardware — not closeable from
+  a single session on a single machine, which is all this has ever had
+  access to. Every number in `BENCHMARKS.md`, from its very first
+  checkpoint, was measured on the same one machine, undocumented until
+  now - `BENCHMARKS.md`'s new "Hardware environment" section records
+  that machine's own specs (as the honest single-machine baseline, not
+  a claim of "representative hardware") and a concrete reproduction
+  path, so a second machine's numbers land in a comparable table
+  instead of a disconnected one-off whenever someone runs them. Still
+  open until a genuinely different machine class actually reports in.
 
 The roadmap target remains 10,000 lines in under 10 ms. It should not be
 presented as achieved until the implementation meets the benchmark contract.
