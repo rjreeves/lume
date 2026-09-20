@@ -1410,13 +1410,21 @@ things rather than writing the obvious thing.
   hit is possible - a real, verified, but *partial* win (the "changed"
   case's excess over "cold" dropped from +25%/+8% to +21%/+6% for the
   single-file/multi-module cases respectively, not eliminated). The
-  residual cost is `readFileBytes` still reading the entire stale
-  artifact into memory before the header is even checked - closing
-  that fully needs a Certo primitive for reading a fixed byte range
-  from a file rather than the whole thing, which doesn't exist yet
-  (`readBytes(n)` reads from the LSP stdin stream, not an arbitrary
-  file) - the same "blocked on an upstream primitive" shape several
-  other items here already carry, not attempted in this pass;
+  flagged Certo primitive landed too
+  ([rjreeves/Certo#4](https://github.com/rjreeves/Certo/pull/4),
+  `readFileBytesRange(path, offset, length)`) and `compileOrCache` now
+  uses it to read only the 140 bytes it needs for the header check,
+  falling back to a full read only on an actual hit. Result: the
+  multi-module case's gap is now closed within measurement noise
+  (+1.2%, smaller than its own run-to-run stddev); the single-file
+  case narrowed further but still has a real ~19% residual, not fully
+  explained - see `BENCHMARKS.md`'s "Closing the gap with Certo's new
+  readFileBytesRange" checkpoint for the numbers and a plausible,
+  unconfirmed guess (rewriting a large existing file costing more than
+  creating a fresh one). Not chased down further - the primary,
+  well-understood cause (paying to read or decode a stale artifact
+  nobody needed) is fixed for both cases, and this residual is a
+  smaller, different, less-understood effect;
 - ~~measure 100,000-line modules and multi-module projects~~ — shipped
   as `benchmark-100000.ps1` (the same trivial shape every 10,000-line
   benchmark already uses, scaled 10x - the first measurement in this

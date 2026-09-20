@@ -2081,3 +2081,34 @@ by path). Fully closing this gap would need a new Certo primitive, the
 same "blocked on an upstream primitive" pattern several other items in
 this file and `ROADMAP.md` already carry - flagged as a further
 follow-up rather than attempted here.
+
+## Closing the gap with Certo's new readFileBytesRange (2026-09-20)
+
+The flagged follow-up landed in Certo ([rjreeves/Certo#4](https://github.com/rjreeves/Certo/pull/4),
+merged) and is now wired into `compileOrCache`: the header check reads
+only the fixed 140 bytes it actually needs
+(`readFileBytesRange(pathToCache, 0, 140)`), falling back to a full
+`readFileBytes` only once the header confirms a hit. Full `test.ps1`
+suite passes unchanged (358 passing, 0 failed).
+
+| Benchmark | Cold | Changed (original → after decode fix → after this fix) | Excess over cold |
+| --- | ---: | ---: | ---: |
+| Single file (100,000 lines) | 1,068.17 ms | 1,331.74 → 1,296.00 → 1,269.90 ms | +201.7 ms (+19%) |
+| Multi-module (10 files) | 1,063.04 ms | 1,124.36 → 1,106.15 → 1,075.96 ms | +12.9 ms (+1.2%) |
+
+**Multi-module's gap is now closed, within measurement noise** - a
+12.9 ms residual against a 14.9-32.8 ms stddev on these two phases is
+statistically indistinguishable from zero, a genuine full fix for that
+case. **Single-file's gap narrowed further but a real ~200 ms residual
+remains**, well outside its own ~31-43 ms stddev - not fully explained.
+Both cases now only read 140 bytes (not the whole stale artifact) on
+the header check, so the remaining single-file cost isn't the thing
+this fix targeted; a plausible but unconfirmed guess is `saveArtifact`
+overwriting an existing large file costing more than creating a fresh
+one after `cold`'s own deletion (filesystem journaling/antivirus
+scanning on a truncate-and-rewrite of a large existing file, vs a
+brand-new one) - worth investigating further only if it turns out to
+matter in practice; not chased down here, since the primary, well-
+understood cause (paying to read or decode a stale artifact nobody
+needed) is now fixed for both cases, and this residual is a smaller,
+different, less-understood effect.
