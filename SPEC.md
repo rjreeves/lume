@@ -569,11 +569,28 @@ of embedding `%z` in a pattern.
 
 `duration.seconds`/`minutes`/`hours`/`days(n: int) -> int` convert a
 named unit into a plain epoch-second count (`duration.minutes(5)` is
-`300`) — a readability convenience, not a distinct value kind: there is
-still no `Duration` *type*, no unit tracking, and no dedicated
-arithmetic operators. `int` arithmetic on epoch seconds already covers
-every offset these functions can express (`time.now() +
-duration.minutes(5)` is exactly `time.now() + 300`).
+`300`) — a readability convenience, not a distinct value kind. `int`
+arithmetic on epoch seconds already covers every offset these
+functions can express (`time.now() + duration.minutes(5)` is exactly
+`time.now() + 300`), but it buys no type safety: a plain `int` offset
+and an unrelated `int` (a user ID, a count) type-check identically,
+so nothing stops a unit-confusion bug from compiling.
+
+`Duration` is a distinct record type for when that safety matters — a
+built-in record (`Duration { seconds: int }`, seeded the same way
+`Option<T>`/`Result<T, E>` are) rather than a plain `int`.
+`Duration.of_seconds`/`of_minutes`/`of_hours`/`of_days(n: int) ->
+Duration` construct one; `Duration.add(a, b)`/`Duration.sub(a, b) ->
+Duration` and `Duration.scale(d, factor: int) -> Duration` combine
+them — plain named functions, not operators, since this language has
+no operator overloading (§19). `Duration.to_seconds(d) -> int` bridges
+back into plain-`int` epoch arithmetic:
+`time.now() + Duration.to_seconds(Duration.of_minutes(5))`. Its
+`seconds` field is also readable directly (`d.seconds`), since
+`Duration` is an ordinary record. Passing a plain `int` where a
+`Duration` is expected, or a `Duration` where a plain `int` is
+expected, is a compile error — the concrete gap the lowercase
+`duration.*` functions above cannot catch.
 
 `bytes` is a distinct type from `str`, but under the hood a Lume `bytes`
 value is represented exactly like `str` — a genuinely NUL-safe binary

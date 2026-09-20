@@ -870,11 +870,39 @@ into every compilation.
   zone name), and now `duration.seconds`/`minutes`/`hours`/
   `days(n) -> int` (named-unit construction as plain epoch-second
   `int`s — `duration.minutes(5)` is `300`) are done (see "Shipped in
-  the bootstrap" above); a distinct `Duration` *type* — its own value
+  the bootstrap" above). ~~A distinct `Duration` *type* — its own value
   kind with dedicated arithmetic and unit tracking, not plain
   `int`-returning functions — remains deferred; Certo's stdlib already
   has one (a full `DateTime`/`Duration`/`Timezone`/`Date` API), so this
-  is purely a scoping choice, not a feasibility gap;
+  is purely a scoping choice, not a feasibility gap.~~ Shipped: `SPEC.md`
+  explained the original deferral as "`int` arithmetic on epoch seconds
+  already covers every offset these functions can express" — true for
+  *convenience*, but re-reading that framing directly surfaced the real
+  gap it doesn't address: **type safety**. `time.now() +
+  duration.minutes(5)` and `time.now() + userId` type-checked
+  identically before this, since both are plain `int` — nothing stopped
+  a unit-confusion bug from compiling cleanly. `Duration` is now a real
+  record type, seeded the same way `Option<T>`/`Result<T,E>` already are
+  (a hardcoded `record_type` prelude instruction in `compile()`,
+  `"Duration|seconds=int"`), so `Duration(seconds: n)` construction,
+  field access, and `with`-update all work through the exact same
+  generic record machinery every user-declared `type` already gets —
+  no new codegen path needed. Eight new builtins:
+  `Duration.of_seconds`/`of_minutes`/`of_hours`/`of_days(n: int) ->
+  Duration` (constructors, parallel to the existing lowercase
+  `duration.*`, which stay exactly as-is for the "I don't need type
+  safety here" case), `Duration.add`/`sub(a, b) -> Duration` and
+  `Duration.scale(d, factor: int) -> Duration` (plain named functions,
+  not operators — operator overloading is one of this language's
+  explicit non-goals, the same `Eq`/`Ord`-style shape this language
+  already uses everywhere it needs type-specific behavior without one),
+  and `Duration.to_seconds(d) -> int` (the bridge back into
+  `time.now()`'s plain-int epoch arithmetic). Verified live: passing a
+  plain `int` where `Duration.add` expects a `Duration` is now `E0743`,
+  and mixing a `Duration` directly into `int` arithmetic
+  (`time.now() + Duration.of_minutes(5)`, skipping `to_seconds`) is
+  `E0613 incompatible operand types` — the concrete class of bug a
+  plain `int` couldn't catch, now caught at compile time;
 - ~~richer process configuration~~ — shipped: stdin
   (`process.run_with_input`), environment overrides
   (`process.run_with_env`), and now working directory and a real

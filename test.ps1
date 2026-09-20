@@ -460,6 +460,18 @@ $resultBridgeTypeError = & $Lume check (Join-Path $PSScriptRoot 'examples\invali
 if ($LASTEXITCODE -ne 1) { throw "result.to_result on a non-result value should fail to compile" }
 Assert-Equal 'result.to_result requires a result value' 'E0622 line 2: result operation requires result value' ($resultBridgeTypeError -join "`n")
 
+# Duration is a real record type (not a plain int) for type safety -
+# time.now() + duration.minutes(5) and time.now() + userId type-check
+# identically today since both are plain int, but a Duration can't be
+# mistaken for an unrelated int at compile time.
+$durationTypeOutput = & $Lume run (Join-Path $PSScriptRoot 'examples\duration_type.lume')
+if ($LASTEXITCODE -ne 0) { throw "duration_type example exited $LASTEXITCODE" }
+Assert-Equal 'Duration type construction, field access, arithmetic, and the time.now() bridge' "300`n3900`n3300`n600`ntrue" ($durationTypeOutput -join "`n")
+
+$durationTypeError = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_duration_arithmetic.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "Duration.add on a plain int should fail to compile" }
+Assert-Equal 'Duration.add rejects a plain int in place of a Duration' 'E0743 line 2: builtin `Duration.add` requires (Duration, Duration)' ($durationTypeError -join "`n")
+
 $roundTripPath = Join-Path $PSScriptRoot 'dist\round-trip.txt'
 $fileWrite = & $Lume run (Join-Path $PSScriptRoot 'examples\file_write.lume') $roundTripPath
 if ($LASTEXITCODE -ne 0) { throw "file write exited $LASTEXITCODE" }

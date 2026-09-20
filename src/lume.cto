@@ -1137,6 +1137,7 @@ fn builtinNames(): List<Text> = [
   "dir.list", "dir.walk",
   "time.now", "time.to_iso", "time.year", "time.month", "time.day", "time.hour", "time.minute", "time.second", "time.format", "time.in_timezone", "time.format_in_timezone",
   "duration.seconds", "duration.minutes", "duration.hours", "duration.days",
+  "Duration.of_seconds", "Duration.of_minutes", "Duration.of_hours", "Duration.of_days", "Duration.add", "Duration.sub", "Duration.scale", "Duration.to_seconds",
   "http.get", "http.post", "http.put", "http.delete", "http.request", "http.request_with_limit", "http.request_bytes", "http.status", "http.body", "http.content_type", "http.ok", "http.body_bytes", "http.truncated",
   "list.len", "list.get", "list.push", "list.map", "list.filter", "list.find", "list.fold",
   "map.new", "map.len", "map.get", "map.has", "map.set", "map.remove", "map.keys", "map.values", "map.map", "map.filter", "map.fold",
@@ -1159,6 +1160,7 @@ fn builtinCounts(): List<Int> = [
   1, 2,
   0, 1, 1, 1, 1, 1, 1, 1, 2, 2, 3,
   1, 1, 1, 1,
+  1, 1, 1, 1, 2, 2, 2, 1,
   1, 3, 3, 1, 4, 5, 4, 1, 1, 1, 1, 1, 1,
   1, 2, 2, 2, 2, 2, 3,
   0, 1, 2, 2, 3, 2, 1, 1, 2, 2, 3,
@@ -1924,7 +1926,18 @@ fn compile(tokens: List<Token>): CompileResult = {
   val allCounts = List.concat(functions.counts, builtinCounts())
   var code: List<Instruction> = [
     makeInstruction("enum_type", "Option<T>|Some=value=T;None=", 0, 0),
-    makeInstruction("enum_type", "Result<T,E>|Ok=value=T;Err=error=E", 0, 0)
+    makeInstruction("enum_type", "Result<T,E>|Ok=value=T;Err=error=E", 0, 0),
+    // A built-in Duration record - seeded here the same way Option/Result
+    // are, so Duration(seconds: n) construction, field access, and
+    // with-update all work through the exact same generic record
+    // machinery every user-declared `type` already gets. Exists for
+    // type safety, not convenience - int arithmetic on epoch seconds
+    // already covers every offset duration.*'s plain-int functions can
+    // express (see SPEC.md), but a plain int can't stop a unit-confusion
+    // bug (adding an unrelated int to an epoch timestamp) from
+    // compiling. Arithmetic is plain named functions (Duration.add,
+    // not a `+` overload) - operator overloading is an explicit non-goal.
+    makeInstruction("record_type", "Duration|seconds=int", 0, 0)
   ]
   var problem = if not Text.eq(records.problem, "") then records.problem else if not Text.eq(enums.problem, "") then enums.problem else functions.problem
   var protocolIndex = 0
@@ -2927,6 +2940,28 @@ fn checkBuiltinTypes(code: List<Instruction>, name: Text, stackInput: List<Text>
     val valueType = pop(stack)
     stack = valueType.stack
     if not Text.eq(valueType.value, "int") then { problem = "E0699 builtin `" ++ name ++ "` requires int" }
+    resultType = "int"
+  } else if Text.eq(name, "Duration.of_seconds") or Text.eq(name, "Duration.of_minutes") or Text.eq(name, "Duration.of_hours") or Text.eq(name, "Duration.of_days") then {
+    val valueType = pop(stack)
+    stack = valueType.stack
+    if not Text.eq(valueType.value, "int") then { problem = "E0742 builtin `" ++ name ++ "` requires int" }
+    resultType = "Duration"
+  } else if Text.eq(name, "Duration.add") or Text.eq(name, "Duration.sub") then {
+    val b = pop(stack)
+    val a = pop(b.stack)
+    stack = a.stack
+    if not Text.eq(a.value, "Duration") or not Text.eq(b.value, "Duration") then { problem = "E0743 builtin `" ++ name ++ "` requires (Duration, Duration)" }
+    resultType = "Duration"
+  } else if Text.eq(name, "Duration.scale") then {
+    val factor = pop(stack)
+    val duration = pop(factor.stack)
+    stack = duration.stack
+    if not Text.eq(duration.value, "Duration") or not Text.eq(factor.value, "int") then { problem = "E0744 builtin `Duration.scale` requires (Duration, int)" }
+    resultType = "Duration"
+  } else if Text.eq(name, "Duration.to_seconds") then {
+    val duration = pop(stack)
+    stack = duration.stack
+    if not Text.eq(duration.value, "Duration") then { problem = "E0745 builtin `Duration.to_seconds` requires Duration" }
     resultType = "int"
   } else if Text.eq(name, "time.year") or Text.eq(name, "time.month") or Text.eq(name, "time.day") or Text.eq(name, "time.hour") or Text.eq(name, "time.minute") or Text.eq(name, "time.second") then {
     val valueType = pop(stack)
@@ -3996,6 +4031,26 @@ fn recordField(value: Text, field: Text): Text? = {
   }
 }
 
+// Duration is a real record_type (prelude-seeded in compile(), the same
+// mechanism Option/Result use), so it's a genuine "o:" + JSON record
+// value with a $type tag - constructed and read the same way any
+// user-declared record's fields are (buildRecord/recordField), not a
+// separate ad-hoc encoding like process's own pseudo-record shape.
+fn buildDurationValue(seconds: Int): Text = {
+  val root = Json.object()
+  JsonValue.set(root, "$type", Json.string("Duration"))
+  JsonValue.set(root, "seconds", Json.string(intValue(seconds)))
+  "o:" ++ Json.stringify(root)
+}
+
+// Named lumeDurationSeconds, not durationSeconds - a plain "durationSeconds"
+// collides at the generated-C level with Certo's own internal
+// certo_duration_seconds symbol (Certo has its own full Duration API in
+// its stdlib) - the same class of collision lspMinInt was renamed to
+// avoid, confirmed live the same way ("conflicting types for
+// 'certo_duration_seconds'" from the C compiler) before this rename.
+fn lumeDurationSeconds(value: Text): Int = valueInt(recordField(value, "seconds") ?? "i:0")
+
 fn decodeJsonValue(code: List<Instruction>, json: JsonValue, expected: Text, path: Text): DecodeValue = {
   if Text.eq(expected, "str") then {
     if JsonValue.isString(json) then { DecodeValue { value: textValue(JsonValue.asText(json)), problem: "" } }
@@ -4887,6 +4942,32 @@ fn callBuiltin(code: List<Instruction>, name: Text, input: List<Text>, deadlineM
       else if Text.eq(name, "duration.hours") then { result = intValue(value * 3600) }
       else { result = intValue(value * 86400) }
     } else if let Err(message) = requireInt(one.value, name) { problem = message }
+  } else if Text.eq(name, "Duration.of_seconds") or Text.eq(name, "Duration.of_minutes") or Text.eq(name, "Duration.of_hours") or Text.eq(name, "Duration.of_days") then {
+    val one = pop(stack)
+    stack = one.stack
+    if let Ok(value) = requireInt(one.value, name) {
+      if Text.eq(name, "Duration.of_seconds") then { result = buildDurationValue(value) }
+      else if Text.eq(name, "Duration.of_minutes") then { result = buildDurationValue(value * 60) }
+      else if Text.eq(name, "Duration.of_hours") then { result = buildDurationValue(value * 3600) }
+      else { result = buildDurationValue(value * 86400) }
+    } else if let Err(message) = requireInt(one.value, name) { problem = message }
+  } else if Text.eq(name, "Duration.add") or Text.eq(name, "Duration.sub") then {
+    val b = pop(stack)
+    val a = pop(b.stack)
+    stack = a.stack
+    val aSeconds = lumeDurationSeconds(a.value)
+    val bSeconds = lumeDurationSeconds(b.value)
+    result = buildDurationValue(if Text.eq(name, "Duration.add") then aSeconds + bSeconds else aSeconds - bSeconds)
+  } else if Text.eq(name, "Duration.scale") then {
+    val factor = pop(stack)
+    val duration = pop(factor.stack)
+    stack = duration.stack
+    if let Ok(factorValue) = requireInt(factor.value, name) { result = buildDurationValue(lumeDurationSeconds(duration.value) * factorValue) }
+    else if let Err(message) = requireInt(factor.value, name) { problem = message }
+  } else if Text.eq(name, "Duration.to_seconds") then {
+    val duration = pop(stack)
+    stack = duration.stack
+    result = intValue(lumeDurationSeconds(duration.value))
   } else if Text.eq(name, "time.year") or Text.eq(name, "time.month") or Text.eq(name, "time.day") or Text.eq(name, "time.hour") or Text.eq(name, "time.minute") or Text.eq(name, "time.second") then {
     val one = pop(stack)
     stack = one.stack
@@ -7222,6 +7303,7 @@ fn aiReference(): Text = {
   "time.format(seconds, pattern) -> str formats epoch seconds with a strftime-style pattern (e.g. \"%Y-%m-%d\"), evaluated against UTC. " ++
   "time.in_timezone(seconds, zone) -> result<str,str> gives an ISO-8601 string with that zone's own numeric UTC offset (e.g. \"+01:00\"), and time.format_in_timezone(seconds, pattern, zone) -> result<str,str> applies a strftime-style pattern to that zone's wall-clock time (year/month/day/hour/etc. are zone- and DST-adjusted); `zone` is an IANA name like \"America/New_York\", Err for an unrecognized one; avoid %Z/%z in the pattern, which cannot reflect an arbitrary zone. " ++
   "duration.seconds/minutes/hours/days(n) -> int convert a named unit into a plain epoch-second count for readable arithmetic, e.g. `time.now() + duration.minutes(5)` instead of `time.now() + 300`. " ++
+  "Duration is a distinct record type (not a plain int) for when unit-confusion bugs matter - a Duration can't be mistaken for an unrelated int at compile time the way duration.*'s plain int results can. Duration.of_seconds/of_minutes/of_hours/of_days(n: int) -> Duration construct one; Duration.add(a, b)/Duration.sub(a, b) -> Duration and Duration.scale(d, factor: int) -> Duration combine them (plain named functions, not operators - this language has no operator overloading); Duration.to_seconds(d) -> int bridges back to plain-int epoch arithmetic, e.g. `time.now() + Duration.to_seconds(Duration.of_minutes(5))`. Its `seconds` field is also readable directly (`d.seconds`), since Duration is an ordinary record. " ++
   "Run a process with stdin piped in: process.run_with_input(exe, args, input) -> process, same accessors as process.run. " ++
   "Run a process with environment overrides: process.run_with_env(exe, args, envMap: Map<str,str>) -> process; variables are restored to their prior value after the call returns. " ++
   "Run a process with a working directory and/or timeout: process.run_with_options(exe, args, workingDir: str, timeoutMs: int) -> process; workingDir \"\" means don't change directory, timeoutMs <= 0 means no timeout (block until the process exits). A timed-out process is killed and its process.code(result) is -1 - the same value a failed-to-spawn process reports, since the underlying result carries no separate timed-out flag; don't rely on -1 alone to distinguish the two. " ++
