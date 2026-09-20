@@ -1184,7 +1184,15 @@ things rather than writing the obvious thing.
   already correct for the open document). A genuine error unrelated
   to any import, and an import that doesn't resolve to anything real,
   both still report exactly as before - verified live, not just "the
-  false positive goes away". Hover/references/rename/completion
+  false positive goes away". `textDocument/hover` gained the same
+  one-level cross-file scope next: hovering a call to a function
+  declared only in a direct `use` import now shows its signature
+  instead of `null`. Generalized definition's own cross-file resolver
+  (`lspResolveCrossFile` → `lspResolveCrossFileDeclaration`) into the
+  one canonical walk both capabilities share, rather than building a
+  second near-duplicate one - the existing definition test suite
+  (same-file and cross-file) re-verified clean after that refactor,
+  since it touched already-shipped code. References/rename/completion
   remain single-file only; code actions remain unaddressed.
 - project-wide symbol indexing without slowing single-file checks;
 - debugger protocol support after bytecode/source maps stabilize;

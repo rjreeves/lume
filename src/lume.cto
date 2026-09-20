@@ -5943,10 +5943,18 @@ fn lspReadFile(documents: LspDocuments, uri: Text, path: Text): Text = {
 // drills into a mutated var's nested record field. findDep's own
 // FindDepResult above already works around the same class of issue the
 // same way, for the same reason.
-type LspCrossFileMatch = {
-  uri: Text
+// found as a top-level flag, not a nested sentinel field read from a while
+// loop condition - the exact Certo codegen bug hit and worked around while
+// building this resolver originally (a loop condition drilling into a
+// nested record field on a mutated var produces broken C output). Storing
+// an LspDeclaration - itself holding a Token - as a plain field here is
+// fine; the bug is specifically about reading a nested field in a loop
+// *condition*, not about storage depth.
+type LspCrossFileDeclaration = {
   found: Bool
-  name: Token
+  uri: Text
+  tokens: List<Token>
+  declaration: LspDeclaration
 }
 
 // One level of direct `use` imports only, resolved the same way the real
@@ -5957,18 +5965,23 @@ type LspCrossFileMatch = {
 // for same-file resolution. No package-manifest loading: resolveModulePath
 // is called with an empty visibleDeps list, so a same-package `use`
 // resolves correctly but a cross-package dependency's `use` won't -
-// documented v1 boundary, not an oversight.
-fn lspResolveCrossFile(documents: LspDocuments, currentPath: Text, currentText: Text, name: Text): LspCrossFileMatch = {
+// documented v1 boundary, not an oversight. Returns the token list the
+// match came from too (a header index is only meaningful relative to the
+// specific token list it indexes into), so callers needing more than a
+// Location (e.g. hover's own signature lookup) can reuse this one walk
+// instead of a second, near-duplicate one.
+fn lspResolveCrossFileDeclaration(documents: LspDocuments, currentPath: Text, currentText: Text, name: Text): LspCrossFileDeclaration = {
   val modules = importedModules(currentText)
   var index = 0
-  var result = LspCrossFileMatch { uri: "", found: false, name: makeToken("name", "", 0, 0) }
+  var result = LspCrossFileDeclaration { found: false, uri: "", tokens: [], declaration: LspDeclaration { keyword: "", header: -1, name: makeToken("name", "", 0, 0) } }
   while index < List.len(modules) and not result.found {
     val resolved = resolveModulePath(currentPath, List.getOrPanic(modules, index), [])
     val importedUri = lspPathToUri(resolved.path)
     val importedText = lspReadFile(documents, importedUri, resolved.path)
     if not Text.eq(importedText, "") then {
-      val declaration = lspFindDeclaration(lspDeclarationSites(lex(importedText)), name)
-      if declaration.header != -1 then { result = LspCrossFileMatch { uri: importedUri, found: true, name: declaration.name } }
+      val importedTokens = lex(importedText)
+      val declaration = lspFindDeclaration(lspDeclarationSites(importedTokens), name)
+      if declaration.header != -1 then { result = LspCrossFileDeclaration { found: true, uri: importedUri, tokens: importedTokens, declaration: declaration } }
     }
     index = index + 1
   }
@@ -6013,9 +6026,9 @@ fn lspHandleDefinition(id: JsonValue, params: JsonValue, documents: LspDocuments
       val declaration = lspFindDeclaration(lspDeclarationSites(requestTokens), name)
       if declaration.header != -1 then { lspRespond(id, lspLocationJson(uri, declaration.name)) }
       else {
-        val crossFile = lspResolveCrossFile(documents, lspUriToPath(uri), text, name)
+        val crossFile = lspResolveCrossFileDeclaration(documents, lspUriToPath(uri), text, name)
         if not crossFile.found then { lspRespond(id, Json.null()) }
-        else { lspRespond(id, lspLocationJson(crossFile.uri, crossFile.name)) }
+        else { lspRespond(id, lspLocationJson(crossFile.uri, crossFile.declaration.name)) }
       }
     }
   } else { lspRespond(id, Json.null()) }
@@ -6056,6 +6069,15 @@ fn lspDeclarationSignature(tokens: List<Token>, declaration: LspDeclaration): Te
   }
 }
 
+fn lspHoverJson(value: Text): JsonValue = {
+  val contents = Json.object()
+  JsonValue.set(contents, "kind", Json.string("plaintext"))
+  JsonValue.set(contents, "value", Json.string(value))
+  val result = Json.object()
+  JsonValue.set(result, "contents", contents)
+  result
+}
+
 fn lspHandleHover(id: JsonValue, params: JsonValue, documents: LspDocuments): Unit [io] = {
   val textDocument = JsonValue.get(params, "textDocument")
   val uri = JsonValue.asText(JsonValue.get(textDocument, "uri"))
@@ -6070,14 +6092,11 @@ fn lspHandleHover(id: JsonValue, params: JsonValue, documents: LspDocuments): Un
     if Text.eq(name, "") then { lspRespond(id, Json.null()) }
     else {
       val declaration = lspFindDeclaration(lspDeclarationSites(requestTokens), name)
-      if declaration.header == -1 then { lspRespond(id, Json.null()) }
+      if declaration.header != -1 then { lspRespond(id, lspHoverJson(lspDeclarationSignature(requestTokens, declaration))) }
       else {
-        val contents = Json.object()
-        JsonValue.set(contents, "kind", Json.string("plaintext"))
-        JsonValue.set(contents, "value", Json.string(lspDeclarationSignature(requestTokens, declaration)))
-        val result = Json.object()
-        JsonValue.set(result, "contents", contents)
-        lspRespond(id, result)
+        val crossFile = lspResolveCrossFileDeclaration(documents, lspUriToPath(uri), text, name)
+        if not crossFile.found then { lspRespond(id, Json.null()) }
+        else { lspRespond(id, lspHoverJson(lspDeclarationSignature(crossFile.tokens, crossFile.declaration))) }
       }
     }
   } else { lspRespond(id, Json.null()) }
