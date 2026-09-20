@@ -5696,6 +5696,82 @@ fn resolveDependencies(rootDir: Text, rootRelative: Text, active: List<Text>, re
   } else { ResolveOutcome { resolved: resolved, problem: "E0705 cannot read manifest `" ++ manifestPath ++ "`" } }
 }
 
+// Certo's own `<`/`<=` on two `Text` operands type-checks (infer_expr.rs
+// only unifies both operand types for Lt/LtEq/Gt/GtEq, it doesn't require
+// them to be numeric) but compiles to a raw C `<` on the underlying
+// pointer (emit_mir.rs's generic fallback - only `Decimal` gets a real
+// runtime comparison function) - that's a pointer comparison, not a
+// content comparison, so it can't be used to sort file paths for a stable
+// hash. Byte-by-byte comparison via the same Bytes.fromText/Bytes.byteAt
+// primitives the lexer already uses is the safe alternative.
+fn textLessThan(a: Text, b: Text): Bool = {
+  val aBytes = Bytes.fromText(a)
+  val bBytes = Bytes.fromText(b)
+  val aLen = Bytes.length(aBytes)
+  val bLen = Bytes.length(bBytes)
+  val minLen = if aLen < bLen then aLen else bLen
+  var index = 0
+  var decided = false
+  var less = aLen < bLen
+  while index < minLen and not decided {
+    val ac = Bytes.byteAt(aBytes, index)
+    val bc = Bytes.byteAt(bBytes, index)
+    if ac != bc then {
+      less = ac < bc
+      decided = true
+    }
+    index = index + 1
+  }
+  less
+}
+
+// No List-set/mutate-by-index exists anywhere in this file (only
+// push/getOrPanic/concat/slice - see lspLevenshtein's own comment on the
+// same gap), so this is a selection sort built the same accumulate-then-
+// rebuild way: repeatedly pull the minimum out of `remaining` (via slice
+// + concat, not an in-place write) and push it onto `sorted`. A package's
+// source files number in the single digits, so the quadratic cost here
+// is irrelevant.
+fn sortTexts(items: List<Text>): List<Text> = {
+  var remaining = items
+  var sorted: List<Text> = []
+  while List.len(remaining) > 0 {
+    var minIndex = 0
+    var i = 1
+    while i < List.len(remaining) {
+      if textLessThan(List.getOrPanic(remaining, i), List.getOrPanic(remaining, minIndex)) then { minIndex = i }
+      i = i + 1
+    }
+    sorted = List.push(sorted, List.getOrPanic(remaining, minIndex))
+    remaining = List.concat(List.slice(remaining, 0, minIndex), List.slice(remaining, minIndex + 1, List.len(remaining)))
+  }
+  sorted
+}
+
+// A dependency's own source hash for `lume.lock.json` - catches a `.lume`
+// file hand-edited after `lume install` last ran, which a manifest/version
+// hash alone can't (the manifest doesn't change just because a source file
+// did). Hashes every `.lume` file under the dependency's directory
+// (recursively, matching how loadModule can reach a file at any depth
+// under a dependency's root, not just its top level), sorted by path so
+// the hash doesn't depend on directory-listing order, each entry prefixed
+// with its path (relative to packageDir, so the hash is independent of
+// where the package happens to be checked out) so a rename is also caught,
+// not just a content edit.
+fn hashPackageSource(packageDir: Text): Text [io] = {
+  val files = sortTexts(walkDir(packageDir, 0, 32))
+  var combined = ""
+  for path in files {
+    if Text.endsWith(path, ".lume") then {
+      val relative = if Text.startsWith(path, packageDir) then Text.slice(path, Text.len(packageDir), Text.len(path)) else path
+      if let Some(content) = readFile(path) {
+        combined = combined ++ relative ++ "\n" ++ content ++ "\n"
+      }
+    }
+  }
+  Crypto.sha256(combined)
+}
+
 // Everything `installPackages` needs to write a lock file, minus the
 // actual writing - shared by plain `lume install` (writes this) and
 // `lume install --check` (compares this against what's already on disk
@@ -5713,6 +5789,7 @@ fn computeLockContent(dir: Text, manifestPath: Text): Result<Text, Text> = {
         JsonValue.set(lockEntry, "name", Json.string(dep.name))
         JsonValue.set(lockEntry, "path", Json.string(dep.path))
         JsonValue.set(lockEntry, "version", Json.string(dep.version))
+        JsonValue.set(lockEntry, "sourceHash", Json.string(hashPackageSource(Path.join(dir, dep.path))))
         val ownNames = Json.array()
         for depName in dep.dependencyNames { JsonValue.push(ownNames, Json.string(depName)) }
         JsonValue.set(lockEntry, "dependencies", ownNames)
