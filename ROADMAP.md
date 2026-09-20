@@ -1389,7 +1389,23 @@ things rather than writing the obvious thing.
   output). The two 10,000-line benchmark files are unaffected (no long
   string literals in compiler-generated source), as expected;
 - add persistent compiler-process measurements;
-- add one-function incremental rebuild benchmarks;
+- ~~add one-function incremental rebuild benchmarks~~ — shipped as
+  `benchmark-incremental-rebuild.ps1`, and the honest answer is there
+  is no incremental compilation to benchmark: `compileOrCache` caches
+  one artifact for the *entire* combined `use`-resolved source blob,
+  keyed by its own whole-blob hash, so changing one line anywhere -
+  one file out of ten in a multi-module project, or one line in a
+  single-file program - invalidates the whole cache, no partial reuse
+  at any granularity. Worse, a changed-then-rebuilt file costs *more*
+  than a genuinely cold build with no cache at all (~25% over cold for
+  the single-file case, ~8% for multi-module) - `decodeArtifact`
+  unconditionally decodes the stale artifact's entire instruction list
+  before `compileOrCache` ever checks whether the header hash still
+  matches, so a cache miss pays that wasted decode cost on top of a
+  full recompile. See `BENCHMARKS.md`'s "One-function incremental
+  rebuild" checkpoint for the full numbers and root cause. Flagged as
+  a real, fixable inefficiency (check the hash before decoding the
+  body) but not fixed here - out of scope for a measurement task;
 - ~~measure 100,000-line modules and multi-module projects~~ — shipped
   as `benchmark-100000.ps1` (the same trivial shape every 10,000-line
   benchmark already uses, scaled 10x - the first measurement in this

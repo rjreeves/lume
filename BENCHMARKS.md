@@ -1975,3 +1975,69 @@ contributed their own share of the total, not just that compilation
 succeeded. Both scripts follow this file's existing generator/
 `Measure-Samples` conventions exactly (copied in per-script rather
 than shared, matching every other benchmark script here).
+
+## One-function incremental rebuild: there isn't one, and a real cost for finding that out (2026-09-20)
+
+The last item on this file's own original "Compiler measurements"
+contract. Reading `compileOrCache`/`loadModule` directly first, rather
+than assuming what "incremental" means here, found the real answer:
+**there is no incremental compilation in this compiler at any
+granularity, function or file.** `loadModule` concatenates every
+`use`-imported file's source into one combined string; `run`'s own
+`compileOrCache` hashes that *entire combined blob* with
+`Crypto.sha256` as its one cache key. Changing one character anywhere
+- one file out of ten in a multi-module project, or one line in a
+single-file program - changes the hash and invalidates the whole
+cached artifact. `check` doesn't even go through `compileOrCache` -
+it always calls `compileSource` directly, cache or not - so this is
+the one benchmark script in this file that measures `lume run`
+instead of `lume check`.
+
+`benchmark-incremental-rebuild.ps1` measures three phases against both
+the single-file and multi-module 100,000-line programs from the
+previous checkpoint: **cold** (no `.lbc`, delete it before every
+sample), **warm** (`.lbc` present, source unchanged), and **one line
+changed** (the actual "incremental rebuild" case - the target file's
+last line alternates between two variants before every sample, so
+each is a genuine fresh invalidation rather than a second warm hit on
+an already-cached edit). Fresh-process `Measure-Samples` throughout,
+same as every large-program script since the OOM fix.
+
+An early draft's numbers didn't make sense (single-file "changed" at
+1884 ms, nearly double its own "cold" at 1076 ms) until traced back to
+a real methodology bug: the timed interval included regenerating the
+100,000-line source file in PowerShell before invoking `lume run`, not
+just the `lume run` call itself - a PowerShell text-generation cost,
+not a compiler one. Fixed by moving the file write outside the timed
+interval, matching how cold/warm only ever time the `lume run` call.
+
+| Benchmark | Cold | Warm | One line changed |
+| --- | ---: | ---: | ---: |
+| Single file (100,000 lines) | 1,067.07 ms (median 1,062.02, p95 1,093.87, stddev 39.08) | 609.26 ms (median 604.87, p95 636.86, stddev 12.51) | 1,331.74 ms (median 1,329.86, p95 1,386.03, stddev 28.93) |
+| Multi-module (10 files, only chunk1 changes) | 1,039.54 ms (median 1,038.97, p95 1,067.58, stddev 18.20) | 608.22 ms (median 605.02, p95 632.80, stddev 12.99) | 1,124.36 ms (median 1,117.54, p95 1,158.37, stddev 19.16) |
+
+**Even after fixing the file-write bug, "one line changed" still costs
+*more* than a genuinely cold build with no cache at all - not "close
+to cold" as predicted, but reliably worse** (single file: +264.7 ms,
+~25% over cold; multi-module: +84.8 ms, ~8% over cold). Root-caused
+this time, not left as an unexplained curiosity: `decodeArtifact`
+unconditionally decodes and reconstructs the *entire* instruction list
+from the stale `.lbc` (a `while index < instructionCount` loop
+allocating a fresh `Instruction` and slicing two strings per
+instruction) before `compileOrCache` ever checks whether the header's
+source hash still matches. On a genuine cache miss - the source
+changed, which is exactly what "one function changed" means - the
+compiler pays the full cost of deserializing every discarded
+instruction from disk *in addition to* a full fresh recompile. A truly
+cold build (no `.lbc` file at all) skips `loadArtifact`/`decodeArtifact`
+entirely, which is why it's cheaper than the "should be" cheaper case.
+Also confirms the multi-module structure gives **no caching benefit at
+all** when only one of its files changes - same whole-blob
+invalidation as the single-file case, consistent with the cache-key
+mechanism read directly above, not a separate finding.
+
+This is a real, fixable inefficiency (check the header hash before
+decoding the instruction body, not after), but fixing it is out of
+scope for a measurement task - flagged as a follow-up rather than
+fixed inline here, the same way this file has separated "found via
+benchmarking" from "fixed as its own change" before.
