@@ -6181,6 +6181,22 @@ fn lspHandleReferences(id: JsonValue, params: JsonValue, documents: LspDocuments
 // No newName validation (empty/keyword/non-identifier) - the compiler's own
 // subsequent diagnostics catch a bad rename the same way they catch any
 // other invalid identifier; not duplicating that check here.
+fn lspTextEditJson(occurrence: Token, newName: Text): JsonValue = {
+  val startPos = Json.object()
+  JsonValue.set(startPos, "line", Json.int(occurrence.line - 1))
+  JsonValue.set(startPos, "character", Json.int(occurrence.column - 1))
+  val endPos = Json.object()
+  JsonValue.set(endPos, "line", Json.int(occurrence.line - 1))
+  JsonValue.set(endPos, "character", Json.int(occurrence.column - 1 + Text.len(occurrence.text)))
+  val range = Json.object()
+  JsonValue.set(range, "start", startPos)
+  JsonValue.set(range, "end", endPos)
+  val edit = Json.object()
+  JsonValue.set(edit, "range", range)
+  JsonValue.set(edit, "newText", Json.string(newName))
+  edit
+}
+
 fn lspHandleRename(id: JsonValue, params: JsonValue, documents: LspDocuments): Unit [io] = {
   val textDocument = JsonValue.get(params, "textDocument")
   val uri = JsonValue.asText(JsonValue.get(textDocument, "uri"))
@@ -6197,23 +6213,32 @@ fn lspHandleRename(id: JsonValue, params: JsonValue, documents: LspDocuments): U
     else {
       val occurrences = lspOccurrences(requestTokens, name)
       val edits = Json.array()
-      for occurrence in occurrences {
-        val startPos = Json.object()
-        JsonValue.set(startPos, "line", Json.int(occurrence.line - 1))
-        JsonValue.set(startPos, "character", Json.int(occurrence.column - 1))
-        val endPos = Json.object()
-        JsonValue.set(endPos, "line", Json.int(occurrence.line - 1))
-        JsonValue.set(endPos, "character", Json.int(occurrence.column - 1 + Text.len(occurrence.text)))
-        val range = Json.object()
-        JsonValue.set(range, "start", startPos)
-        JsonValue.set(range, "end", endPos)
-        val edit = Json.object()
-        JsonValue.set(edit, "range", range)
-        JsonValue.set(edit, "newText", Json.string(newName))
-        JsonValue.push(edits, edit)
-      }
+      for occurrence in occurrences { JsonValue.push(edits, lspTextEditJson(occurrence, newName)) }
       val changes = Json.object()
       JsonValue.set(changes, uri, edits)
+
+      // One level of direct `use` imports too, same scope as references
+      // (an imported file's whole token stream, not just its declaration -
+      // an internal use inside the import needs renaming too, not only
+      // its declaration) - not a reverse, project-wide "which files import
+      // this one" search.
+      val modules = importedModules(text)
+      var moduleIndex = 0
+      while moduleIndex < List.len(modules) {
+        val resolved = resolveModulePath(lspUriToPath(uri), List.getOrPanic(modules, moduleIndex), [])
+        val importedUri = lspPathToUri(resolved.path)
+        val importedText = lspReadFile(documents, importedUri, resolved.path)
+        if not Text.eq(importedText, "") then {
+          val importedOccurrences = lspOccurrences(lex(importedText), name)
+          if List.len(importedOccurrences) > 0 then {
+            val importedEdits = Json.array()
+            for importedOccurrence in importedOccurrences { JsonValue.push(importedEdits, lspTextEditJson(importedOccurrence, newName)) }
+            JsonValue.set(changes, importedUri, importedEdits)
+          }
+        }
+        moduleIndex = moduleIndex + 1
+      }
+
       val workspaceEdit = Json.object()
       JsonValue.set(workspaceEdit, "changes", changes)
       lspRespond(id, workspaceEdit)

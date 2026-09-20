@@ -1204,8 +1204,22 @@ things rather than writing the obvious thing.
   also import the same helper but aren't related to the currently
   open document - a reverse, project-wide "which files import this
   one" index, a materially bigger feature than "look at what I use".
-  Rename/completion remain single-file only; code actions remain
-  unaddressed.
+  `textDocument/rename` shares the exact same one-level scope and
+  walk as references - a renamed name imported from another file now
+  rewrites its declaration and every internal use inside the imported
+  file too, not just call sites in the currently open document (a
+  rename that only touched the caller would otherwise leave the
+  program broken: the declaration keeps its old name, the caller now
+  references a name that doesn't exist). The only structural
+  difference from references: a `WorkspaceEdit`'s `changes` field is
+  keyed by uri, so each imported file with at least one occurrence
+  gets its own key, not entries appended to the current document's own
+  edit list. This closes out cross-file support for all four
+  capabilities that need it (definition/hover/references/rename) at
+  the same one-level-of-direct-imports scope throughout; `completion`
+  doesn't need it the same way (it already returns every file-local
+  declaration unfiltered, not a single resolved name). Code actions
+  remain unaddressed.
 - project-wide symbol indexing without slowing single-file checks;
 - debugger protocol support after bytecode/source maps stabilize;
 - ~~generated API documentation~~ — shipped as `lume api-docs`, a
