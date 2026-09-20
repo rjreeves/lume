@@ -1403,9 +1403,20 @@ things rather than writing the obvious thing.
   before `compileOrCache` ever checks whether the header hash still
   matches, so a cache miss pays that wasted decode cost on top of a
   full recompile. See `BENCHMARKS.md`'s "One-function incremental
-  rebuild" checkpoint for the full numbers and root cause. Flagged as
-  a real, fixable inefficiency (check the hash before decoding the
-  body) but not fixed here - out of scope for a measurement task;
+  rebuild" checkpoint for the full numbers and root cause. The flagged
+  fix landed too: `decodeArtifact` now delegates to a new
+  `decodeArtifactHeader` that `compileOrCache` checks first, so the
+  full instruction decode only ever runs once the header confirms a
+  hit is possible - a real, verified, but *partial* win (the "changed"
+  case's excess over "cold" dropped from +25%/+8% to +21%/+6% for the
+  single-file/multi-module cases respectively, not eliminated). The
+  residual cost is `readFileBytes` still reading the entire stale
+  artifact into memory before the header is even checked - closing
+  that fully needs a Certo primitive for reading a fixed byte range
+  from a file rather than the whole thing, which doesn't exist yet
+  (`readBytes(n)` reads from the LSP stdin stream, not an arbitrary
+  file) - the same "blocked on an upstream primitive" shape several
+  other items here already carry, not attempted in this pass;
 - ~~measure 100,000-line modules and multi-module projects~~ — shipped
   as `benchmark-100000.ps1` (the same trivial shape every 10,000-line
   benchmark already uses, scaled 10x - the first measurement in this
