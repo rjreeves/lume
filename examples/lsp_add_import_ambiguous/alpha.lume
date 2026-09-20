@@ -1,0 +1,3 @@
+fn add_import_ambiguous() -> int {
+  return 1
+}

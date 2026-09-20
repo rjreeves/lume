@@ -1228,11 +1228,23 @@ things rather than writing the obvious thing.
   of file, reusing `lex()`'s own trailing `eof` token position - no
   new line-counting logic), with zero ambiguity about what "fixing" it
   means. Verified live that the returned edit, once applied, actually
-  compiles, not just that it looks plausible. Most other E-codes
-  aren't mechanically fixable this way (a "did you mean" fix for an
-  unknown name needs real string-similarity logic, "add missing `use`
-  import" needs scanning sibling files for a match) - both remain open
-  follow-ups, not attempted here.
+  compiles, not just that it looks plausible. "Add missing `use`
+  import" followed: for an `E0216 unknown function` diagnostic, scan
+  the current document's own directory (one level, not recursive - the
+  same scope every other cross-file capability in this arc uses) for a
+  sibling `.lume` file declaring that name as a function
+  (`lspDeclarationSites`/`lspFindDeclaration`, already built for
+  cross-file definition/hover), and offer "Add `use <module>`" -
+  inserted right after the file's existing leading `use` block, or at
+  the top of the file if it has none (`lspUseInsertPosition`, mirroring
+  `lspEofPosition`'s own trailing-token-position trick, `:6252`). More
+  than one sibling declaring the same missing name yields one action
+  per file rather than guessing - each already disambiguated by its own
+  module name. Verified live the same way as `fn main`'s own fix
+  (applying the edit produces source that actually compiles), plus the
+  insertion-position and multiple-match branches specifically. A "did
+  you mean" fix for a genuine typo still needs real string-similarity
+  logic and remains the one open follow-up here.
 - project-wide symbol indexing without slowing single-file checks;
 - debugger protocol support after bytecode/source maps stabilize;
 - ~~generated API documentation~~ — shipped as `lume api-docs`, a

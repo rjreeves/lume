@@ -1512,6 +1512,69 @@ try {
   $codeActionRespUndefined = Read-LspMessage $lspProc | ConvertFrom-Json
   Assert-Equal 'code actions for an unrelated diagnostic is empty' '0' "$($codeActionRespUndefined.result.Count)"
 
+  # code actions: "add missing use import" - a call to a function that
+  # exists in a real sibling .lume file (examples\lsp_add_import\greeter.lume)
+  # but isn't imported yet. Applying the edit must actually compile, same
+  # bar as the fn-main fix above.
+  $addImportUri = 'file:///' + ((Join-Path $PSScriptRoot 'examples\lsp_add_import\main_probe.lume') -replace '\\', '/')
+  $addImportSource = "fn main(args: [str]) -> int {`n  print(str.from_int(add_import_greeting()))`n  return 0`n}`n"
+  $didOpenAddImport = @{ jsonrpc = '2.0'; method = 'textDocument/didOpen'; params = @{ textDocument = @{ uri = $addImportUri; text = $addImportSource } } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $didOpenAddImport
+  $addImportDiag = Read-LspMessage $lspProc | ConvertFrom-Json
+  Assert-Equal 'lsp reports unknown function for the un-imported call' 'E0216' $addImportDiag.params.diagnostics[0].code
+
+  $addImportReq = @{ jsonrpc = '2.0'; id = 28; method = 'textDocument/codeAction'; params = @{ textDocument = @{ uri = $addImportUri }; range = @{ start = @{ line = 1; character = 0 }; end = @{ line = 1; character = 0 } }; context = @{ diagnostics = $addImportDiag.params.diagnostics } } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $addImportReq
+  $addImportResp = Read-LspMessage $lspProc | ConvertFrom-Json
+  Assert-Equal 'add-use-import offers exactly one fix' '1' "$($addImportResp.result.Count)"
+  Assert-Equal 'add-use-import title names the sibling module' 'Add `use greeter`' $addImportResp.result[0].title
+  Assert-Equal 'add-use-import kind is quickfix' 'quickfix' $addImportResp.result[0].kind
+
+  $addImportEdit = $addImportResp.result[0].edit.changes.$addImportUri[0]
+  Assert-Equal 'add-use-import inserts at the top of the file when no imports exist' '0' "$($addImportEdit.range.start.line)"
+  $addImportFixedSource = $addImportEdit.newText + $addImportSource
+  # Written next to the real sibling greeter.lume, not $env:TEMP - `use
+  # greeter` resolves relative to the checked file's own directory, so the
+  # compiled-check must run from the same directory as the fixture.
+  $addImportFixedPath = Join-Path $PSScriptRoot 'examples\lsp_add_import\code_action_add_import_fixed_temp.lume'
+  Set-Content -LiteralPath $addImportFixedPath -Value $addImportFixedSource -NoNewline
+  try {
+    & $Lume check $addImportFixedPath | Out-Null
+    Assert-Equal 'applying the add-use-import edit produces source that compiles' '0' "$LASTEXITCODE"
+  } finally {
+    Remove-Item -LiteralPath $addImportFixedPath -ErrorAction SilentlyContinue
+  }
+
+  # Insertion must land after an existing leading use block, not at the top
+  # of the file - examples\lsp_add_import_existing\ has two real sibling
+  # files: one already imported (existing.lume), one not (target.lume).
+  $addImportExistingUri = 'file:///' + ((Join-Path $PSScriptRoot 'examples\lsp_add_import_existing\main_probe.lume') -replace '\\', '/')
+  $addImportExistingSource = "use existing`n`nfn main(args: [str]) -> int {`n  print(str.from_int(add_import_target()))`n  return 0`n}`n"
+  $didOpenAddImportExisting = @{ jsonrpc = '2.0'; method = 'textDocument/didOpen'; params = @{ textDocument = @{ uri = $addImportExistingUri; text = $addImportExistingSource } } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $didOpenAddImportExisting
+  $addImportExistingDiag = Read-LspMessage $lspProc | ConvertFrom-Json
+  $addImportExistingReq = @{ jsonrpc = '2.0'; id = 29; method = 'textDocument/codeAction'; params = @{ textDocument = @{ uri = $addImportExistingUri }; range = @{ start = @{ line = 3; character = 0 }; end = @{ line = 3; character = 0 } }; context = @{ diagnostics = $addImportExistingDiag.params.diagnostics } } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $addImportExistingReq
+  $addImportExistingResp = Read-LspMessage $lspProc | ConvertFrom-Json
+  Assert-Equal 'add-use-import (with existing import) offers exactly one fix' '1' "$($addImportExistingResp.result.Count)"
+  Assert-Equal 'add-use-import (with existing import) title' 'Add `use target`' $addImportExistingResp.result[0].title
+  $addImportExistingEdit = $addImportExistingResp.result[0].edit.changes.$addImportExistingUri[0]
+  Assert-Equal 'add-use-import inserts right after the existing use block, not at the top' '1' "$($addImportExistingEdit.range.start.line)"
+
+  # Ambiguity: two sibling files (alpha.lume/beta.lume) both declare the
+  # same missing name - both must be offered, not just the first match.
+  $addImportAmbiguousUri = 'file:///' + ((Join-Path $PSScriptRoot 'examples\lsp_add_import_ambiguous\main_probe.lume') -replace '\\', '/')
+  $addImportAmbiguousSource = "fn main(args: [str]) -> int {`n  print(str.from_int(add_import_ambiguous()))`n  return 0`n}`n"
+  $didOpenAddImportAmbiguous = @{ jsonrpc = '2.0'; method = 'textDocument/didOpen'; params = @{ textDocument = @{ uri = $addImportAmbiguousUri; text = $addImportAmbiguousSource } } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $didOpenAddImportAmbiguous
+  $addImportAmbiguousDiag = Read-LspMessage $lspProc | ConvertFrom-Json
+  $addImportAmbiguousReq = @{ jsonrpc = '2.0'; id = 30; method = 'textDocument/codeAction'; params = @{ textDocument = @{ uri = $addImportAmbiguousUri }; range = @{ start = @{ line = 1; character = 0 }; end = @{ line = 1; character = 0 } }; context = @{ diagnostics = $addImportAmbiguousDiag.params.diagnostics } } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $addImportAmbiguousReq
+  $addImportAmbiguousResp = Read-LspMessage $lspProc | ConvertFrom-Json
+  Assert-Equal 'ambiguous add-use-import offers one fix per matching sibling' '2' "$($addImportAmbiguousResp.result.Count)"
+  $addImportAmbiguousTitles = $addImportAmbiguousResp.result | ForEach-Object { $_.title } | Sort-Object
+  Assert-Equal 'ambiguous add-use-import titles name each distinct sibling' 'Add `use alpha`,Add `use beta`' ($addImportAmbiguousTitles -join ',')
+
   # completion: no scope resolution - every builtin plus every fn/type/enum
   # declared in the open document, unfiltered by cursor position or partial
   # word. Spot checks, not an exhaustive enumeration of every builtin (the

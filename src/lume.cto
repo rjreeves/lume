@@ -6293,6 +6293,97 @@ fn lspMissingMainCodeAction(uri: Text, text: Text): JsonValue = {
   action
 }
 
+// A published diagnostic's own "message" field is already just
+// "unknown function `name`" - lspPublishDiagnostics strips the "E0NNN
+// line N:" prefix before it ever reaches a client, via diagnosticJson's
+// own extraction. "" (this file's usual empty-sentinel) if no backtick
+// pair is found, so a caller can treat that the same as "no match".
+fn lspBacktickName(message: Text): Text = {
+  val start = Text.indexOf(message, "`") ?? -1
+  if start < 0 then ""
+  else {
+    val afterStart = Text.slice(message, start + 1, Text.len(message))
+    val endOffset = Text.indexOf(afterStart, "`") ?? -1
+    if endOffset < 0 then "" else Text.slice(afterStart, 0, endOffset)
+  }
+}
+
+// Mirrors lspEofPosition's own shape, but for "just past the leading
+// use-import block" instead of "end of file" - the same walk
+// importedModules already uses to collect module names, tracking the
+// last use statement's own line instead. {line: 0, character: 0} (top
+// of file) when there is no leading use block at all.
+fn lspUseInsertPosition(tokens: List<Token>): JsonValue = {
+  var index = skipNewlines(tokens, 0)
+  var lastUseLine = 0
+  var scanning = true
+  while scanning and not Text.eq(at(tokens, index).kind, "eof") {
+    if Text.eq(at(tokens, index).text, "use") then {
+      lastUseLine = at(tokens, index).line
+      while not Text.eq(at(tokens, index).kind, "newline") and not Text.eq(at(tokens, index).kind, "eof") { index = index + 1 }
+      index = skipNewlines(tokens, index)
+    } else { scanning = false }
+  }
+  val pos = Json.object()
+  JsonValue.set(pos, "line", Json.int(lastUseLine))
+  JsonValue.set(pos, "character", Json.int(0))
+  pos
+}
+
+fn lspAddUseImportCodeAction(uri: Text, moduleName: Text, insertPos: JsonValue): JsonValue = {
+  val range = Json.object()
+  JsonValue.set(range, "start", insertPos)
+  JsonValue.set(range, "end", insertPos)
+  val edit = Json.object()
+  JsonValue.set(edit, "range", range)
+  JsonValue.set(edit, "newText", Json.string("use " ++ moduleName ++ newline()))
+  val edits = Json.array()
+  JsonValue.push(edits, edit)
+  val changes = Json.object()
+  JsonValue.set(changes, uri, edits)
+  val workspaceEdit = Json.object()
+  JsonValue.set(workspaceEdit, "changes", changes)
+  val action = Json.object()
+  JsonValue.set(action, "title", Json.string("Add `use " ++ moduleName ++ "`"))
+  JsonValue.set(action, "kind", Json.string("quickfix"))
+  JsonValue.set(action, "edit", workspaceEdit)
+  action
+}
+
+// One level (the current document's own directory, not recursive) of
+// candidate sibling .lume files declaring `name` as a function - the
+// same "one hop" scope this arc's cross-file resolution already uses
+// for use imports themselves. A candidate already present in
+// importedModules is skipped (its own name wouldn't have gone
+// unresolved in the first place, but the check is cheap insurance
+// against ever suggesting a duplicate `use` line). More than one match
+// becomes more than one action - moduleName (a bare filename) is
+// already unique per file in a directory, so no separate
+// disambiguation is needed in the title.
+fn lspSiblingUseCandidates(documents: LspDocuments, currentPath: Text, currentText: Text, name: Text, uri: Text, insertPos: JsonValue): List<JsonValue> = {
+  var actions: List<JsonValue> = []
+  val imported = importedModules(currentText)
+  if let Some(entries) = listDir(Path.dirname(currentPath)) {
+    for entry in entries {
+      if Text.endsWith(entry, ".lume") then {
+        val moduleName = Text.slice(entry, 0, Text.len(entry) - 5)
+        val candidatePath = Path.join(Path.dirname(currentPath), entry)
+        if not Text.eq(candidatePath, currentPath) and not containsName(imported, moduleName) then {
+          val candidateUri = lspPathToUri(candidatePath)
+          val candidateText = lspReadFile(documents, candidateUri, candidatePath)
+          if not Text.eq(candidateText, "") then {
+            val declaration = lspFindDeclaration(lspDeclarationSites(lex(candidateText)), name)
+            if declaration.header != -1 and Text.eq(declaration.keyword, "fn") then {
+              actions = List.push(actions, lspAddUseImportCodeAction(uri, moduleName, insertPos))
+            }
+          }
+        }
+      }
+    }
+  }
+  actions
+}
+
 fn lspHandleCodeAction(id: JsonValue, params: JsonValue, documents: LspDocuments): Unit [io] = {
   val textDocument = JsonValue.get(params, "textDocument")
   val uri = JsonValue.asText(JsonValue.get(textDocument, "uri"))
@@ -6302,11 +6393,21 @@ fn lspHandleCodeAction(id: JsonValue, params: JsonValue, documents: LspDocuments
   val documentIndex = lspDocumentIndex(documents.uris, uri)
   if documentIndex >= 0 and JsonValue.isArray(diagnostics) then {
     val text = List.getOrPanic(documents.texts, documentIndex)
+    val currentPath = lspUriToPath(uri)
     var index = 0
     while index < JsonValue.length(diagnostics) {
       val diagnostic = Json.parse(JsonValue.atText(diagnostics, index))
-      if Text.eq(JsonValue.asText(JsonValue.get(diagnostic, "code")), "E0201") then {
+      val code = JsonValue.asText(JsonValue.get(diagnostic, "code"))
+      if Text.eq(code, "E0201") then {
         JsonValue.push(actions, lspMissingMainCodeAction(uri, text))
+      } else if Text.eq(code, "E0216") then {
+        val name = lspBacktickName(JsonValue.asText(JsonValue.get(diagnostic, "message")))
+        if not Text.eq(name, "") then {
+          val insertPos = lspUseInsertPosition(lex(text))
+          for action in lspSiblingUseCandidates(documents, currentPath, text, name, uri, insertPos) {
+            JsonValue.push(actions, action)
+          }
+        }
       }
       index = index + 1
     }
