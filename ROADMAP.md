@@ -1390,7 +1390,21 @@ things rather than writing the obvious thing.
   string literals in compiler-generated source), as expected;
 - add persistent compiler-process measurements;
 - add one-function incremental rebuild benchmarks;
-- measure 100,000-line modules and multi-module projects;
+- ~~measure 100,000-line modules and multi-module projects~~ — shipped
+  as `benchmark-100000.ps1` (the same trivial shape every 10,000-line
+  benchmark already uses, scaled 10x - the first measurement in this
+  file's history past 10,000 lines) and `benchmark-multi-module.ps1`
+  (the identical 100,000 lines split across ten `use`-linked files, so
+  the two answer one real question rather than reporting two
+  disconnected numbers: does splitting into modules cost anything at
+  compile time beyond the raw line count). Both `TargetMet: True`
+  (~24x and ~27x over the 10,000-lines/second bar respectively) - see
+  `BENCHMARKS.md`'s "First measurement past 10,000 lines" checkpoint
+  for the real, somewhat counter-intuitive finding: the multi-module
+  project compiled **faster**, not slower (~9%, reproduced twice),
+  plausibly because ten smaller per-function scans beat one very long
+  one - not root-caused further here, a number on record rather than a
+  full investigation;
 - publish results across representative hardware.
 
 The roadmap target remains 10,000 lines in under 10 ms. It should not be

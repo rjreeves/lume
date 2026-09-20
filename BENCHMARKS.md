@@ -1916,3 +1916,62 @@ purely additive, dead-code-for-this-path change. No dedicated
 generic-dispatch figure had been recorded in this table's format
 before, so this run establishes that baseline going forward rather
 than reporting a delta.
+
+## First measurement past 10,000 lines, and the first multi-module benchmark (2026-09-20)
+
+Every benchmark in this file until now tops out at 10,000 lines in a
+single file. This closes both remaining items on ROADMAP.md's
+performance-engineering list at once, as one comparison rather than
+two disconnected numbers: the identical 100,000 lines of the identical
+trivial `total = total + 1` shape, generated both as one file
+(`benchmark-100000.ps1`) and as ten `use`-linked 10,000-line files
+(`benchmark-multi-module.ps1`, `chunk1.lume`-`chunk10.lume` each
+declaring a module-qualified `pub fn chunkN.run()`, the same
+filename-qualified naming `examples/modules/math.lume`/`stats.lume`
+already establish, plus a small `main.lume` that `use`s all ten and
+sums their results) - so the two numbers answer one real question:
+does splitting a program into modules cost anything at compile time
+beyond the raw line count?
+
+100,000 lines is 10x anything measured in this file's history, with no
+prior number to sanity-check against, so a single untimed `lume check`
+was run by hand first (mirroring how `benchmark-10000-features.ps1`'s
+own iteration count was originally chosen from a real measurement, not
+a guess) - it completed in ~624 ms with no memory concerns, well
+within budget for 30 fresh-process samples (~19 s total). Both new
+scripts use `benchmark-10000-features.ps1`'s fresh-process
+`Measure-Samples` pattern, never `lume benchmark`'s in-process loop -
+the "Fixing `lume benchmark`'s out-of-memory crash" checkpoint above
+already settled that this is required for any future large-program
+benchmark, not a fresh decision to make per script.
+
+| Benchmark | Total lines | Mean | Median | P95 | StdDev | Lines/second | `TargetMet` |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| Single file (`benchmark-100000.ps1`, 30 fresh-process samples) | 100,000 | 409.41 ms | 406.89 ms | 425.19 ms | 7.29 ms | 244,252 | `True`, ~24x over target |
+| Multi-module (`benchmark-multi-module.ps1`, 10 files, 30 fresh-process samples) | 100,025 | 373.29 ms | 371.55 ms | 398.03 ms | 7.89 ms | 267,957 | `True`, ~27x over target |
+
+**The multi-module project compiles faster, not slower** - about 9%
+faster in mean compile time despite the extra `use`-resolution and
+25 lines of root-file overhead. Reproduced twice before trusting it
+(a first pair of runs showed 412.29 ms / 377.02 ms, this second pair
+409.41 ms / 373.29 ms - consistent gap both times, not noise; stddev
+on both benchmarks is under 2.5% of the mean, a quiet machine). Not
+yet root-caused, but a plausible mechanism: splitting 99,996 sequential
+`total = total + 1` statements across ten separate function bodies
+means ten smaller, separately-scoped scans instead of one very long
+one - consistent with this file's own repeated history of
+"whole-program-instruction-list scan" costs (the protocol-scan and
+generic-dispatch-chain fixes earlier in this file) turning out to
+matter even after their specific complexity-class bugs were fixed,
+since a shorter list is cheaper to scan even at the same big-O class.
+Not investigated further here - this checkpoint's job is to put a real
+number on record, not to explain every constant-factor effect it
+surfaces.
+
+Correctness verified beyond `check` exiting 0: `lume run` on the
+multi-module root file returns exit code 99,960 (9,996 × 10 chunks)
+exactly, confirming all ten `use` imports actually resolved and
+contributed their own share of the total, not just that compilation
+succeeded. Both scripts follow this file's existing generator/
+`Measure-Samples` conventions exactly (copied in per-script rather
+than shared, matching every other benchmark script here).
