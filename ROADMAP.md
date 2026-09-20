@@ -1154,8 +1154,30 @@ things rather than writing the obvious thing.
   or partial-word prefix - real editors already fuzzy-filter
   completion items against whatever's typed client-side, so this
   isn't a workaround, just the same flat/name-based scope this arc
-  chose five times already. Only code actions, plus cross-file
-  resolution for every capability above, remain open;
+  chose five times already. `textDocument/definition` gained one
+  level of cross-file resolution: a call to a name not declared in
+  the open document now checks each of its direct `use` imports
+  (`importedModules`/`resolveModulePath`, already built for real
+  compilation, reused as-is - a same-package `use` resolves, a cross-
+  package dependency's doesn't, since package-manifest loading wasn't
+  added). Not a transitive walk of the whole import graph (if `A`
+  imports `B` imports `C` and the symbol lives in `C`, this won't find
+  it - the compiler's own `loadModule` does walk transitively, but
+  only to build one combined source blob for compilation, which loses
+  the per-file line/column identity a `Location` response needs).
+  Building this surfaced two separate findings, each spawned as its
+  own follow-up rather than fixed here: a Certo codegen bug (a `while`
+  loop condition reading a *nested* record field on a mutated `var`
+  produces broken C output - worked around the same way `findDep`'s
+  own `FindDepResult` already worked around a related class of issue,
+  by using a top-level `Bool` flag instead), and a separate, larger
+  gap in `lume lsp` itself: diagnostics never resolve `use` imports at
+  all, so any multi-file project shows spurious "unknown function"
+  errors in the editor even though the same code compiles and runs
+  correctly from the command line - `lspCheckDocument` compiles only
+  the raw single-document text, with no filesystem access. Hover/
+  references/rename/completion remain single-file only; code actions
+  remain unaddressed.
 - project-wide symbol indexing without slowing single-file checks;
 - debugger protocol support after bytecode/source maps stabilize;
 - ~~generated API documentation~~ — shipped as `lume api-docs`, a

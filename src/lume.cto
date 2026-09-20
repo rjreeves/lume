@@ -5884,6 +5884,78 @@ fn lspFindDeclaration(sites: List<LspDeclaration>, name: Text): LspDeclaration =
   result
 }
 
+// RFC 8089's file:// form for an absolute Windows drive path is
+// "file:///C:/...", not "file://C:/..." - readFile/Path.* expect
+// "C:/Users/..." (no leading slash), so the extra slash before the drive
+// letter must be stripped too, not just the "file://" scheme prefix.
+// Confirmed live before this fix: leaving it in place made readFile fail
+// to find a real file on disk that definitely existed.
+fn lspUriToPath(uri: Text): Text = {
+  val stripped = if Text.startsWith(uri, "file://") then Text.slice(uri, 7, Text.len(uri)) else uri
+  if Text.len(stripped) > 2 and Text.eq(charAt(stripped, 0), "/") and Text.eq(charAt(stripped, 2), ":") then {
+    Text.slice(stripped, 1, Text.len(stripped))
+  } else { stripped }
+}
+
+// The inverse: a Windows drive path ("C:/...", detected via a colon at
+// index 1) needs the extra slash reinserted to produce the standard
+// three-slash "file:///C:/..." form a real editor would send - a Unix
+// absolute path ("/home/...") already supplies its own leading slash, so
+// plain "file://" + path already comes out as the correct "file:///home/...".
+fn lspPathToUri(path: Text): Text = {
+  if Text.len(path) > 1 and Text.eq(charAt(path, 1), ":") then { "file:///" ++ path }
+  else { "file://" ++ path }
+}
+
+// Prefers the document store over disk - the user may have the imported
+// file open too, with unsaved edits newer than what's on disk. "" covers
+// both "not open and not on disk" and "genuinely empty file"; harmless
+// here, since either way lspDeclarationSites on empty text finds nothing.
+fn lspReadFile(documents: LspDocuments, uri: Text, path: Text): Text = {
+  val documentIndex = lspDocumentIndex(documents.uris, uri)
+  if documentIndex >= 0 then List.getOrPanic(documents.texts, documentIndex)
+  else { readFile(path) ?? "" }
+}
+
+// An explicit top-level `found` flag, not a nested sentinel field
+// (name.line == 0) read from a while loop's own condition - confirmed
+// live this is a genuine Certo codegen bug ("assigning to 'int64_t' from
+// incompatible type 'Token'" from the C compiler) when a loop condition
+// drills into a mutated var's nested record field. findDep's own
+// FindDepResult above already works around the same class of issue the
+// same way, for the same reason.
+type LspCrossFileMatch = {
+  uri: Text
+  found: Bool
+  name: Token
+}
+
+// One level of direct `use` imports only, resolved the same way the real
+// compiler resolves them for compilation (importedModules/
+// resolveModulePath, already built for that) - not a transitive walk of
+// the whole import graph. First match across the imports, in `use`-
+// statement order, wins - same flat, first-match philosophy already used
+// for same-file resolution. No package-manifest loading: resolveModulePath
+// is called with an empty visibleDeps list, so a same-package `use`
+// resolves correctly but a cross-package dependency's `use` won't -
+// documented v1 boundary, not an oversight.
+fn lspResolveCrossFile(documents: LspDocuments, currentPath: Text, currentText: Text, name: Text): LspCrossFileMatch = {
+  val modules = importedModules(currentText)
+  var index = 0
+  var result = LspCrossFileMatch { uri: "", found: false, name: makeToken("name", "", 0, 0) }
+  while index < List.len(modules) and not result.found {
+    val resolved = resolveModulePath(currentPath, List.getOrPanic(modules, index), [])
+    val importedUri = lspPathToUri(resolved.path)
+    val importedText = lspReadFile(documents, importedUri, resolved.path)
+    if not Text.eq(importedText, "") then {
+      val declaration = lspFindDeclaration(lspDeclarationSites(lex(importedText)), name)
+      if declaration.header != -1 then { result = LspCrossFileMatch { uri: importedUri, found: true, name: declaration.name } }
+    }
+    index = index + 1
+  }
+  result
+}
+
 fn lspHandleDefinition(id: JsonValue, params: JsonValue, documents: LspDocuments): Unit [io] = {
   val textDocument = JsonValue.get(params, "textDocument")
   val uri = JsonValue.asText(JsonValue.get(textDocument, "uri"))
@@ -5898,21 +5970,11 @@ fn lspHandleDefinition(id: JsonValue, params: JsonValue, documents: LspDocuments
     if Text.eq(name, "") then { lspRespond(id, Json.null()) }
     else {
       val declaration = lspFindDeclaration(lspDeclarationSites(requestTokens), name)
-      if declaration.header == -1 then { lspRespond(id, Json.null()) }
+      if declaration.header != -1 then { lspRespond(id, lspLocationJson(uri, declaration.name)) }
       else {
-        val startPos = Json.object()
-        JsonValue.set(startPos, "line", Json.int(declaration.name.line - 1))
-        JsonValue.set(startPos, "character", Json.int(declaration.name.column - 1))
-        val endPos = Json.object()
-        JsonValue.set(endPos, "line", Json.int(declaration.name.line - 1))
-        JsonValue.set(endPos, "character", Json.int(declaration.name.column - 1 + Text.len(declaration.name.text)))
-        val range = Json.object()
-        JsonValue.set(range, "start", startPos)
-        JsonValue.set(range, "end", endPos)
-        val location = Json.object()
-        JsonValue.set(location, "uri", Json.string(uri))
-        JsonValue.set(location, "range", range)
-        lspRespond(id, location)
+        val crossFile = lspResolveCrossFile(documents, lspUriToPath(uri), text, name)
+        if not crossFile.found then { lspRespond(id, Json.null()) }
+        else { lspRespond(id, lspLocationJson(crossFile.uri, crossFile.name)) }
       }
     }
   } else { lspRespond(id, Json.null()) }
