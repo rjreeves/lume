@@ -1461,7 +1461,29 @@ things rather than writing the obvious thing.
   string literals (153.87ms → 10.30ms per compile, byte-identical
   output). The two 10,000-line benchmark files are unaffected (no long
   string literals in compiler-generated source), as expected;
-- add persistent compiler-process measurements;
+- ~~add persistent compiler-process measurements~~ — shipped as
+  `benchmark-persistent-process.ps1` (see `BENCHMARKS.md`'s "Persistent
+  compiler-process measurements" checkpoint), the labelled
+  persistent-daemon test this file's own methodology ("exclude process
+  startup only in a separately labelled persistent-daemon test") had
+  never actually delivered. Lume has no real daemon - `lume benchmark
+  <path> <N>` (unchanged) is the only same-process repeated-compile
+  proxy that exists, and its known unbounded per-iteration memory
+  retention (Certo has no GC, ~110-140 MB/iteration on the feature-mix
+  file) raised a real question rather than an assumed one: does
+  per-iteration compile time drift upward as that retained heap grows?
+  Measured directly at `N` in `{1, 5, 20}` (~2.2-2.8 GB retained at
+  N=20, well inside this machine's headroom): no meaningful drift on
+  either the trivial or feature-mix 10,000-line file within that range,
+  confirmed across five separate runs while tuning the repeat count -
+  the leak is a real, separate scalability limitation for a genuinely
+  long-running process, just not one that shows up as measurable
+  per-iteration latency growth this bounded. Also produced, as a
+  byproduct of contrasting persistent vs. fresh-process means for the
+  same files: a real "startup + one disk read + CLI dispatch" gap
+  (17.87 ms / 36.59 ms for the two files) - larger than the ~9 ms
+  floor this file already established on a much smaller probe file,
+  since a 10,000-line file's own read cost is no longer negligible;
 - ~~add one-function incremental rebuild benchmarks~~ — shipped as
   `benchmark-incremental-rebuild.ps1`, and the honest answer is there
   is no incremental compilation to benchmark: `compileOrCache` caches
