@@ -1417,14 +1417,20 @@ things rather than writing the obvious thing.
   falling back to a full read only on an actual hit. Result: the
   multi-module case's gap is now closed within measurement noise
   (+1.2%, smaller than its own run-to-run stddev); the single-file
-  case narrowed further but still has a real ~19% residual, not fully
-  explained - see `BENCHMARKS.md`'s "Closing the gap with Certo's new
-  readFileBytesRange" checkpoint for the numbers and a plausible,
-  unconfirmed guess (rewriting a large existing file costing more than
-  creating a fresh one). Not chased down further - the primary,
-  well-understood cause (paying to read or decode a stale artifact
-  nobody needed) is fixed for both cases, and this residual is a
-  smaller, different, less-understood effect;
+  case narrowed further but kept a real ~19% residual. Investigated
+  that residual directly rather than leaving it a guess: two concrete
+  hypotheses (`saveArtifact` overwrite cost; the benchmark script's own
+  per-sample content-regeneration cost polluting the measurement) were
+  each tested in isolation and both ruled out - see `BENCHMARKS.md`'s
+  "Chasing the single-file residual" checkpoint for the full
+  measurements. Root cause remains open after a genuine, rigorous
+  attempt; both compiled artifacts are near-identical in size and
+  `lume check`'s own pure compile cost differs by only ~36 ms between
+  the two programs, nowhere near enough to explain the gap. Not a
+  correctness problem, and not chased further without a third concrete
+  hypothesis to test - the primary, well-understood cause (paying to
+  read or decode a stale artifact nobody needed) is fixed for both
+  cases;
 - ~~measure 100,000-line modules and multi-module projects~~ — shipped
   as `benchmark-100000.ps1` (the same trivial shape every 10,000-line
   benchmark already uses, scaled 10x - the first measurement in this
