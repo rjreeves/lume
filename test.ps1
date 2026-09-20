@@ -1354,6 +1354,34 @@ try {
   $renameRespWhitespace = Read-LspMessage $lspProc | ConvertFrom-Json
   Assert-Equal 'rename on whitespace returns null' '' "$($renameRespWhitespace.result)"
 
+  # cross-file definition: one level of direct `use` imports, resolved the
+  # same way the real compiler resolves them (importedModules/
+  # resolveModulePath). Needs a *real* file on disk - examples\
+  # cross_file_lsp_helper.lume - since this is the first LSP test in this
+  # arc where the requested name isn't declared in the open document at
+  # all. The "main" side is an in-memory-only document (its own uri never
+  # needs to exist on disk - only Path.dirname of it matters, to resolve
+  # `use cross_file_lsp_helper` against the real examples directory).
+  $crossFileHelperPath = Join-Path $PSScriptRoot 'examples\cross_file_lsp_helper.lume'
+  $crossFileHelperUri = 'file:///' + ($crossFileHelperPath -replace '\\', '/')
+  $crossFileMainUri = 'file:///' + ((Join-Path $PSScriptRoot 'examples\cross_file_lsp_main.lume') -replace '\\', '/')
+  $crossFileMainSource = "use cross_file_lsp_helper`n`nfn main(args: [str]) -> int {`n  print(add(1, 2))`n  return 0`n}`n"
+  $didOpenCrossFileMain = @{ jsonrpc = '2.0'; method = 'textDocument/didOpen'; params = @{ textDocument = @{ uri = $crossFileMainUri; text = $crossFileMainSource } } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $didOpenCrossFileMain
+  Read-LspMessage $lspProc | Out-Null
+
+  $crossFileDefReq = @{ jsonrpc = '2.0'; id = 22; method = 'textDocument/definition'; params = @{ textDocument = @{ uri = $crossFileMainUri }; position = @{ line = 3; character = 9 } } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $crossFileDefReq
+  $crossFileDefResp = Read-LspMessage $lspProc | ConvertFrom-Json
+  Assert-Equal 'cross-file definition resolves to the imported file' $crossFileHelperUri $crossFileDefResp.result.uri
+  Assert-Equal 'cross-file definition range matches the declaration' '0' "$($crossFileDefResp.result.range.start.line)"
+
+  # Regression check: a same-file declaration must still resolve without
+  # ever touching the cross-file path.
+  Send-LspMessage $lspProc $defReq
+  $sameFileDefResp = Read-LspMessage $lspProc | ConvertFrom-Json
+  Assert-Equal 'same-file definition still resolves unchanged' $defUri $sameFileDefResp.result.uri
+
   # completion: no scope resolution - every builtin plus every fn/type/enum
   # declared in the open document, unfiltered by cursor position or partial
   # word. Spot checks, not an exhaustive enumeration of every builtin (the
