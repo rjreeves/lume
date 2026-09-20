@@ -133,6 +133,7 @@ Generated from `builtinNames()`/`builtinCounts()` in `src/lume.cto` (the same so
 - `result.is_ok` - 1 argument(s)
 - `result.value` - 1 argument(s)
 - `result.error` - 1 argument(s)
+- `result.to_result` - 1 argument(s)
 
 ## fixture
 

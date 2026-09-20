@@ -431,6 +431,25 @@ $structuredFailure = & $Lume run (Join-Path $PSScriptRoot 'examples\structured_e
 if ($LASTEXITCODE -ne 1) { throw "structured failure should exit 1" }
 Assert-Equal 'structured error propagation' ('cannot read file `' + $missingPath + '`') ($structuredFailure -join "`n")
 
+# result.to_result bridges the shorthand result<T,E> every I/O builtin
+# returns into a real, matchable Result<T,E> - the two representations
+# are otherwise non-interchangeable (SPEC.md's "Two different Result
+# representations"). Both the Ok and Err paths must reach their own
+# match arm with the payload intact, and the bridged value must
+# type-check against a plain Result<str, str>-typed parameter.
+$resultBridgeOk = & $Lume run (Join-Path $PSScriptRoot 'examples\result_bridge.lume') (Join-Path $PSScriptRoot 'examples\result_bridge_input.txt')
+if ($LASTEXITCODE -ne 0) { throw "result.to_result Ok path exited $LASTEXITCODE" }
+Assert-Equal 'result.to_result bridges an Ok shorthand result into a matchable Result' 'ok: bridged' ($resultBridgeOk -join "`n")
+
+$resultBridgeMissingPath = Join-Path $PSScriptRoot 'examples\does_not_exist_result_bridge.txt'
+$resultBridgeErr = & $Lume run (Join-Path $PSScriptRoot 'examples\result_bridge.lume') $resultBridgeMissingPath
+if ($LASTEXITCODE -ne 0) { throw "result.to_result Err path exited $LASTEXITCODE" }
+Assert-Equal 'result.to_result bridges an Err shorthand result into a matchable Result' ('err: cannot read file `' + $resultBridgeMissingPath + '`') ($resultBridgeErr -join "`n")
+
+$resultBridgeTypeError = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_result_to_result.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "result.to_result on a non-result value should fail to compile" }
+Assert-Equal 'result.to_result requires a result value' 'E0622 line 2: result operation requires result value' ($resultBridgeTypeError -join "`n")
+
 $roundTripPath = Join-Path $PSScriptRoot 'dist\round-trip.txt'
 $fileWrite = & $Lume run (Join-Path $PSScriptRoot 'examples\file_write.lume') $roundTripPath
 if ($LASTEXITCODE -ne 0) { throw "file write exited $LASTEXITCODE" }

@@ -1105,7 +1105,7 @@ fn builtinNames(): List<Text> = [
   "http.get", "http.post", "http.put", "http.delete", "http.request", "http.request_with_limit", "http.request_bytes", "http.status", "http.body", "http.content_type", "http.ok", "http.body_bytes", "http.truncated",
   "list.len", "list.get", "list.push", "list.map", "list.filter", "list.find", "list.fold",
   "map.new", "map.len", "map.get", "map.has", "map.set", "map.remove", "map.keys", "map.values", "map.map", "map.filter", "map.fold",
-  "result.ok", "result.err", "result.is_ok", "result.value", "result.error",
+  "result.ok", "result.err", "result.is_ok", "result.value", "result.error", "result.to_result",
   "fixture.temp_dir", "fixture.cleanup",
   "bytes.from_str", "bytes.to_str", "bytes.length",
   "expect.equal", "expect.true", "expect.ok", "expect.err", "expect.some",
@@ -1127,7 +1127,7 @@ fn builtinCounts(): List<Int> = [
   1, 3, 3, 1, 4, 5, 4, 1, 1, 1, 1, 1, 1,
   1, 2, 2, 2, 2, 2, 3,
   0, 1, 2, 2, 3, 2, 1, 1, 2, 2, 3,
-  1, 1, 1, 1, 1,
+  1, 1, 1, 1, 1, 1,
   0, 1,
   1, 1, 1,
   2, 1, 1, 1, 1,
@@ -2824,6 +2824,16 @@ fn checkBuiltinTypes(code: List<Instruction>, name: Text, stackInput: List<Text>
     if Text.eq(name, "result.is_ok") then { resultType = "bool" }
     else if Text.eq(name, "result.error") then { resultType = "str" }
     else { resultType = resultValueType(valueType.value) }
+  } else if Text.eq(name, "result.to_result") then {
+    // Bridges the shorthand `result<T,E>` builtins return into a real,
+    // matchable `Result<T,E>` enum value - the two runtime
+    // representations are otherwise non-interchangeable (see SPEC.md's
+    // "Two different Result representations"). resultValueType/
+    // resultErrorType already tolerate either case prefix.
+    val valueType = pop(stack)
+    stack = valueType.stack
+    if not Text.startsWith(valueType.value, "result<") then { problem = "E0622 result operation requires result value" }
+    resultType = "Result<" ++ resultValueType(valueType.value) ++ "," ++ resultErrorType(valueType.value) ++ ">"
   } else if Text.eq(name, "fs.write_text") or Text.eq(name, "fs.try_write_text") or Text.eq(name, "str.contains") or Text.eq(name, "str.starts_with") or Text.eq(name, "str.ends_with") or Text.eq(name, "json.get") or Text.eq(name, "path.join") or Text.eq(name, "env.set") then {
     val right = pop(stack)
     val left = pop(right.stack)
@@ -4479,6 +4489,33 @@ fn callBuiltin(code: List<Instruction>, name: Text, input: List<Text>, deadlineM
     } else {
       if lumeResultIsOk(one.value) then { problem = "E0320 cannot read error from ok result" }
       else { result = textValue(resultInner(one.value)) }
+    }
+  } else if Text.eq(name, "result.to_result") then {
+    // Bridges a shorthand result into the same "v:"-tagged JSON shape
+    // buildVariant produces for any real enum value - the Ok/Err payload
+    // field names (value/error) match the Result<T,E> schema seeded once
+    // as a compile-start prelude instruction (enum_type
+    // "Result<T,E>|Ok=value=T;Err=error=E"). resultOk's own inner value
+    // is already a normally-tagged runtime value (e.g. "s:hello"), same
+    // as any other enum payload - but resultErr's own inner value is a
+    // *plain, untagged* Text message (confirmed live: every resultErr
+    // call site passes a bare error string straight through, unlike
+    // resultOk's callers), so it needs textValue's own "s:" tag applied
+    // here before use - storing it untagged corrupted the first two
+    // characters of every bridged error message when later code tried
+    // to read the payload as an ordinarily-tagged value and stripped
+    // what it assumed was a two-character tag prefix.
+    val one = pop(stack)
+    stack = one.stack
+    if not Text.eq(valueKind(one.value), "r:") then { problem = "E0318 result operation requires a result value" }
+    else {
+      val isOk = lumeResultIsOk(one.value)
+      val payload = if isOk then resultInner(one.value) else textValue(resultInner(one.value))
+      val root = Json.object()
+      JsonValue.set(root, "$enum", Json.string("Result"))
+      JsonValue.set(root, "$variant", Json.string(if isOk then "Ok" else "Err"))
+      JsonValue.set(root, (if isOk then "value" else "error"), Json.string(payload))
+      result = "v:" ++ Json.stringify(root)
     }
   } else if Text.eq(name, "process.code") or Text.eq(name, "process.stdout") or Text.eq(name, "process.stderr") or Text.eq(name, "process.ok") then {
     val one = pop(stack)
