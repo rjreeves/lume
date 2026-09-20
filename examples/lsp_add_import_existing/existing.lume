@@ -1,0 +1,3 @@
+fn existing_helper() -> int {
+  return 1
+}

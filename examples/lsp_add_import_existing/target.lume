@@ -1,0 +1,3 @@
+fn add_import_target() -> int {
+  return 99
+}
