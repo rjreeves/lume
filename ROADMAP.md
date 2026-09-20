@@ -1087,7 +1087,30 @@ things rather than writing the obvious thing.
   full `test.ps1` suite passing unchanged against the rebuilt binary.
   Windows-only - other platforms use a different linker path entirely
   and weren't measured or touched;
-- package signing and checksum verification;
+- package signing and checksum verification — investigated directly
+  (`resolveDependencies`/`computeLockContent`, `:5652`), not just
+  assumed: deferred for the same reason the sibling "cache resolved
+  dependencies by content hash" item above already is. Every
+  dependency today is a local filesystem path declared in `lume.json`
+  and pinned in `lume.lock.json` (name/version/path/dependency names)
+  - there is no registry, no remote fetch, no network transport
+  anywhere in the package system for a signature or checksum to defend
+  against tampering *in*. Signing a file the consumer already has full
+  local read access to, with no distribution channel to attach the
+  signature to and no registry authority to establish signer identity
+  against, would be security theater rather than a real guarantee.
+  Revisit once packages can come from somewhere other than the local
+  filesystem, the same trigger condition already on record for the
+  content-hash-caching item.
+  One real, narrower gap exists independently of signing, confirmed
+  live: the lock file records each dependency's *declared* metadata
+  but never a hash of its actual `.lume` source files, so `lume
+  install --check` catches a manifest that drifted but not source
+  files quietly hand-edited without re-running install. Left open
+  rather than bundled into this item - it's a drift-detection
+  improvement to the existing local-path package system, not signing
+  or checksum verification in the sense this bullet means, and doesn't
+  need a registry to be worth doing on its own;
 - ~~a stable bytecode version and compatibility policy~~ — the
   version-*format* half was already covered (`LBC4`'s own magic
   number), but investigating the `.lbc` cache directly found a real,
