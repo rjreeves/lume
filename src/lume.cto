@@ -5762,9 +5762,28 @@ fn lspPublishDiagnostics(uri: Text, problem: Text): Unit [io] = {
   lspWriteMessage(Json.stringify(notification))
 }
 
-fn lspCheckDocument(uri: Text, text: Text): Unit [io] = {
-  val outcome = compileSource(text)
-  lspPublishDiagnostics(uri, outcome.problem)
+// Tries the single-file compile first and only reaches for a combined
+// "imports + this document" compile to answer one yes/no question - does
+// resolving imports make this specific failure go away - never as the
+// source of the diagnostic actually published. This sidesteps line-number
+// arithmetic entirely: a diagnostic that survives both compiles is always
+// the single-file one, whose line numbers are already correct for this
+// document. Confirmed live before this fix: a file `use`-importing a
+// function from another real file compiled and ran correctly from the
+// command line, but reported a false "unknown function" diagnostic through
+// lume lsp, since this function never looked at the import at all.
+fn lspCheckDocument(documents: LspDocuments, uri: Text, text: Text): Unit [io] = {
+  val singleFileOutcome = compileSource(text)
+  if Text.eq(singleFileOutcome.problem, "") then { lspPublishDiagnostics(uri, "") }
+  else {
+    val importedSource = lspImportedSource(documents, lspUriToPath(uri), text)
+    if Text.eq(importedSource, "") then { lspPublishDiagnostics(uri, singleFileOutcome.problem) }
+    else {
+      val combinedOutcome = compileSource(importedSource ++ text)
+      if Text.eq(combinedOutcome.problem, "") then { lspPublishDiagnostics(uri, "") }
+      else { lspPublishDiagnostics(uri, singleFileOutcome.problem) }
+    }
+  }
 }
 
 // Certo's Map is pointer-equality keyed (crates/stdlib/src/collections.rs:
@@ -5954,6 +5973,28 @@ fn lspResolveCrossFile(documents: LspDocuments, currentPath: Text, currentText: 
     index = index + 1
   }
   result
+}
+
+// Same one-level-of-direct-imports scope as lspResolveCrossFile above, for
+// the same reason (not a transitive whole-graph walk). Concatenates with a
+// newline separator between each import (safer than loadModule's own
+// no-separator concatenation - this combined text only exists transiently
+// for a yes/no compile check in lspCheckDocument below, never returned to
+// a client, so it doesn't need to byte-for-byte match loadModule's own
+// internal combine format). "" if there are no imports or none resolve to
+// real content - this file's existing empty-sentinel convention throughout.
+fn lspImportedSource(documents: LspDocuments, currentPath: Text, currentText: Text): Text = {
+  val modules = importedModules(currentText)
+  var combined = ""
+  var index = 0
+  while index < List.len(modules) {
+    val resolved = resolveModulePath(currentPath, List.getOrPanic(modules, index), [])
+    val importedUri = lspPathToUri(resolved.path)
+    val importedText = lspReadFile(documents, importedUri, resolved.path)
+    if not Text.eq(importedText, "") then { combined = combined ++ importedText ++ newline() }
+    index = index + 1
+  }
+  combined
 }
 
 fn lspHandleDefinition(id: JsonValue, params: JsonValue, documents: LspDocuments): Unit [io] = {
@@ -6213,7 +6254,7 @@ fn lspHandleMessage(parsed: JsonValue, documents: LspDocuments): LspState = {
     val uri = JsonValue.asText(JsonValue.get(textDocument, "uri"))
     val text = JsonValue.asText(JsonValue.get(textDocument, "text"))
     nextDocuments = lspDocumentsSet(documents, uri, text)
-    lspCheckDocument(uri, text)
+    lspCheckDocument(nextDocuments, uri, text)
   } else if Text.eq(method, "textDocument/didChange") then {
     val params = JsonValue.get(parsed, "params")
     val textDocument = JsonValue.get(params, "textDocument")
@@ -6222,7 +6263,7 @@ fn lspHandleMessage(parsed: JsonValue, documents: LspDocuments): LspState = {
     val firstChange = Json.parse(JsonValue.atText(contentChanges, 0))
     val text = JsonValue.asText(JsonValue.get(firstChange, "text"))
     nextDocuments = lspDocumentsSet(documents, uri, text)
-    lspCheckDocument(uri, text)
+    lspCheckDocument(nextDocuments, uri, text)
   } else if Text.eq(method, "textDocument/didClose") then {
     val params = JsonValue.get(parsed, "params")
     val textDocument = JsonValue.get(params, "textDocument")

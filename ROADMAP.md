@@ -1171,13 +1171,21 @@ things rather than writing the obvious thing.
   produces broken C output - worked around the same way `findDep`'s
   own `FindDepResult` already worked around a related class of issue,
   by using a top-level `Bool` flag instead), and a separate, larger
-  gap in `lume lsp` itself: diagnostics never resolve `use` imports at
-  all, so any multi-file project shows spurious "unknown function"
-  errors in the editor even though the same code compiles and runs
-  correctly from the command line - `lspCheckDocument` compiles only
-  the raw single-document text, with no filesystem access. Hover/
-  references/rename/completion remain single-file only; code actions
-  remain unaddressed.
+  gap in `lume lsp` itself: diagnostics never resolved `use` imports
+  at all, so any multi-file project showed spurious "unknown function"
+  errors in the editor even though the same code compiled and ran
+  correctly from the command line. ~~Fixed~~: `lspCheckDocument` tries
+  the single-file compile first and only reaches for a combined
+  "imports + this document" compile to answer one yes/no question -
+  does resolving imports make this specific failure go away - never
+  as the source of the diagnostic actually published, sidestepping
+  line-number arithmetic entirely (a diagnostic that survives both
+  compiles is always the single-file one, whose line numbers are
+  already correct for the open document). A genuine error unrelated
+  to any import, and an import that doesn't resolve to anything real,
+  both still report exactly as before - verified live, not just "the
+  false positive goes away". Hover/references/rename/completion
+  remain single-file only; code actions remain unaddressed.
 - project-wide symbol indexing without slowing single-file checks;
 - debugger protocol support after bytecode/source maps stabilize;
 - ~~generated API documentation~~ — shipped as `lume api-docs`, a

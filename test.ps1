@@ -1276,6 +1276,38 @@ try {
   $closedDiag = Read-LspMessage $lspProc | ConvertFrom-Json
   Assert-Equal 'lsp didClose clears diagnostics' '0' "$($closedDiag.params.diagnostics.Count)"
 
+  # Diagnostics resolve one level of use imports: a call to a name declared
+  # only in examples\cross_file_lsp_helper.lume (a real file on disk, added
+  # for the cross-file definition PR) must not report a false "unknown
+  # function" - confirmed live before this fix that it did, even though the
+  # identical source compiles and runs correctly from the command line.
+  $diagImportUri = 'file:///' + ((Join-Path $PSScriptRoot 'examples\diag_cross_file_main.lume') -replace '\\', '/')
+  $diagImportSource = "use cross_file_lsp_helper`n`nfn main(args: [str]) -> int {`n  print(add(1, 2))`n  return 0`n}`n"
+  $didOpenDiagImport = @{ jsonrpc = '2.0'; method = 'textDocument/didOpen'; params = @{ textDocument = @{ uri = $diagImportUri; text = $diagImportSource } } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $didOpenDiagImport
+  $diagImportDiag = Read-LspMessage $lspProc | ConvertFrom-Json
+  Assert-Equal 'lsp diagnostics suppress a false positive from an unresolved import' '0' "$($diagImportDiag.params.diagnostics.Count)"
+
+  # A genuine, unrelated error in the same file must still be reported
+  # correctly (with the single-file's own, correct line number) - the fix
+  # must not silently swallow real problems just because imports exist.
+  $diagImportBrokenSource = "use cross_file_lsp_helper`n`nfn main(args: [str]) -> int {`n  return undefinedVariable`n}`n"
+  $didChangeDiagImportBroken = @{ jsonrpc = '2.0'; method = 'textDocument/didChange'; params = @{ textDocument = @{ uri = $diagImportUri }; contentChanges = @(@{ text = $diagImportBrokenSource }) } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $didChangeDiagImportBroken
+  $diagImportBrokenDiag = Read-LspMessage $lspProc | ConvertFrom-Json
+  Assert-Equal 'lsp still reports a genuine error alongside a resolved import' 'E0210' $diagImportBrokenDiag.params.diagnostics[0].code
+  Assert-Equal 'lsp genuine-error line number is unaffected by the imported source' '3' "$($diagImportBrokenDiag.params.diagnostics[0].range.start.line)"
+
+  # An import that doesn't resolve to anything real must behave exactly as
+  # before - the original diagnostic still reported, nothing silently
+  # swallowed just because a (bogus) use statement is present.
+  $diagBadImportUri = 'file:///' + ((Join-Path $PSScriptRoot 'examples\diag_bad_import.lume') -replace '\\', '/')
+  $diagBadImportSource = "use does_not_exist_anywhere`n`nfn main(args: [str]) -> int {`n  print(add(1, 2))`n  return 0`n}`n"
+  $didOpenDiagBadImport = @{ jsonrpc = '2.0'; method = 'textDocument/didOpen'; params = @{ textDocument = @{ uri = $diagBadImportUri; text = $diagBadImportSource } } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $didOpenDiagBadImport
+  $diagBadImportDiag = Read-LspMessage $lspProc | ConvertFrom-Json
+  Assert-Equal 'lsp still reports unknown function when the import does not resolve' 'E0216' $diagBadImportDiag.params.diagnostics[0].code
+
   # go-to-definition: `add` is declared at 0-indexed line 0, columns 3-6; the
   # call site on line 5 references it. The document store is looked up by a
   # URI Text parsed from a *different* JSON-RPC message than the one that
