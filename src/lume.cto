@@ -6246,6 +6246,74 @@ fn lspHandleRename(id: JsonValue, params: JsonValue, documents: LspDocuments): U
   } else { lspRespond(id, Json.null()) }
 }
 
+// The eof token's own line/column is "one past the last real content" -
+// exactly what an end-of-file insertion needs, already computed by lex()
+// for every document, no new line-counting logic required.
+fn lspEofPosition(tokens: List<Token>): JsonValue = {
+  var index = 0
+  while not Text.eq(at(tokens, index).kind, "eof") { index = index + 1 }
+  val eofToken = at(tokens, index)
+  val pos = Json.object()
+  JsonValue.set(pos, "line", Json.int(eofToken.line - 1))
+  JsonValue.set(pos, "character", Json.int(eofToken.column - 1))
+  pos
+}
+
+// The one unambiguous, deterministic quick fix to start code actions with:
+// every Lume program needs a `fn main`, it's the very first error a new or
+// empty script hits, and the fix is always the exact same text in the
+// exact same place - no fuzzy "did you mean" matching needed, unlike most
+// other E-codes. Diagnostics that don't match a known fix are simply
+// skipped; the response is whatever actions were found, possibly empty,
+// never an error.
+fn lspMissingMainCodeAction(uri: Text, text: Text): JsonValue = {
+  val insertPos = lspEofPosition(lex(text))
+  // eof sitting at column 1 means the file already ends with a newline (a
+  // fresh line has just begun) - insert the stub directly. Otherwise the
+  // last existing line has no trailing newline yet, so one is prepended
+  // first to avoid gluing the stub onto it.
+  val needsLeadingNewline = JsonValue.asInt(JsonValue.get(insertPos, "character")) != 0
+  val stub = (if needsLeadingNewline then newline() else "") ++ "fn main(args: [str]) -> int {" ++ newline() ++ "  return 0" ++ newline() ++ "}" ++ newline()
+  val range = Json.object()
+  JsonValue.set(range, "start", insertPos)
+  JsonValue.set(range, "end", insertPos)
+  val edit = Json.object()
+  JsonValue.set(edit, "range", range)
+  JsonValue.set(edit, "newText", Json.string(stub))
+  val edits = Json.array()
+  JsonValue.push(edits, edit)
+  val changes = Json.object()
+  JsonValue.set(changes, uri, edits)
+  val workspaceEdit = Json.object()
+  JsonValue.set(workspaceEdit, "changes", changes)
+  val action = Json.object()
+  JsonValue.set(action, "title", Json.string("Insert `fn main`"))
+  JsonValue.set(action, "kind", Json.string("quickfix"))
+  JsonValue.set(action, "edit", workspaceEdit)
+  action
+}
+
+fn lspHandleCodeAction(id: JsonValue, params: JsonValue, documents: LspDocuments): Unit [io] = {
+  val textDocument = JsonValue.get(params, "textDocument")
+  val uri = JsonValue.asText(JsonValue.get(textDocument, "uri"))
+  val requestContext = JsonValue.get(params, "context")
+  val diagnostics = JsonValue.get(requestContext, "diagnostics")
+  val actions = Json.array()
+  val documentIndex = lspDocumentIndex(documents.uris, uri)
+  if documentIndex >= 0 and JsonValue.isArray(diagnostics) then {
+    val text = List.getOrPanic(documents.texts, documentIndex)
+    var index = 0
+    while index < JsonValue.length(diagnostics) {
+      val diagnostic = Json.parse(JsonValue.atText(diagnostics, index))
+      if Text.eq(JsonValue.asText(JsonValue.get(diagnostic, "code")), "E0201") then {
+        JsonValue.push(actions, lspMissingMainCodeAction(uri, text))
+      }
+      index = index + 1
+    }
+  }
+  lspRespond(id, actions)
+}
+
 fn lspCompletionItem(label: Text, kind: Int): JsonValue = {
   val item = Json.object()
   JsonValue.set(item, "label", Json.string(label))
@@ -6306,6 +6374,7 @@ fn lspHandleMessage(parsed: JsonValue, documents: LspDocuments): LspState = {
     JsonValue.set(capabilities, "referencesProvider", Json.bool(true))
     JsonValue.set(capabilities, "renameProvider", Json.bool(true))
     JsonValue.set(capabilities, "completionProvider", Json.object())
+    JsonValue.set(capabilities, "codeActionProvider", Json.bool(true))
     val result = Json.object()
     JsonValue.set(result, "capabilities", capabilities)
     lspRespond(id, result)
@@ -6341,6 +6410,8 @@ fn lspHandleMessage(parsed: JsonValue, documents: LspDocuments): LspState = {
     lspHandleRename(id, JsonValue.get(parsed, "params"), documents)
   } else if Text.eq(method, "textDocument/completion") then {
     lspHandleCompletion(id, JsonValue.get(parsed, "params"), documents)
+  } else if Text.eq(method, "textDocument/codeAction") then {
+    lspHandleCodeAction(id, JsonValue.get(parsed, "params"), documents)
   } else if Text.eq(method, "shutdown") then {
     lspRespond(id, Json.null())
   } else if Text.eq(method, "exit") then {

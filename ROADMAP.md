@@ -1219,7 +1219,20 @@ things rather than writing the obvious thing.
   the same one-level-of-direct-imports scope throughout; `completion`
   doesn't need it the same way (it already returns every file-local
   declaration unfiltered, not a single resolved name). Code actions
-  remain unaddressed.
+  followed with the one unambiguous, deterministic quick fix available
+  to start with: `textDocument/codeAction` now offers "Insert `fn
+  main`" for the `E0201 missing \`fn main\`` diagnostic - every Lume
+  program needs one, it's the very first error a new or empty script
+  hits, and the fix is always the exact same text (a stub `fn
+  main(args: [str]) -> int { return 0 }`) in the exact same place (end
+  of file, reusing `lex()`'s own trailing `eof` token position - no
+  new line-counting logic), with zero ambiguity about what "fixing" it
+  means. Verified live that the returned edit, once applied, actually
+  compiles, not just that it looks plausible. Most other E-codes
+  aren't mechanically fixable this way (a "did you mean" fix for an
+  unknown name needs real string-similarity logic, "add missing `use`
+  import" needs scanning sibling files for a match) - both remain open
+  follow-ups, not attempted here.
 - project-wide symbol indexing without slowing single-file checks;
 - debugger protocol support after bytecode/source maps stabilize;
 - ~~generated API documentation~~ — shipped as `lume api-docs`, a

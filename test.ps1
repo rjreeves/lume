@@ -1245,6 +1245,7 @@ try {
   Assert-Equal 'lsp initialize advertises referencesProvider' 'True' "$($initResponse.result.capabilities.referencesProvider)"
   Assert-Equal 'lsp initialize advertises renameProvider' 'True' "$($initResponse.result.capabilities.renameProvider)"
   Assert-Equal 'lsp initialize advertises completionProvider' 'True' "$($null -ne $initResponse.result.capabilities.completionProvider)"
+  Assert-Equal 'lsp initialize advertises codeActionProvider' 'True' "$($initResponse.result.capabilities.codeActionProvider)"
 
   Send-LspMessage $lspProc '{"jsonrpc":"2.0","method":"initialized","params":{}}'
 
@@ -1470,6 +1471,46 @@ try {
   $sameFileRenameResp = Read-LspMessage $lspProc | ConvertFrom-Json
   $sameFileRenameKeys = $sameFileRenameResp.result.changes.PSObject.Properties.Name
   Assert-Equal 'same-file rename still touches only one file' '1' "$($sameFileRenameKeys.Count)"
+
+  # code actions: the one unambiguous, deterministic quick fix - insert a
+  # missing `fn main` stub at end of file. Applying the returned edit must
+  # produce source that actually compiles, not just look plausible.
+  $noMainUri = 'file:///no_main.lume'
+  $noMainSource = 'fn helper() -> int { return 1 }'
+  $didOpenNoMain = @{ jsonrpc = '2.0'; method = 'textDocument/didOpen'; params = @{ textDocument = @{ uri = $noMainUri; text = $noMainSource } } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $didOpenNoMain
+  $noMainDiag = Read-LspMessage $lspProc | ConvertFrom-Json
+  Assert-Equal 'lsp reports missing fn main' 'E0201' $noMainDiag.params.diagnostics[0].code
+
+  $codeActionReq = @{ jsonrpc = '2.0'; id = 26; method = 'textDocument/codeAction'; params = @{ textDocument = @{ uri = $noMainUri }; range = @{ start = @{ line = 0; character = 0 }; end = @{ line = 0; character = 0 } }; context = @{ diagnostics = $noMainDiag.params.diagnostics } } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $codeActionReq
+  $codeActionResp = Read-LspMessage $lspProc | ConvertFrom-Json
+  Assert-Equal 'code action offers exactly one fix for missing fn main' '1' "$($codeActionResp.result.Count)"
+  Assert-Equal 'code action title' 'Insert `fn main`' $codeActionResp.result[0].title
+  Assert-Equal 'code action kind is quickfix' 'quickfix' $codeActionResp.result[0].kind
+
+  $noMainEdit = $codeActionResp.result[0].edit.changes.$noMainUri[0]
+  $fixedSource = $noMainSource + $noMainEdit.newText
+  $fixedPath = Join-Path $env:TEMP 'code_action_fixed_temp.lume'
+  Set-Content -LiteralPath $fixedPath -Value $fixedSource -NoNewline
+  try {
+    & $Lume check $fixedPath | Out-Null
+    Assert-Equal 'applying the code action edit produces source that compiles' '0' "$LASTEXITCODE"
+  } finally {
+    Remove-Item -LiteralPath $fixedPath -ErrorAction SilentlyContinue
+  }
+
+  # A diagnostic that doesn't match a known fix must return zero actions,
+  # not an error or a malformed one.
+  $undefinedUri = 'file:///undefined_for_code_action.lume'
+  $undefinedSource = "fn main(args: [str]) -> int {`n  return undefinedVariable`n}`n"
+  $didOpenUndefined = @{ jsonrpc = '2.0'; method = 'textDocument/didOpen'; params = @{ textDocument = @{ uri = $undefinedUri; text = $undefinedSource } } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $didOpenUndefined
+  $undefinedDiag = Read-LspMessage $lspProc | ConvertFrom-Json
+  $codeActionReqUndefined = @{ jsonrpc = '2.0'; id = 27; method = 'textDocument/codeAction'; params = @{ textDocument = @{ uri = $undefinedUri }; range = @{ start = @{ line = 1; character = 0 }; end = @{ line = 1; character = 0 } }; context = @{ diagnostics = $undefinedDiag.params.diagnostics } } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $codeActionReqUndefined
+  $codeActionRespUndefined = Read-LspMessage $lspProc | ConvertFrom-Json
+  Assert-Equal 'code actions for an unrelated diagnostic is empty' '0' "$($codeActionRespUndefined.result.Count)"
 
   # completion: no scope resolution - every builtin plus every fn/type/enum
   # declared in the open document, unfiltered by cursor position or partial
