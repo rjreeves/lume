@@ -1,0 +1,5 @@
+fn workspace_symbol_alpha_fn() -> int {
+  return 1
+}
+
+type WorkspaceSymbolAlphaType = { value: int }
