@@ -86,6 +86,17 @@ Generated from `builtinNames()`/`builtinCounts()` in `src/lume.cto` (the same so
 - `duration.hours` - 1 argument(s)
 - `duration.days` - 1 argument(s)
 
+## Duration
+
+- `Duration.of_seconds` - 1 argument(s)
+- `Duration.of_minutes` - 1 argument(s)
+- `Duration.of_hours` - 1 argument(s)
+- `Duration.of_days` - 1 argument(s)
+- `Duration.add` - 2 argument(s)
+- `Duration.sub` - 2 argument(s)
+- `Duration.scale` - 2 argument(s)
+- `Duration.to_seconds` - 1 argument(s)
+
 ## http
 
 - `http.get` - 1 argument(s)

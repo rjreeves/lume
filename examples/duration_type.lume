@@ -1,0 +1,27 @@
+fn main(args: [str]) -> int {
+  // Construction: one function per named unit, parallel to the existing
+  // plain-int duration.seconds/minutes/hours/days.
+  let five_minutes = Duration.of_minutes(5)
+  let one_hour = Duration.of_hours(1)
+
+  // Duration is an ordinary record - its field is readable directly.
+  print(str.from_int(five_minutes.seconds))
+
+  // Arithmetic is plain named functions, not operators - this language
+  // has no operator overloading.
+  let combined = Duration.add(five_minutes, one_hour)
+  print(str.from_int(combined.seconds))
+
+  let diff = Duration.sub(one_hour, five_minutes)
+  print(str.from_int(diff.seconds))
+
+  let doubled = Duration.scale(five_minutes, 2)
+  print(str.from_int(doubled.seconds))
+
+  // The bridge back to plain-int epoch arithmetic, where time.now()
+  // still lives.
+  let deadline = time.now() + Duration.to_seconds(five_minutes)
+  print(deadline - time.now() >= 299)
+
+  return 0
+}
