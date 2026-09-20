@@ -5802,6 +5802,7 @@ type LspDocuments = {
 type LspState = {
   documents: LspDocuments
   running: Bool
+  workspaceRoot: Text
 }
 
 fn lspDocumentIndex(uris: List<Text>, uri: Text): Int = {
@@ -6561,6 +6562,21 @@ fn lspSymbolKind(keyword: Text): Int = {
   else 13
 }
 
+// A name token's own span as an LSP range - shared by documentSymbol
+// (range == selectionRange) and workspace/symbol (inside a Location).
+fn lspTokenRange(token: Token): JsonValue = {
+  val startPos = Json.object()
+  JsonValue.set(startPos, "line", Json.int(token.line - 1))
+  JsonValue.set(startPos, "character", Json.int(token.column - 1))
+  val endPos = Json.object()
+  JsonValue.set(endPos, "line", Json.int(token.line - 1))
+  JsonValue.set(endPos, "character", Json.int(token.column - 1 + Text.len(token.text)))
+  val range = Json.object()
+  JsonValue.set(range, "start", startPos)
+  JsonValue.set(range, "end", endPos)
+  range
+}
+
 // Flat DocumentSymbol[] - lspDeclarationSites has no nesting/depth
 // tracking at all (an impl method's own `fn` surfaces as its own entry,
 // not nested under its type), the same "flat, not scope-aware"
@@ -6576,21 +6592,66 @@ fn lspHandleDocumentSymbol(id: JsonValue, params: JsonValue, documents: LspDocum
   if documentIndex >= 0 then {
     val text = List.getOrPanic(documents.texts, documentIndex)
     for site in lspDeclarationSites(lex(text)) {
-      val startPos = Json.object()
-      JsonValue.set(startPos, "line", Json.int(site.name.line - 1))
-      JsonValue.set(startPos, "character", Json.int(site.name.column - 1))
-      val endPos = Json.object()
-      JsonValue.set(endPos, "line", Json.int(site.name.line - 1))
-      JsonValue.set(endPos, "character", Json.int(site.name.column - 1 + Text.len(site.name.text)))
-      val range = Json.object()
-      JsonValue.set(range, "start", startPos)
-      JsonValue.set(range, "end", endPos)
+      val range = lspTokenRange(site.name)
       val symbol = Json.object()
       JsonValue.set(symbol, "name", Json.string(site.name.text))
       JsonValue.set(symbol, "kind", Json.int(lspSymbolKind(site.keyword)))
       JsonValue.set(symbol, "range", range)
       JsonValue.set(symbol, "selectionRange", range)
       JsonValue.push(symbols, symbol)
+    }
+  }
+  lspRespond(id, symbols)
+}
+
+fn lspSymbolInformation(uri: Text, site: LspDeclaration): JsonValue = {
+  val location = Json.object()
+  JsonValue.set(location, "uri", Json.string(uri))
+  JsonValue.set(location, "range", lspTokenRange(site.name))
+  val symbol = Json.object()
+  JsonValue.set(symbol, "name", Json.string(site.name.text))
+  JsonValue.set(symbol, "kind", Json.int(lspSymbolKind(site.keyword)))
+  JsonValue.set(symbol, "location", location)
+  symbol
+}
+
+// Case-insensitive plain substring match, no fuzzy scoring - matches
+// this arc's own "flat, simple, no ranking" philosophy everywhere else
+// (completion already documents that real editors fuzzy-filter
+// client-side; a search API is the one place this codebase filters
+// server-side, since the spec expects it, but a plain substring check
+// is enough here). An empty query matches everything, per spec.
+fn lspMatchesQuery(name: Text, query: Text): Bool = {
+  Text.eq(query, "") or Text.contains(Text.toLower(name), Text.toLower(query))
+}
+
+// No persistent cache - walks the workspace tree fresh on every
+// request. This arc has never built caching ahead of a proven need
+// (the one exception, compileOrCache's own .lbc cache, exists because
+// benchmarks specifically demanded it); workspace/symbol is a rare,
+// explicitly user-triggered request, not something fired on every
+// keystroke the way diagnostics are, so a full walkDir per request
+// never touches - and can't slow down - the single-file check path at
+// all. Same fixed 32-level depth bound `lume test <dir>`'s own
+// recursive discovery already uses, reused rather than inventing a new
+// one. An empty workspaceRoot (client never sent one) degrades to an
+// empty result rather than an error.
+fn lspHandleWorkspaceSymbol(id: JsonValue, params: JsonValue, documents: LspDocuments, workspaceRoot: Text): Unit [io] = {
+  val query = JsonValue.asText(JsonValue.get(params, "query"))
+  val symbols = Json.array()
+  if not Text.eq(workspaceRoot, "") then {
+    for path in walkDir(workspaceRoot, 0, 32) {
+      if Text.endsWith(path, ".lume") then {
+        val uri = lspPathToUri(path)
+        val text = lspReadFile(documents, uri, path)
+        if not Text.eq(text, "") then {
+          for site in lspDeclarationSites(lex(text)) {
+            if lspMatchesQuery(site.name.text, query) then {
+              JsonValue.push(symbols, lspSymbolInformation(uri, site))
+            }
+          }
+        }
+      }
     }
   }
   lspRespond(id, symbols)
@@ -6642,13 +6703,27 @@ fn lspHandleCompletion(id: JsonValue, params: JsonValue, documents: LspDocuments
 // text, so no state is needed to apply an edit - but textDocument/definition
 // requests carry only a URI and a position, so the last-known text for each
 // open URI is retained in `documents` across calls.
-fn lspHandleMessage(parsed: JsonValue, documents: LspDocuments): LspState = {
+fn lspHandleMessage(parsed: JsonValue, documents: LspDocuments, workspaceRoot: Text): LspState = {
   val method = JsonValue.asText(JsonValue.get(parsed, "method"))
   val id = JsonValue.get(parsed, "id")
   val hasId = not JsonValue.isNull(id)
   var keepGoing = true
   var nextDocuments = documents
+  var nextWorkspaceRoot = workspaceRoot
   if Text.eq(method, "initialize") then {
+    val params = JsonValue.get(parsed, "params")
+    val rootUriValue = JsonValue.get(params, "rootUri")
+    val rootUri = if JsonValue.isNull(rootUriValue) then "" else JsonValue.asText(rootUriValue)
+    // `rootUri` is deprecated but still widely sent; fall back to the
+    // first workspaceFolders entry (the current-spec replacement) only
+    // when it's absent or null - same array-element reparse pattern
+    // loadPackageContext already uses for a JSON array of objects.
+    val folders = JsonValue.get(params, "workspaceFolders")
+    val fallbackUri = if Text.eq(rootUri, "") and JsonValue.isArray(folders) and JsonValue.length(folders) > 0 then {
+      JsonValue.asText(JsonValue.get(Json.parse(JsonValue.atText(folders, 0)), "uri"))
+    } else { "" }
+    val resolvedRootUri = if not Text.eq(rootUri, "") then rootUri else fallbackUri
+    if not Text.eq(resolvedRootUri, "") then { nextWorkspaceRoot = lspUriToPath(resolvedRootUri) }
     val capabilities = Json.object()
     JsonValue.set(capabilities, "textDocumentSync", Json.int(1))
     JsonValue.set(capabilities, "definitionProvider", Json.bool(true))
@@ -6658,6 +6733,7 @@ fn lspHandleMessage(parsed: JsonValue, documents: LspDocuments): LspState = {
     JsonValue.set(capabilities, "completionProvider", Json.object())
     JsonValue.set(capabilities, "codeActionProvider", Json.bool(true))
     JsonValue.set(capabilities, "documentSymbolProvider", Json.bool(true))
+    JsonValue.set(capabilities, "workspaceSymbolProvider", Json.bool(true))
     val result = Json.object()
     JsonValue.set(result, "capabilities", capabilities)
     lspRespond(id, result)
@@ -6697,6 +6773,8 @@ fn lspHandleMessage(parsed: JsonValue, documents: LspDocuments): LspState = {
     lspHandleCodeAction(id, JsonValue.get(parsed, "params"), documents)
   } else if Text.eq(method, "textDocument/documentSymbol") then {
     lspHandleDocumentSymbol(id, JsonValue.get(parsed, "params"), documents)
+  } else if Text.eq(method, "workspace/symbol") then {
+    lspHandleWorkspaceSymbol(id, JsonValue.get(parsed, "params"), documents, workspaceRoot)
   } else if Text.eq(method, "shutdown") then {
     lspRespond(id, Json.null())
   } else if Text.eq(method, "exit") then {
@@ -6704,17 +6782,19 @@ fn lspHandleMessage(parsed: JsonValue, documents: LspDocuments): LspState = {
   } else if hasId then {
     lspRespondError(id, -32601, "method not found: " ++ method)
   }
-  LspState { documents: nextDocuments, running: keepGoing }
+  LspState { documents: nextDocuments, running: keepGoing, workspaceRoot: nextWorkspaceRoot }
 }
 
 fn runLspServer(): Unit [io] = {
   var running = true
   var documents: LspDocuments = LspDocuments { uris: [], texts: [] }
+  var workspaceRoot = ""
   while running {
     if let Some(raw) = lspReadMessage() {
-      val state = lspHandleMessage(Json.parse(raw), documents)
+      val state = lspHandleMessage(Json.parse(raw), documents, workspaceRoot)
       running = state.running
       documents = state.documents
+      workspaceRoot = state.workspaceRoot
     } else { running = false }
   }
 }

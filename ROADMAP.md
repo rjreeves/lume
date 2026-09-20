@@ -1289,12 +1289,27 @@ things rather than writing the obvious thing.
   in this index models nesting to make a fuller range useful yet. No
   workspace root, directory walk, or caching needed - it only ever
   looks at the one already-open document, so it can't slow down
-  single-file checks by construction. The actual *project-wide* half
-  (`workspace/symbol`, fuzzy search across every file) remains open,
-  and is a materially bigger feature - a workspace root, a recursive
-  directory walk (`dir.walk` already exists), and a real caching/
-  invalidation strategy so a query doesn't re-walk the project on every
-  keystroke;
+  single-file checks by construction. The *project-wide* half now
+  shipped too, as `workspace/symbol`: no persistent cache at all - a
+  fresh recursive `walkDir` (the same fixed 32-level depth bound `lume
+  test <dir>`'s own recursive discovery already uses) on every request,
+  since this arc has never built caching ahead of a proven need, and a
+  fuzzy-search request triggered by an explicit user action (not fired
+  on every keystroke the way diagnostics are) is a structurally
+  separate request path from `lspCheckDocument` - it can't slow down
+  single-file checks regardless of its own cost. The workspace root
+  comes from `initialize`'s own `rootUri` (falling back to the first
+  `workspaceFolders` entry), threaded through the server's own
+  `LspState` alongside the document store. Matching is a plain
+  case-insensitive substring check (`Text.contains` + `Text.toLower`),
+  not fuzzy scoring - the same "flat, simple, no ranking" trade-off
+  this arc uses everywhere else that isn't specifically about scoring
+  closeness (unlike `did-you-mean`'s edit distance, which exists
+  because *that* fix specifically needs to rank near-misses). No
+  incremental caching yet is the one deliberate v1 boundary - fine at
+  the project sizes this compiler currently targets, revisit if a real
+  workspace ever makes a fresh walk-per-query too slow to feel
+  interactive;
 - debugger protocol support after bytecode/source maps stabilize;
 - ~~generated API documentation~~ — shipped as `lume api-docs`, a
   human-readable Markdown builtin reference (`docs/builtins.md`,

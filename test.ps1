@@ -1714,4 +1714,58 @@ try {
   if (-not $lspProc.HasExited) { $lspProc.Kill() }
 }
 
+# workspace/symbol needs its own session, initialized with a real rootUri -
+# the shared session above never sends one, so its own workspaceRoot stays
+# "" for its whole lifetime (by design: an empty root degrades to an empty
+# result rather than an error). examples\lsp_workspace_symbol\ has two
+# fixture files, one in a subdirectory (sub\beta.lume), to exercise the
+# recursive walkDir walk, not just the root directory.
+$wsSymbolRoot = Join-Path $PSScriptRoot 'examples\lsp_workspace_symbol'
+$wsSymbolRootUri = 'file:///' + ($wsSymbolRoot -replace '\\', '/')
+$wsSymbolPsi = New-Object System.Diagnostics.ProcessStartInfo
+$wsSymbolPsi.FileName = $Lume
+$wsSymbolPsi.Arguments = 'lsp'
+$wsSymbolPsi.RedirectStandardInput = $true
+$wsSymbolPsi.RedirectStandardOutput = $true
+$wsSymbolPsi.RedirectStandardError = $true
+$wsSymbolPsi.UseShellExecute = $false
+$wsSymbolProc = [System.Diagnostics.Process]::Start($wsSymbolPsi)
+try {
+  $wsSymbolInitReq = @{ jsonrpc = '2.0'; id = 1; method = 'initialize'; params = @{ rootUri = $wsSymbolRootUri } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $wsSymbolProc $wsSymbolInitReq
+  $wsSymbolInitResp = Read-LspMessage $wsSymbolProc | ConvertFrom-Json
+  Assert-Equal 'lsp initialize advertises workspaceSymbolProvider' 'True' "$($wsSymbolInitResp.result.capabilities.workspaceSymbolProvider)"
+  Send-LspMessage $wsSymbolProc '{"jsonrpc":"2.0","method":"initialized","params":{}}'
+
+  $wsSymbolAlphaUri = 'file:///' + ((Join-Path $wsSymbolRoot 'alpha.lume') -replace '\\', '/')
+  $wsSymbolBetaUri = 'file:///' + ((Join-Path $wsSymbolRoot 'sub\beta.lume') -replace '\\', '/')
+
+  $wsSymbolReq1 = @{ jsonrpc = '2.0'; id = 2; method = 'workspace/symbol'; params = @{ query = 'alpha' } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $wsSymbolProc $wsSymbolReq1
+  $wsSymbolResp1 = Read-LspMessage $wsSymbolProc | ConvertFrom-Json
+  Assert-Equal 'workspace/symbol query matches both alpha.lume declarations' '2' "$($wsSymbolResp1.result.Count)"
+  Assert-Equal 'workspace/symbol result names the function' 'workspace_symbol_alpha_fn' $wsSymbolResp1.result[0].name
+  Assert-Equal 'workspace/symbol result kind for a function is Function (12)' '12' "$($wsSymbolResp1.result[0].kind)"
+  Assert-Equal 'workspace/symbol result location points at the real file' $wsSymbolAlphaUri $wsSymbolResp1.result[0].location.uri
+
+  $wsSymbolReq2 = @{ jsonrpc = '2.0'; id = 3; method = 'workspace/symbol'; params = @{ query = 'BETA' } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $wsSymbolProc $wsSymbolReq2
+  $wsSymbolResp2 = Read-LspMessage $wsSymbolProc | ConvertFrom-Json
+  Assert-Equal 'workspace/symbol query is case-insensitive' '1' "$($wsSymbolResp2.result.Count)"
+  Assert-Equal 'workspace/symbol finds a declaration in a subdirectory (recursive walkDir)' $wsSymbolBetaUri $wsSymbolResp2.result[0].location.uri
+  Assert-Equal 'workspace/symbol kind for an enum is Enum (10)' '10' "$($wsSymbolResp2.result[0].kind)"
+
+  $wsSymbolReqEmpty = @{ jsonrpc = '2.0'; id = 4; method = 'workspace/symbol'; params = @{ query = '' } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $wsSymbolProc $wsSymbolReqEmpty
+  $wsSymbolRespEmpty = Read-LspMessage $wsSymbolProc | ConvertFrom-Json
+  Assert-Equal 'workspace/symbol empty query returns every declaration across the workspace' '3' "$($wsSymbolRespEmpty.result.Count)"
+
+  $wsSymbolReqNoMatch = @{ jsonrpc = '2.0'; id = 5; method = 'workspace/symbol'; params = @{ query = 'zzznomatch' } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $wsSymbolProc $wsSymbolReqNoMatch
+  $wsSymbolRespNoMatch = Read-LspMessage $wsSymbolProc | ConvertFrom-Json
+  Assert-Equal 'workspace/symbol returns an empty array when nothing matches' '0' "$($wsSymbolRespNoMatch.result.Count)"
+} finally {
+  if (-not $wsSymbolProc.HasExited) { $wsSymbolProc.Kill() }
+}
+
 Write-Host 'All Lume smoke tests passed.'
