@@ -1154,7 +1154,30 @@ things rather than writing the obvious thing.
   transparent recompile with the right output, and rewrote the cache
   with the real hash afterward;
 - a narrow C ABI or subprocess-based interoperability story;
-- release archives and installers for major desktop platforms.
+- ~~release archives~~ — the archive half shipped, Windows-only (this
+  dev environment has no cross-platform build infrastructure, the same
+  constraint "reproducible standalone executable builds" above already
+  documented). `release.ps1` reuses `build.ps1` unmodified (the same
+  reproducible build, byte-identical per `rjreeves/Certo#2`'s
+  `-Brepro` fix) to produce `dist\lume.exe`, reads the version string
+  from `src/lume.cto`'s own `println("lume X.Y.Z")` line (the same
+  string the `api` command's JSON manifest already embeds - no second,
+  divergence-prone copy), bundles it with `README.md`, `SPEC.md`,
+  `docs/using-lume-the-fast-one.md`, `docs/builtins.md`, and
+  `ai/lume-api.json` into a versioned
+  `lume-<version>-windows-x64.zip`, and writes a `.sha256` checksum
+  file alongside it (the same `Get-FileHash` pattern `build.ps1`
+  already uses for its build-hash step). Verified live, not just built:
+  the archive is extracted to a scratch directory and the extracted
+  `lume.exe --help`/`lume.exe check <file>` are run standalone before
+  the script reports success, catching a malformed-zip or missing-file
+  class of bug the build step alone wouldn't. **Installers for major
+  desktop platforms remain unstarted** - a real installer (MSI, code
+  signing, macOS/Linux packages) needs build infrastructure this
+  single-machine Windows environment doesn't have. **No LICENSE file
+  exists in this repo** - asked directly rather than assumed (a
+  business/legal decision, not an engineering one): skipped for this
+  PR, left as its own explicit open item, not silently decided.
 
 ### Developer experience
 
