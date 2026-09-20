@@ -2112,3 +2112,74 @@ matter in practice; not chased down here, since the primary, well-
 understood cause (paying to read or decode a stale artifact nobody
 needed) is now fixed for both cases, and this residual is a smaller,
 different, less-understood effect.
+
+## Chasing the single-file residual: two real hypotheses, both ruled out (2026-09-20)
+
+Investigated the residual left open above rather than leaving it as an
+unexplained guess. Found and ruled out two distinct, plausible causes
+by direct measurement - reporting both here since a disproven
+hypothesis, verified rather than assumed, is still useful signal for
+whoever picks this up next.
+
+**Hypothesis 1: `saveArtifact` overwriting an existing large file costs
+more than creating a fresh one** (the guess on record from the
+previous checkpoint). Tested in complete isolation - write a ~15.9 MB
+buffer 30 times to a freshly-deleted path vs. 30 times over an
+already-existing file of the same size, pure `[IO.File]::WriteAllBytes`
+calls, no compiler involved at all:
+
+| Scenario | Mean | StdDev |
+| --- | ---: | ---: |
+| Create (delete then write) | 3.44 ms | 0.37 ms |
+| Overwrite (file already exists) | 4.01 ms | 0.33 ms |
+
+A real, consistent ~0.6 ms difference - correct in direction, three
+orders of magnitude too small to explain a ~200 ms gap. **Ruled out.**
+
+**Hypothesis 2: the benchmark script's own per-sample regeneration cost
+was polluting the measurement.** `benchmark-incremental-rebuild.ps1`'s
+"changed" phase rebuilt the *entire* target file's content via a
+PowerShell `List<string>` + `WriteAllLines` before every timed sample
+(the write itself was already excluded from the timed interval, but
+the sheer amount of preceding CPU/GC work seemed like it could disturb
+the immediately-following process launch). Measured this generation
+step in isolation: **~998 ms** for the single-file case (100,000
+lines) vs **~103 ms** for a single 10,000-line chunk - almost exactly
+the 10x line-count ratio, and a real, substantial, asymmetric cost
+between the two benchmarks' own setup work. A strong-looking lead.
+
+Rewrote both benchmarked programs' variant-swapping to pre-generate
+both variants once, up front, and swap between them via a plain
+`[IO.File]::Copy` per sample instead of regenerating content each
+time - eliminating the PowerShell-side generation cost from every
+"changed" sample entirely, for both programs. Re-measured:
+
+| Benchmark | Cold | Changed | Excess over cold |
+| --- | ---: | ---: | ---: |
+| Single file (100,000 lines) | 1,084.92 ms | 1,294.16 ms | +209.2 ms (+19.3%) |
+| Multi-module (10 files) | 1,051.59 ms | 1,084.05 ms | +32.5 ms (+3.1%) |
+
+**Unchanged from before, within noise.** The regeneration-cost theory
+was real (the ~998 ms/~103 ms asymmetry is genuine and confirmed) but
+not the explanation for this gap - removing it entirely left the
+residual exactly where it was. **Ruled out.**
+
+The corrected copy-based benchmark script is kept regardless of this
+result - it's a more accurate methodology on its own merits (isolates
+`compileOrCache`'s real cost from PowerShell-side scaffolding cost),
+independent of whether it explained the single-file gap.
+
+**Root cause still open.** Two real, carefully-tested hypotheses
+eliminated; the `~19%` single-file-specific residual (present at
+every stage: before any fix, after the `decodeArtifact` fix, after
+`readFileBytesRange`, and now after removing the benchmark's own
+regeneration confound) remains unexplained. Both compiled artifacts
+are near-identical in size (15,899,989 vs 15,898,117 bytes,
+399,993 vs 399,939 instructions) and `lume check`'s own pure compile
+cost differs by only ~36 ms between the two programs (see the
+"First measurement past 10,000 lines" checkpoint) - nowhere near
+enough to account for a ~200 ms gap specific to `lume run`'s
+cache-miss path. Not chased further here, per this investigation's own
+scope - a real, reproducible, but small and now well-isolated
+oddity, not a correctness problem, and not worth an open-ended
+investigation without a third concrete hypothesis to test.

@@ -22,17 +22,24 @@ $ErrorActionPreference = 'Stop'
 #
 # "One line changed" can't be sampled by repeating the same edit - the
 # very next run after an edit is itself a fresh warm cache for the *new*
-# content. Each sample alternates the target's last line between two
-# variants (`total = total + 1` / `total = total + 2`) before timing, so
-# every sample is a genuine, freshly-invalidated rebuild.
-
-# Unlike every other script here (which times `lume check`, where exit
-# code 0 means success), this one times `lume run` - and `lume run`'s
-# own exit code *is* the executed program's return value (confirmed
-# live: this generator's program legitimately exits ~99996, not 0).
-# Correctness is validated once per variant in Measure-Program instead
-# of on every timed sample, matching the fixed-content cold/warm phases'
-# own "validate once before timing" convention every script here uses.
+# content. Each sample swaps the target file between two pre-generated
+# variants before timing, so every sample is a genuine, freshly-
+# invalidated rebuild. Both variants are generated once, up front, and
+# swapped into place via a plain file copy per sample - not regenerated
+# via a PowerShell string-building loop each time. An earlier draft
+# regenerated the full 100,000-line content on every sample and left a
+# real, confirmed artifact: building a 100,000-element List<string> and
+# writing it costs ~1000ms of PowerShell-side CPU/GC work (measured in
+# isolation), a full order of magnitude more than the ~100ms the same
+# pattern costs for a single 10,000-line chunk - even though that cost
+# was already excluded from the timed interval, the sheer amount of
+# preceding CPU/GC/IO work measurably disturbed the immediately-
+# following timed `lume run` launch (confirmed by isolating the two
+# effects separately: raw file overwrite-vs-create costs under 1ms,
+# reading a just-written file over a settled one costs a few ms, neither
+# comes close to explaining the ~190ms gap that pattern produced - only
+# swapping to a plain file copy, which does no PowerShell-side
+# generation at all, isolates the actual compileOrCache cost cleanly).
 function Measure-Samples([scriptblock]$Action, [int]$Count) {
   1..$Count | ForEach-Object {
     $watch = [Diagnostics.Stopwatch]::StartNew()
@@ -58,19 +65,22 @@ function Get-Stats([double[]]$Samples) {
   }
 }
 
-function Measure-Program([string]$Label, [string]$RootPath, [scriptblock]$WriteVariant, [int]$ExpectedVariant1, [int]$ExpectedVariant2) {
+# `SwapVariant` takes an Int (1 or 2) and makes the target file exactly
+# that pre-generated variant's content, however it likes - a plain file
+# copy for the cases below, not a content regeneration.
+function Measure-Program([string]$Label, [string]$RootPath, [scriptblock]$SwapVariant, [int]$ExpectedVariant1, [int]$ExpectedVariant2) {
   $cachePath = "$RootPath.lbc"
 
   # Validate both variants actually produce their own distinct, correct
   # result before timing anything - confirms the edit is real and gets
   # picked up (not silently cached away), not just that `run` exits.
-  $WriteVariant.Invoke(1) | Out-Null
+  $SwapVariant.Invoke(1) | Out-Null
   & $Lume run $RootPath | Out-Null
   if ($LASTEXITCODE -ne $ExpectedVariant1) { throw "$Label variant 1 expected exit $ExpectedVariant1, got $LASTEXITCODE" }
-  $WriteVariant.Invoke(2) | Out-Null
+  $SwapVariant.Invoke(2) | Out-Null
   & $Lume run $RootPath | Out-Null
   if ($LASTEXITCODE -ne $ExpectedVariant2) { throw "$Label variant 2 expected exit $ExpectedVariant2, got $LASTEXITCODE" }
-  $WriteVariant.Invoke(1) | Out-Null
+  $SwapVariant.Invoke(1) | Out-Null
 
   # Cold: no .lbc, must compile from scratch and write a fresh one. Each
   # sample deletes the cache first - a real repeated "first build".
@@ -84,19 +94,13 @@ function Measure-Program([string]$Label, [string]$RootPath, [scriptblock]$WriteV
   & $Lume run $RootPath | Out-Null
   $warmSamples = @(Measure-Samples { & $Lume run $RootPath } $Iterations)
 
-  # One line changed: alternate the variant before every timed sample.
-  # The write itself happens *outside* the timed interval, same as
-  # cold/warm only ever time the `lume run` call - regenerating a
-  # 100,000-line Text file in PowerShell is a real cost, but it's a
-  # PowerShell cost, not a compiler one, and folding it into the timed
-  # interval would measure the wrong thing entirely (confirmed live:
-  # an earlier draft that timed the write too showed the single-file
-  # "changed" case as slower than "cold", which never made sense once
-  # traced back to the write itself dominating the measurement).
+  # One line changed: swap to the other pre-generated variant before
+  # every timed sample. The swap itself happens *outside* the timed
+  # interval, same as cold/warm only ever time the `lume run` call.
   $current = 1
   $changedSamples = @(1..$Iterations | ForEach-Object {
     $current = if ($current -eq 1) { 2 } else { 1 }
-    $WriteVariant.Invoke($current) | Out-Null
+    $SwapVariant.Invoke($current) | Out-Null
     $watch = [Diagnostics.Stopwatch]::StartNew()
     & $Lume run $RootPath | Out-Null
     $watch.Stop()
@@ -115,49 +119,71 @@ function Measure-Program([string]$Label, [string]$RootPath, [scriptblock]$WriteV
   }
 }
 
+function Write-GeneratedLines([Collections.Generic.List[string]]$Lines, [int]$LastValue, [string]$TargetPath) {
+  $Lines.Add("  total = total + $LastValue")
+  $Lines.Add('  return total')
+  $Lines.Add('}')
+  [IO.File]::WriteAllLines($TargetPath, $Lines, [Text.UTF8Encoding]::new($false))
+}
+
 # --- Single-file 100,000-line program (same shape as benchmark-100000.ps1) ---
+# Both variants generated once, up front - the "changed" phase below only
+# ever copies one of these two already-built files into place.
 $singleLineCount = 100000
 $singlePath = Join-Path $PSScriptRoot 'dist\benchmark-incremental-single.lume'
-$writeSingle = {
-  param([int]$LastValue)
+$singleVariant1Path = Join-Path $PSScriptRoot 'dist\benchmark-incremental-single-v1.lume'
+$singleVariant2Path = Join-Path $PSScriptRoot 'dist\benchmark-incremental-single-v2.lume'
+
+function New-SingleFileVariant([int]$LastValue, [string]$TargetPath) {
   $lines = [Collections.Generic.List[string]]::new($singleLineCount)
   $lines.Add('fn main(args: [str]) -> int {')
   $lines.Add('  var total = 0')
   for ($index = 0; $index -lt ($singleLineCount - 5); $index++) { $lines.Add('  total = total + 1') }
-  $lines.Add("  total = total + $LastValue")
-  $lines.Add('  return total')
-  $lines.Add('}')
-  if ($lines.Count -ne $singleLineCount) { throw "single-file generator produced $($lines.Count) lines" }
-  [IO.File]::WriteAllLines($singlePath, $lines, [Text.UTF8Encoding]::new($false))
+  Write-GeneratedLines $lines $LastValue $TargetPath
+  if ((Get-Content -LiteralPath $TargetPath).Count -ne $singleLineCount) { throw "single-file generator produced the wrong line count for variant $LastValue" }
+}
+New-SingleFileVariant 1 $singleVariant1Path
+New-SingleFileVariant 2 $singleVariant2Path
+
+$swapSingle = {
+  param([int]$Variant)
+  $source = if ($Variant -eq 1) { $singleVariant1Path } else { $singleVariant2Path }
+  [IO.File]::Copy($source, $singlePath, $true)
 }
 $singleExpected1 = ($singleLineCount - 5) + 1
 $singleExpected2 = ($singleLineCount - 5) + 2
-$singleResult = Measure-Program 'Single file (100,000 lines)' $singlePath $writeSingle $singleExpected1 $singleExpected2
+$singleResult = Measure-Program 'Single file (100,000 lines)' $singlePath $swapSingle $singleExpected1 $singleExpected2
 
 # --- Multi-module: ten 10,000-line chunks, only chunk1 ever changes -
-# the actual "one function" in "one-function incremental rebuild". ---
+# the actual "one function" in "one-function incremental rebuild". Both
+# of chunk1's own variants are pre-generated once too, same reasoning. ---
 $chunkCount = 10
 $chunkBodyLines = 9995
 $chunkTotalLines = $chunkBodyLines + 5  # fn header, var total, variant line, return, closing brace
 $moduleDir = Join-Path $PSScriptRoot 'dist\benchmark-incremental-multi'
 New-Item -ItemType Directory -Path $moduleDir -Force | Out-Null
 
-function Write-Chunk([int]$Chunk, [int]$LastValue) {
-  $chunkPath = Join-Path $moduleDir "chunk$Chunk.lume"
+function New-ChunkVariant([int]$Chunk, [int]$LastValue, [string]$TargetPath) {
   $lines = [Collections.Generic.List[string]]::new($chunkTotalLines)
   $lines.Add("pub fn chunk$Chunk.run() -> int {")
   $lines.Add('  var total = 0')
   for ($index = 0; $index -lt $chunkBodyLines; $index++) { $lines.Add('  total = total + 1') }
-  $lines.Add("  total = total + $LastValue")
-  $lines.Add('  return total')
-  $lines.Add('}')
-  if ($lines.Count -ne $chunkTotalLines) { throw "chunk$Chunk generator produced $($lines.Count) lines" }
-  [IO.File]::WriteAllLines($chunkPath, $lines, [Text.UTF8Encoding]::new($false))
+  Write-GeneratedLines $lines $LastValue $TargetPath
+  if ((Get-Content -LiteralPath $TargetPath).Count -ne $chunkTotalLines) { throw "chunk$Chunk generator produced the wrong line count for variant $LastValue" }
 }
 
 # Chunks 2-10 never change for the lifetime of this script - only
-# chunk1 is rewritten per sample, mirroring "you edited one function".
-for ($chunk = 2; $chunk -le $chunkCount; $chunk++) { Write-Chunk $chunk 1 }
+# chunk1 is swapped per sample, mirroring "you edited one function".
+for ($chunk = 2; $chunk -le $chunkCount; $chunk++) {
+  $chunkPath = Join-Path $moduleDir "chunk$chunk.lume"
+  New-ChunkVariant $chunk 1 $chunkPath
+}
+
+$chunk1Path = Join-Path $moduleDir 'chunk1.lume'
+$chunk1Variant1Path = Join-Path $moduleDir 'chunk1-v1.lume'
+$chunk1Variant2Path = Join-Path $moduleDir 'chunk1-v2.lume'
+New-ChunkVariant 1 1 $chunk1Variant1Path
+New-ChunkVariant 1 2 $chunk1Variant2Path
 
 $rootPath = Join-Path $moduleDir 'main.lume'
 $rootLines = [Collections.Generic.List[string]]::new()
@@ -170,14 +196,15 @@ $rootLines.Add('  return total')
 $rootLines.Add('}')
 [IO.File]::WriteAllLines($rootPath, $rootLines, [Text.UTF8Encoding]::new($false))
 
-$writeMulti = {
-  param([int]$LastValue)
-  Write-Chunk 1 $LastValue
+$swapMulti = {
+  param([int]$Variant)
+  $source = if ($Variant -eq 1) { $chunk1Variant1Path } else { $chunk1Variant2Path }
+  [IO.File]::Copy($source, $chunk1Path, $true)
 }
 $otherChunksTotal = ($chunkBodyLines + 1) * ($chunkCount - 1)
 $multiExpected1 = $otherChunksTotal + ($chunkBodyLines + 1)
 $multiExpected2 = $otherChunksTotal + ($chunkBodyLines + 2)
-$multiResult = Measure-Program 'Multi-module (10 files, only chunk1 changes)' $rootPath $writeMulti $multiExpected1 $multiExpected2
+$multiResult = Measure-Program 'Multi-module (10 files, only chunk1 changes)' $rootPath $swapMulti $multiExpected1 $multiExpected2
 
 [pscustomobject]@{
   Program = $singleResult.Label
