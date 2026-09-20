@@ -6156,6 +6156,23 @@ fn lspHandleReferences(id: JsonValue, params: JsonValue, documents: LspDocuments
       val occurrences = lspOccurrences(requestTokens, name)
       val locations = Json.array()
       for occurrence in occurrences { JsonValue.push(locations, lspLocationJson(uri, occurrence)) }
+      // One level of direct `use` imports too - an occurrence inside the
+      // imported file itself (e.g. an internal call) is a real occurrence,
+      // not just the declaration lspResolveCrossFileDeclaration would find.
+      // Same one-level scope as definition/hover; not a reverse, project-
+      // wide "which files import this one" search.
+      val modules = importedModules(text)
+      var moduleIndex = 0
+      while moduleIndex < List.len(modules) {
+        val resolved = resolveModulePath(lspUriToPath(uri), List.getOrPanic(modules, moduleIndex), [])
+        val importedUri = lspPathToUri(resolved.path)
+        val importedText = lspReadFile(documents, importedUri, resolved.path)
+        if not Text.eq(importedText, "") then {
+          val importedOccurrences = lspOccurrences(lex(importedText), name)
+          for importedOccurrence in importedOccurrences { JsonValue.push(locations, lspLocationJson(importedUri, importedOccurrence)) }
+        }
+        moduleIndex = moduleIndex + 1
+      }
       lspRespond(id, locations)
     }
   } else { lspRespond(id, Json.null()) }
