@@ -1414,6 +1414,21 @@ try {
   $sameFileDefResp = Read-LspMessage $lspProc | ConvertFrom-Json
   Assert-Equal 'same-file definition still resolves unchanged' $defUri $sameFileDefResp.result.uri
 
+  # cross-file hover: reuses the exact same fixture and position as
+  # cross-file definition above - both share lspResolveCrossFileDeclaration,
+  # generalized from definition's own original cross-file walk specifically
+  # so hover didn't need a second, near-duplicate one.
+  $crossFileHoverReq = @{ jsonrpc = '2.0'; id = 23; method = 'textDocument/hover'; params = @{ textDocument = @{ uri = $crossFileMainUri }; position = @{ line = 3; character = 9 } } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $crossFileHoverReq
+  $crossFileHoverResp = Read-LspMessage $lspProc | ConvertFrom-Json
+  Assert-Equal 'cross-file hover shows the imported function signature' 'fn add(a: int, b: int): int' $crossFileHoverResp.result.contents.value
+
+  # Regression check: same-file hover must still resolve without ever
+  # touching the cross-file path.
+  Send-LspMessage $lspProc $hoverReq
+  $sameFileHoverResp = Read-LspMessage $lspProc | ConvertFrom-Json
+  Assert-Equal 'same-file hover still resolves unchanged' 'fn add(a: int, b: int): int' $sameFileHoverResp.result.contents.value
+
   # completion: no scope resolution - every builtin plus every fn/type/enum
   # declared in the open document, unfiltered by cursor position or partial
   # word. Spot checks, not an exhaustive enumeration of every builtin (the
