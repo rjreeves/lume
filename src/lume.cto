@@ -6840,14 +6840,20 @@ fn compileAndCache(pathToCache: Text, source: Text, hash: Text): ArtifactResult 
 fn compileOrCache(path: Text, source: Text): ArtifactResult [io] = {
   val pathToCache = cachePath(path)
   val hash = Crypto.sha256(source)
-  // Read the cache file's bytes once and check just the cheap header
-  // first - only decode the full instruction body (the expensive part)
-  // once the header itself confirms a hit is possible, so a miss never
-  // pays for decoding instructions it's about to throw away.
-  if let Some(content) = readFileBytes(pathToCache) {
-    val header = decodeArtifactHeader(content)
-    if Text.eq(header.problem, "") and Text.eq(header.sourceHash, hash) and Text.eq(header.buildHash, compilerBuildHash()) then {
-      decodeArtifact(content)
+  // Read only the fixed 140-byte header first (readFileBytesRange, not
+  // readFileBytes) - decodeArtifact's own doc comment gives the exact
+  // layout. Checking whether a hit is even possible must not itself
+  // require reading a large stale artifact's full bytes into memory;
+  // the full file is only read (a second, cheap file open on top of
+  // the header peek) once the header confirms a hit, so a miss never
+  // pays for more than 140 bytes of I/O, let alone a full instruction
+  // decode.
+  if let Some(headerBytes) = readFileBytesRange(pathToCache, 0, 140) {
+    val header = decodeArtifactHeader(headerBytes)
+    val hit = Text.eq(header.problem, "") and Text.eq(header.sourceHash, hash) and Text.eq(header.buildHash, compilerBuildHash())
+    if hit then {
+      if let Some(content) = readFileBytes(pathToCache) { decodeArtifact(content) }
+      else { compileAndCache(pathToCache, source, hash) }
     } else { compileAndCache(pathToCache, source, hash) }
   } else { compileAndCache(pathToCache, source, hash) }
 }
