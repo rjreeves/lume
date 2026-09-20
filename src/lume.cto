@@ -349,7 +349,20 @@ fn lex(source: Text): List<Token> = {
         index = index + 2
       } else {
         val ch = charAt(source, index)
-        if Text.contains("{}()[],:=+-*/%<>!?&", ch) then {
+        // `.` is normally absorbed as an identifier-continuation
+        // character by the isAlphaCode branch above (isAlphaNumericCode
+        // includes it) - that inner scan always consumes every
+        // alphanumeric-or-dot character before ever returning control
+        // here, so this branch can only ever see a *standalone* `.`,
+        // one that follows something that isn't a name at all (`)`,
+        // `]`, a literal, another symbol). Recognizing it as its own
+        // symbol token here can never conflict with or change how any
+        // existing dotted identifier (`str.len`, `Result.Ok`,
+        // `user.name`) is lexed - lets the parser support a trailing
+        // `.field` on the result of a call/parenthesized expression/etc,
+        // which get_field (already generic over whatever's on the
+        // stack) already supports at the type-check and runtime level.
+        if Text.contains("{}()[],:=+-*/%<>!?&.", ch) then {
           output = List.pushMut(output, makeToken("symbol", ch, line, startColumn))
           index = index + 1
         } else {
@@ -713,6 +726,28 @@ fn parsePrimary(tokens: List<Token>, index: Int): ExprResult = {
       next: result.next + 1,
       code: List.push(result.code, makeInstruction(if Text.eq(postfix.text, "?") then "propagate" else "unwrap", "", 0, postfix.line)),
       problem: ""
+    }
+  }
+  // A field access chained directly onto any expression, not just a
+  // bare name - `f(x).field`, `(a with { n: 1 }).n`, `items.get(0).name`.
+  // Reuses the exact get_field instruction loadPath already emits for
+  // `user.name`; get_field's own type-checking and runtime already
+  // operate generically on whatever's on the stack, so nothing beyond
+  // this parser loop and the lexer's new standalone-`.` token is needed.
+  var chaining = Text.eq(result.problem, "") and Text.eq(at(tokens, result.next).kind, "symbol") and Text.eq(at(tokens, result.next).text, ".")
+  while chaining {
+    val dotToken = at(tokens, result.next)
+    val fieldToken = at(tokens, result.next + 1)
+    if not Text.eq(fieldToken.kind, "name") then {
+      result = expressionError(result.next + 1, "E0741 expected field name after `.`")
+      chaining = false
+    } else {
+      result = ExprResult {
+        next: result.next + 2,
+        code: List.push(result.code, makeInstruction("get_field", fieldToken.text, 0, dotToken.line)),
+        problem: ""
+      }
+      chaining = Text.eq(at(tokens, result.next).kind, "symbol") and Text.eq(at(tokens, result.next).text, ".")
     }
   }
   var updating = Text.eq(result.problem, "") and Text.eq(at(tokens, result.next).text, "with")

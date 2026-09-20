@@ -431,6 +431,16 @@ $structuredFailure = & $Lume run (Join-Path $PSScriptRoot 'examples\structured_e
 if ($LASTEXITCODE -ne 1) { throw "structured failure should exit 1" }
 Assert-Equal 'structured error propagation' ('cannot read file `' + $missingPath + '`') ($structuredFailure -join "`n")
 
+# A function call's return value previously couldn't have a field
+# accessed directly (`result.value(decoded).name` was E0206 expected
+# `)`) - get_field already worked generically on whatever's on the
+# stack, only the lexer/parser needed a small additive change (a
+# standalone `.` token, and a postfix chain in parsePrimary), not the
+# full dotted-name rewrite ROADMAP.md originally assumed was needed.
+$chainedField = & $Lume run (Join-Path $PSScriptRoot 'examples\chained_field_access.lume')
+if ($LASTEXITCODE -ne 0) { throw "chained field access exited $LASTEXITCODE" }
+Assert-Equal 'chained field access on a call result, a plain call, and a parenthesized with-update' "widget`ngadget`n99" ($chainedField -join "`n")
+
 # result.to_result bridges the shorthand result<T,E> every I/O builtin
 # returns into a real, matchable Result<T,E> - the two representations
 # are otherwise non-interchangeable (SPEC.md's "Two different Result

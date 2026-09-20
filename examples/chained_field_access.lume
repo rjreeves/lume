@@ -1,0 +1,26 @@
+type Decoded {
+  name: str
+  value: int
+}
+
+fn decode() -> Decoded ! str {
+  return result.ok(Decoded(name: "widget", value: 42))
+}
+
+fn build() -> Decoded {
+  return Decoded(name: "gadget", value: 7)
+}
+
+fn main(args: [str]) -> int {
+  // The exact reported gap: a function call's result had no way to
+  // have a field accessed directly, only via an intermediate `let`.
+  let decoded = decode()
+  print(result.value(decoded).name)
+
+  // Chaining also works on a plain call result and on a parenthesized
+  // `with`-update expression - get_field is generic over whatever's on
+  // the stack, not just a bare bound name.
+  print(build().name)
+  print((build() with { value: 99 }).value)
+  return 0
+}
