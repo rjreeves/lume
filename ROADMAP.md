@@ -1276,7 +1276,25 @@ things rather than writing the obvious thing.
   Certo's own codegen already emits, confirmed live via the C
   compiler's own "redefinition" error - renamed to `lspMinInt` instead
   of pursuing it further upstream.
-- project-wide symbol indexing without slowing single-file checks;
+- ~~project-wide symbol indexing without slowing single-file checks~~ —
+  the per-file half shipped as `textDocument/documentSymbol` (editor
+  outline/breadcrumbs): reuses `lspDeclarationSites` as-is (`fn`/
+  `type`/`enum`, the same flat index `completion`/`add-import`/
+  `did-you-mean` already build symbol lists from), so an `impl Type {
+  fn method() }`'s method surfaces as its own flat entry too, not
+  nested under its type - the same "flat, not scope-aware" trade-off
+  this whole arc already uses everywhere else. Point-range only
+  (`range` == `selectionRange`, both the declaration's own name-token
+  span) rather than each declaration's full body extent, since nothing
+  in this index models nesting to make a fuller range useful yet. No
+  workspace root, directory walk, or caching needed - it only ever
+  looks at the one already-open document, so it can't slow down
+  single-file checks by construction. The actual *project-wide* half
+  (`workspace/symbol`, fuzzy search across every file) remains open,
+  and is a materially bigger feature - a workspace root, a recursive
+  directory walk (`dir.walk` already exists), and a real caching/
+  invalidation strategy so a query doesn't re-walk the project on every
+  keystroke;
 - debugger protocol support after bytecode/source maps stabilize;
 - ~~generated API documentation~~ — shipped as `lume api-docs`, a
   human-readable Markdown builtin reference (`docs/builtins.md`,

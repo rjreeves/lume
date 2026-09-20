@@ -6550,6 +6550,52 @@ fn lspHandleCodeAction(id: JsonValue, params: JsonValue, documents: LspDocuments
   lspRespond(id, actions)
 }
 
+// LSP's SymbolKind enum - a different numbering than CompletionItemKind
+// (lspDeclarationCompletionKind, above, maps that one separately).
+// lspDeclarationSites only ever produces these three keywords; the
+// default is defensive completeness, not a reachable case.
+fn lspSymbolKind(keyword: Text): Int = {
+  if Text.eq(keyword, "fn") then 12
+  else if Text.eq(keyword, "type") then 23
+  else if Text.eq(keyword, "enum") then 10
+  else 13
+}
+
+// Flat DocumentSymbol[] - lspDeclarationSites has no nesting/depth
+// tracking at all (an impl method's own `fn` surfaces as its own entry,
+// not nested under its type), the same "flat, not scope-aware"
+// trade-off completion/references/rename already use. Point-range only
+// (range == selectionRange, both the declaration's own name-token span)
+// rather than the full body extent - no new scanning beyond what
+// lspDeclarationSites already provides.
+fn lspHandleDocumentSymbol(id: JsonValue, params: JsonValue, documents: LspDocuments): Unit [io] = {
+  val textDocument = JsonValue.get(params, "textDocument")
+  val uri = JsonValue.asText(JsonValue.get(textDocument, "uri"))
+  val documentIndex = lspDocumentIndex(documents.uris, uri)
+  val symbols = Json.array()
+  if documentIndex >= 0 then {
+    val text = List.getOrPanic(documents.texts, documentIndex)
+    for site in lspDeclarationSites(lex(text)) {
+      val startPos = Json.object()
+      JsonValue.set(startPos, "line", Json.int(site.name.line - 1))
+      JsonValue.set(startPos, "character", Json.int(site.name.column - 1))
+      val endPos = Json.object()
+      JsonValue.set(endPos, "line", Json.int(site.name.line - 1))
+      JsonValue.set(endPos, "character", Json.int(site.name.column - 1 + Text.len(site.name.text)))
+      val range = Json.object()
+      JsonValue.set(range, "start", startPos)
+      JsonValue.set(range, "end", endPos)
+      val symbol = Json.object()
+      JsonValue.set(symbol, "name", Json.string(site.name.text))
+      JsonValue.set(symbol, "kind", Json.int(lspSymbolKind(site.keyword)))
+      JsonValue.set(symbol, "range", range)
+      JsonValue.set(symbol, "selectionRange", range)
+      JsonValue.push(symbols, symbol)
+    }
+  }
+  lspRespond(id, symbols)
+}
+
 fn lspCompletionItem(label: Text, kind: Int): JsonValue = {
   val item = Json.object()
   JsonValue.set(item, "label", Json.string(label))
@@ -6611,6 +6657,7 @@ fn lspHandleMessage(parsed: JsonValue, documents: LspDocuments): LspState = {
     JsonValue.set(capabilities, "renameProvider", Json.bool(true))
     JsonValue.set(capabilities, "completionProvider", Json.object())
     JsonValue.set(capabilities, "codeActionProvider", Json.bool(true))
+    JsonValue.set(capabilities, "documentSymbolProvider", Json.bool(true))
     val result = Json.object()
     JsonValue.set(result, "capabilities", capabilities)
     lspRespond(id, result)
@@ -6648,6 +6695,8 @@ fn lspHandleMessage(parsed: JsonValue, documents: LspDocuments): LspState = {
     lspHandleCompletion(id, JsonValue.get(parsed, "params"), documents)
   } else if Text.eq(method, "textDocument/codeAction") then {
     lspHandleCodeAction(id, JsonValue.get(parsed, "params"), documents)
+  } else if Text.eq(method, "textDocument/documentSymbol") then {
+    lspHandleDocumentSymbol(id, JsonValue.get(parsed, "params"), documents)
   } else if Text.eq(method, "shutdown") then {
     lspRespond(id, Json.null())
   } else if Text.eq(method, "exit") then {

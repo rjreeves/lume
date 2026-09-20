@@ -1246,6 +1246,7 @@ try {
   Assert-Equal 'lsp initialize advertises renameProvider' 'True' "$($initResponse.result.capabilities.renameProvider)"
   Assert-Equal 'lsp initialize advertises completionProvider' 'True' "$($null -ne $initResponse.result.capabilities.completionProvider)"
   Assert-Equal 'lsp initialize advertises codeActionProvider' 'True' "$($initResponse.result.capabilities.codeActionProvider)"
+  Assert-Equal 'lsp initialize advertises documentSymbolProvider' 'True' "$($initResponse.result.capabilities.documentSymbolProvider)"
 
   Send-LspMessage $lspProc '{"jsonrpc":"2.0","method":"initialized","params":{}}'
 
@@ -1638,6 +1639,33 @@ try {
   Send-LspMessage $lspProc $dymNoneReq
   $dymNoneResp = Read-LspMessage $lspProc | ConvertFrom-Json
   Assert-Equal 'did-you-mean returns zero actions when nothing is close enough' '0' "$($dymNoneResp.result.Count)"
+
+  # documentSymbol: reuses lspDeclarationSites as-is, so it's flat (no
+  # nesting) - an impl method's own `fn` surfaces as its own entry, not
+  # nested under its type. Point-range only (range == selectionRange).
+  $docSymUri = 'file:///doc_symbol.lume'
+  $docSymSource = "type Point = { x: int, y: int }`n`nenum Shape { Circle(r: int), Square(s: int) }`n`nfn area(p: Point) -> int {`n  return p.x * p.y`n}`n`nimpl Shape {`n  fn describe(self) -> int {`n    return 0`n  }`n}`n"
+  $didOpenDocSym = @{ jsonrpc = '2.0'; method = 'textDocument/didOpen'; params = @{ textDocument = @{ uri = $docSymUri; text = $docSymSource } } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $didOpenDocSym
+  Read-LspMessage $lspProc | Out-Null
+
+  $docSymReq = @{ jsonrpc = '2.0'; id = 34; method = 'textDocument/documentSymbol'; params = @{ textDocument = @{ uri = $docSymUri } } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $docSymReq
+  $docSymResp = Read-LspMessage $lspProc | ConvertFrom-Json
+  Assert-Equal 'documentSymbol returns one entry per declaration, including an impl method' '4' "$($docSymResp.result.Count)"
+  Assert-Equal 'documentSymbol names the record type' 'Point' $docSymResp.result[0].name
+  Assert-Equal 'documentSymbol kind for a record type is Struct (23)' '23' "$($docSymResp.result[0].kind)"
+  Assert-Equal 'documentSymbol names the enum' 'Shape' $docSymResp.result[1].name
+  Assert-Equal 'documentSymbol kind for an enum is Enum (10)' '10' "$($docSymResp.result[1].kind)"
+  Assert-Equal 'documentSymbol names the function' 'area' $docSymResp.result[2].name
+  Assert-Equal 'documentSymbol kind for a function is Function (12)' '12' "$($docSymResp.result[2].kind)"
+  Assert-Equal 'documentSymbol includes an impl method as its own flat entry' 'describe' $docSymResp.result[3].name
+  Assert-Equal 'documentSymbol range matches selectionRange' 'True' "$($docSymResp.result[0].range.start.character -eq $docSymResp.result[0].selectionRange.start.character)"
+
+  $docSymReqUnopened = @{ jsonrpc = '2.0'; id = 35; method = 'textDocument/documentSymbol'; params = @{ textDocument = @{ uri = 'file:///doc_symbol_never_opened.lume' } } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $docSymReqUnopened
+  $docSymRespUnopened = Read-LspMessage $lspProc | ConvertFrom-Json
+  Assert-Equal 'documentSymbol on a never-opened uri returns an empty array, not an error' '0' "$($docSymRespUnopened.result.Count)"
 
   # completion: no scope resolution - every builtin plus every fn/type/enum
   # declared in the open document, unfiltered by cursor position or partial
