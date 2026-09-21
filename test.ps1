@@ -1152,7 +1152,7 @@ $packagesAppDir = Join-Path $PSScriptRoot 'examples\packages\app'
 $installOutput = & $Lume install $packagesAppDir
 if ($LASTEXITCODE -ne 0) { throw "lume install exited $LASTEXITCODE" }
 $lockContent = Get-Content -LiteralPath (Join-Path $packagesAppDir 'lume.lock.json') -Raw
-Assert-Equal 'package install writes lock file' '{"resolved":[{"name":"mathutils","path":"../mathutils","version":"0.1.0","sourceHash":"6b53f84c580e3285c01ccfa13b07a2f7a8592bba89325bb4120ccaeb2ab484ea","dependencies":["formatting"]},{"name":"formatting","path":"../formatting","version":"0.1.0","sourceHash":"4a58d481645fa9d0403919f63b051df4cc63fe1a30395b8be816d3387159301c","dependencies":[]}],"direct":["mathutils","formatting"]}' $lockContent.Trim()
+Assert-Equal 'package install writes lock file' '{"resolved":[{"name":"mathutils","path":"../mathutils","version":"0.1.0","sourceHash":"6b53f84c580e3285c01ccfa13b07a2f7a8592bba89325bb4120ccaeb2ab484ea","dependencies":["formatting"]},{"name":"formatting","path":"../formatting","version":"0.1.0","sourceHash":"83c831240c5879e56a4f4faad10d594a374dd2310db74d14140350e96c39b88d","dependencies":[]}],"direct":["mathutils","formatting"]}' $lockContent.Trim()
 
 $packagesRun = & $Lume run (Join-Path $packagesAppDir 'app.lume')
 if ($LASTEXITCODE -ne 0) { throw "package app example exited $LASTEXITCODE" }
