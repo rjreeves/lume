@@ -331,6 +331,39 @@ own 10,000-lines/second target at the start of this investigation to
 clearing that target outright (64,103 lines/second) — the first time any
 non-trivial benchmark in this file has met its own bar.**
 
+**0.2 "Practical automation" milestone (reconciled 2026-09-21): met.**
+The 0.1 assessment above predates a large amount of work that has
+landed since, and 0.2 itself had never been formally checked the way
+0.1 was - done here for the first time, verified live rather than
+inferred from memory:
+
+- *Ship typed maps, portable paths, directory operations, richer
+  processes, time values, JSON encoding, and a minimal HTTP client* —
+  complete. Every one of these has its own passing coverage in the
+  full `test.ps1` suite today: `Map<K, V>` and its iterator-style
+  transforms, `path.*`, `dir.list`/`dir.walk`, the `process.run` family
+  (stdin, environment overrides, working directory, timeout),
+  `time.*`/`duration.*`/the `Duration` type, `json.encode`, and
+  `http.*` (Windows-only, already documented elsewhere in this file).
+- *Expand test discovery and CI output* — complete. Recursive test
+  discovery (`lume test <dir>`, `--ignore`), structured JSON test
+  output (`--json`), and stable per-test identifiers are all shipped
+  and covered.
+- *Validate representative shell/Python replacement programs* — real,
+  but not continuously verified until now. `examples/taskgraph` (a
+  genuine multi-module program: JSON-manifest parsing, dependency-graph
+  resolution and cycle detection, transitive-closure target scoping,
+  real subprocess execution, failure/skip propagation, JSON reporting)
+  existed and had been manually verified once, during the PR that built
+  it - but was wired into no test suite, `BENCHMARKS.md`, or this file,
+  confirmed by grepping for it and finding nothing. Run live before
+  writing this: dry-run planning, real execution (5/5 tasks passing),
+  cycle detection, and failure/skip propagation all still work
+  correctly today, plus its own 5-test native suite. Now wired into
+  `test.ps1` (seven new assertions) so a future regression here would
+  actually be caught, closing the gap between "validated once" and
+  "validated."
+
 ## Shipped in the bootstrap
 
 ### Core language
