@@ -1057,12 +1057,15 @@ real, and filed, but are design questions rather than bounded fixes:
   "the top-level expression parser". `verifyTypes`'s existing
   `jump_false` handling already required and popped a `bool`, so
   operand-type checking (`E0617`) came for free;
-- ~~no `if`/`else` expression form~~ — shipped, in statement context
-  only (`let x = if cond { a } else { b }` now works; using the same
-  shape inside a closure body compiles but fails at runtime with
-  "unsupported operation", exactly like `match` already does there —
-  a deliberate scope match, not an oversight, confirmed with the
-  user before implementing). Turned out to need much more than the
+- ~~no `if`/`else` expression form~~ — shipped, initially in statement
+  context only (`let x = if cond { a } else { b }` now works; using the
+  same shape inside a closure body compiled but failed at runtime with
+  "unsupported operation", exactly like `match` did there at the time -
+  a deliberate scope match, not an oversight, confirmed with the user
+  before implementing; later lifted, along with `match` and `?`/`!`,
+  once `callPure` gained the opcodes it needed - see this file's own
+  status-report paragraph on `BACKLOG.md` items 2/3 above). Turned out
+  to need much more than the
   `and`/`or`/`not` precedent: those got away with zero new
   instructions because both branches are always `bool`, so the type
   checker's linear, jump-blind walk (`for item in code` in
@@ -1077,10 +1080,12 @@ real, and filed, but are design questions rather than bounded fixes:
   `match_finish`) backed by a new `IfExprContext` that captures a
   stack baseline before branching, resets between the two branches,
   and explicitly compares their types (new `E0736`) before pushing
-  one merged result. `callPure` needed no changes at all - leaving
-  the three new op names unhandled there routes straight into its
-  existing generic "unsupported operation" fallback, the same free
-  ride `match` already gets;
+  one merged result. `callPure` needed no changes at this point -
+  leaving the three new op names unhandled there routed straight into
+  its existing generic "unsupported operation" fallback, the same free
+  ride `match` got at the time - until both, plus `?`/`!`, were later
+  ported into `callPure` too (see this file's own status-report
+  paragraph on `BACKLOG.md` items 2/3 above);
 - ~~no way to convert an `int` to `str`~~ — shipped as
   `str.from_int(n) -> str`, mirroring `time.to_iso`'s own `(int) ->
   str` shape exactly (same 3-site builtin pattern: `builtinNames`/

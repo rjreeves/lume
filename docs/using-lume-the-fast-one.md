@@ -241,24 +241,6 @@ let label = if score >= 90 { "A" } else { "B" }
 print(if count > 0 { "found " + str.from_int(count) } else { "none" })
 ```
 
-**One real, easy-to-trip gotcha, worth stating plainly**: an
-if-expression only works in statement context — inside a closure body
-(the `fn(x) -> T => ...` form passed to `list.map`/`filter`/`find`/
-`fold`), it compiles fine but fails at *runtime* with "callback uses
-unsupported operation", exactly like `match` already does inside a
-closure (section 6). Write a small helper function with an early
-`return` in each branch instead when the value is needed inside a
-closure:
-
-```lume
-fn clamp_or_zero(value: int, limit: int) -> int {
-  if value > limit {
-    return limit
-  }
-  return value
-}
-```
-
 - **`and`/`or`/`not` are keywords, not symbols** — there is no `&&`/`||`/`!`
   for boolean logic (`!` is reserved for `Result`/`Option` propagation, see
   section 10). `not` binds tighter than `and`, which binds tighter than
@@ -358,10 +340,9 @@ let shifted = list.map(values, fn(value: int) -> int => value + offset)
 A closure or `&name` reference works only as the *direct, inline* argument to
 `list.map`/`filter`/`find`/`fold`/`map.map`/`filter`/`fold` — neither is a
 general first-class value; a closure cannot be bound to a `let` and called
-later. `match` is not supported anywhere in a closure's reachable call graph
-(it fails at runtime with "callback uses unsupported operation" if it is) —
-write logic that needs to pattern-match an enum as an ordinary function
-called directly instead of inside a callback.
+later. Anywhere in a closure's reachable call graph otherwise behaves like an
+ordinary function body — `match`, `?`/`!` propagation, and if-as-an-expression
+all work.
 
 ## 7. Records and immutable updates
 
@@ -987,10 +968,9 @@ Assertions: `expect.equal`, `expect.true`, `expect.ok`, `expect.err`,
 `process.run`-style result: `expect.exit_code`, `expect.stdout_contains`,
 `expect.stderr_contains`.
 
-A test body runs through the same restricted evaluator as a list-transform
-callback (section 6) — `match` anywhere in its reachable call graph fails at
-runtime; verify `match`-using logic by calling it from `main` and checking
-output instead.
+A test body runs through the same interpreter as a list-transform callback
+(section 6) — `match`, `?`/`!` propagation, and if-as-an-expression all work
+directly inside a `test` block and anywhere in its reachable call graph.
 
 An optional timeout clause bounds a test against a runaway loop:
 
@@ -1281,8 +1261,8 @@ documents in this repository:
   no way for a Lume program to read an arbitrary, schema-less JSON
   value.
 - **Closures and `&name` references are not first-class values** — usable
-  only as the direct argument to a `list.*`/`map.*` transform, and cannot
-  contain `match` anywhere in their reachable call graph (section 6).
+  only as the direct argument to a `list.*`/`map.*` transform, not bound to
+  a `let` and called later (section 6).
 - **`Ord` has no automatic derivation for compound types** — implement
   `compare(a, b) -> int` by hand (section 9).
 - **`Map<K, V>` keys are limited** to `int`/`str`/`bool`, or a record/enum
