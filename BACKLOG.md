@@ -57,7 +57,30 @@ should be corrected to state plainly that multi-line list literals are not
 yet supported, alongside the existing "multi-line call/record-construction
 argument lists" entry.
 
+## Resolved
+
 ### 2. `test` block bodies run through the same match-forbidding restricted evaluator as `list.*` callbacks, undocumented in §13
+
+**Resolved:** `callPure` (`src/lume.cto`) is a full, separate
+bytecode-dispatch loop, not a sandboxed subset by design - there was no
+compile-time check anywhere blocking `match` in a callback, just a
+generic "unsupported operation" fallback hit because `match_start`/
+`match_arm`/`match_arm_end`/`match_finish` were never ported over from
+`execute()` (the main interpreter), which already supported them. Fixed
+by porting them, following the exact same pattern `callPure`'s own
+`decode_json` handling already used once before for an identical class
+of gap. The one real wrinkle: `execute()`'s own variant-payload binding
+(`bindVariantPayload`) depth-scopes binding names for its single shared
+`variables` stack across recursive frames - `callPure` never needed
+that (each invocation already has an isolated `variables`) and reusing
+it as-is caused a real, confirmed-live regression (`callback binding
+unavailable \`code\``) until split into an unscoped sibling,
+`bindVariantPayloadUnscoped`. Verified against this item's own
+reproduction below, which now passes, plus the transitivity case
+(`list.map` calling a helper that itself uses `match`) and if-expression
+(a related, same-class gap found alongside these two) - all three now
+work inside both `test` bodies and `list.*`/`map.*` callbacks, checked
+in as `examples/callback_match_propagate.lume`.
 
 **Claim contradicted:** `SPEC.md` §19 already lists "`match` inside a
 `list.*` callback's reachable call graph" as a known bootstrap gap, and §12
@@ -124,6 +147,21 @@ instead of a silent run-time surprise, and update the grammar sketch to
 reflect what a test body actually accepts.
 
 ### 3. `?`/`!` result propagation also fails inside the restricted evaluator, undocumented in §12
+
+**Resolved:** same root cause and fix as item 2 above - `unwrap`/
+`propagate` were never ported into `callPure`. The port turned out
+*simpler* than `execute()`'s own version, not a straight copy:
+`execute()` needs a `returnAddresses` stack to jump back across nested
+calls sharing one flat loop, but `callPure` has no such mechanism
+because a nested call is already a separate Certo function invocation.
+On a propagate/unwrap failure, `callPure` now does what its own
+`return`/`closure_end` handling already did - end the current
+invocation early with the failed value as its own result - which the
+caller (an outer `callPure` a level up, `list.map`'s own loop, or the
+test runner) already knows how to handle. Verified against both
+reproductions below (the direct `test`-body case and the transitive
+`list.map` case), plus the success path (not just the failure path
+both reproductions exercise) - all now pass.
 
 **Claim contradicted:** `SPEC.md` §12 lists exactly what a callback body
 (and, per item 2 above, a `test` body) may contain: "Field access,

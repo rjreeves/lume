@@ -4027,6 +4027,38 @@ fn bindVariantPayload(code: List<Instruction>, variables: Bindings, depth: Int, 
   output
 }
 
+// callPure's own version of bindVariantPayload - identical logic, but
+// binds plain unscoped names rather than scopedName(depth, ...). Needed
+// because callPure's existing param/store/load never depth-scope at all
+// (each invocation already has its own isolated `variables`, so there is
+// nothing for scopedName to disambiguate) - reusing bindVariantPayload
+// with depth=0 would store "0:code" while a match arm's own `load "code"`
+// looks up plain "code", a real mismatch confirmed live ("callback
+// binding unavailable `code`") before this was split out.
+fn bindVariantPayloadUnscoped(code: List<Instruction>, variables: Bindings, value: Text, descriptor: Text): Bindings = {
+  var output = variables
+  val bindingText = afterPipe(descriptor)
+  if not Text.eq(bindingText, "*") and not Text.eq(bindingText, "") then {
+    val bindings = Text.split(bindingText, ",")
+    val enumName = runtimeEnumName(value)
+    val variantName = runtimeVariantName(value)
+    if let Some(enumSchema) = findEnumSchema(code, enumName) {
+      if let Some(payload) = variantPayloadSchema(enumSchema, variantName) {
+        val fields = if Text.eq(payload, "") then [] else Text.split(payload, ",")
+        val root = Json.parse(valueBody(value))
+        var index = 0
+        while index < List.len(bindings) {
+          val fieldName = schemaFieldName(List.getOrPanic(fields, index))
+          val fieldValue = JsonValue.asText(JsonValue.get(root, fieldName))
+          output = putBinding(output, List.getOrPanic(bindings, index), fieldValue)
+          index = index + 1
+        }
+      }
+    }
+  }
+  output
+}
+
 fn recordField(value: Text, field: Text): Text? = {
   if not Text.eq(valueKind(value), "o:") then None
   else {
@@ -4299,6 +4331,15 @@ fn callPure(code: List<Instruction>, callable: Text, arguments: List<Text>, dead
   var result = ""
   var running = Text.eq(problem, "")
   var executed = 0
+  // Mirrors execute()'s own matchVariableNames/matchVariableValues
+  // (:5159-5160) - saved on match_start, restored on match_finish, so a
+  // match arm's bound payload variables don't leak past the arm. No
+  // depth-scoping needed here the way execute() needs scopedName(depth,
+  // ...): each callPure invocation already has its own isolated
+  // `variables`, never shared across recursive calls the way execute()'s
+  // single flat stack is.
+  var matchVariableNames: List<List<Text>> = []
+  var matchVariableValues: List<List<Text>> = []
   while ip < List.len(code) and running and Text.eq(problem, "") {
     // deadlineMs is a shared wall-clock deadline threaded through every
     // recursive callPure call for the current test (0 = no active timeout).
@@ -4352,6 +4393,85 @@ fn callPure(code: List<Instruction>, callable: Text, arguments: List<Text>, dead
       stack = item.stack
       if Text.eq(valueKind(item.value), "s:") then { stack = List.push(stack, decodeRecordJson(code, current.text, valueBody(item.value))) }
       else { problem = "E0331 line " ++ intToText(current.line) ++ ": JSON decoder requires str" }
+    }
+    // The three groups below close the exact same class of gap
+    // decode_json above already did once - closing BACKLOG.md's "no test
+    // can exercise any function whose call graph touches an enum,
+    // Option, or generic Result" (match/propagate) and the sibling
+    // if-expression gap, all previously falling through to the generic
+    // "unsupported operation" fallback below.
+    else if Text.eq(current.op, "if_expr_start") then {
+      // Direct port of execute()'s own if_expr_start - pure stack/ip
+      // manipulation, no new state needed.
+      val item = pop(stack)
+      stack = item.stack
+      if not Text.eq(valueKind(item.value), "b:") then {
+        problem = "E0305 line " ++ intToText(current.line) ++ ": condition must be bool"
+      } else if Text.eq(valueBody(item.value), "false") then {
+        ip = ip + current.number
+        advance = false
+      }
+    } else if Text.eq(current.op, "if_expr_then_end") then {
+      ip = ip + current.number
+      advance = false
+    } else if Text.eq(current.op, "if_expr_finish") then {
+      // no-op: whichever branch ran already left exactly one result value
+      // on the stack; both real execution paths converge here.
+    } else if Text.eq(current.op, "match_start") then {
+      matchVariableNames = List.push(matchVariableNames, variables.names)
+      matchVariableValues = List.push(matchVariableValues, variables.values)
+    } else if Text.eq(current.op, "match_arm") then {
+      val subject = List.getOrPanic(stack, List.len(stack) - 1)
+      val constructor = beforePipe(current.text)
+      val expected = if Text.contains(constructor, ".") then afterDot(constructor) else constructor
+      if Text.eq(runtimeVariantName(subject), expected) then {
+        // bindVariantPayloadUnscoped, not bindVariantPayload - callPure
+        // never depth-scopes bindings (see its own definition's comment).
+        variables = bindVariantPayloadUnscoped(code, variables, subject, current.text)
+        val consumed = pop(stack)
+        stack = consumed.stack
+      } else {
+        ip = ip + current.number
+        advance = false
+      }
+    } else if Text.eq(current.op, "match_arm_end") then {
+      ip = ip + current.number
+      advance = false
+    } else if Text.eq(current.op, "match_finish") then {
+      variables = Bindings {
+        names: List.getOrPanic(matchVariableNames, List.len(matchVariableNames) - 1),
+        values: List.getOrPanic(matchVariableValues, List.len(matchVariableValues) - 1)
+      }
+      matchVariableNames = List.slice(matchVariableNames, 0, List.len(matchVariableNames) - 1)
+      matchVariableValues = List.slice(matchVariableValues, 0, List.len(matchVariableValues) - 1)
+    } else if Text.eq(current.op, "unwrap") or Text.eq(current.op, "propagate") then {
+      // Simpler than execute()'s own version, not a straight port -
+      // execute() needs a returnAddresses stack to jump back across
+      // nested calls sharing one flat loop; callPure has no such thing,
+      // since a nested call is already a separate Certo function
+      // invocation. On failure this just ends the current callPure
+      // invocation early with the failed value as its own result -
+      // exactly what return/closure_end already do below - which the
+      // caller (list.map's own loop, the test runner, or an outer
+      // callPure a level up) already knows how to handle. Unlike
+      // execute(), there is no "no caller left to propagate to" case
+      // here: callPure always has a real caller on the Certo side.
+      val wrapped = pop(stack)
+      stack = wrapped.stack
+      val legacy = Text.eq(valueKind(wrapped.value), "r:")
+      val variant = Text.eq(valueKind(wrapped.value), "v:") and Text.eq(runtimeEnumName(wrapped.value), "Result")
+      val succeeded = if legacy then lumeResultIsOk(wrapped.value) else variant and Text.eq(runtimeVariantName(wrapped.value), "Ok")
+      var inner = if legacy then resultInner(wrapped.value) else ""
+      if variant and succeeded then {
+        val root = Json.parse(valueBody(wrapped.value))
+        inner = JsonValue.asText(JsonValue.get(root, "value"))
+      }
+      if not legacy and not variant then { problem = "E0324 result propagation requires a result value" }
+      else if succeeded then { stack = List.push(stack, inner) }
+      else {
+        result = wrapped.value
+        running = false
+      }
     }
     else if Text.eq(current.op, "load") then {
       if let Some(value) = getBinding(variables, current.text) { stack = List.push(stack, value) }

@@ -1,0 +1,50 @@
+// match, ?/!, and if-as-an-expression used to fail anywhere in the
+// reachable call graph of a test body or a list.*/map.* callback, both
+// run through callPure - falling into its generic "uses unsupported
+// operation" fallback, since those opcodes were never ported over from
+// execute() (the main interpreter). Confirmed live before this fixture
+// existed, and confirmed transitively - list.map calling classify()
+// calling an if-expression that constructs an enum, matched by label().
+
+enum Priority {
+  low
+  high
+}
+
+fn classify(n: int) -> Priority {
+  return if n > 5 { Priority.high() } else { Priority.low() }
+}
+
+fn label(n: int) -> str {
+  return match classify(n) {
+    low => "low"
+    high => "high"
+  }
+}
+
+fn upper_or_fail(path: str) -> str ! str {
+  let trimmed = fs.try_read_text(path)?
+  return result.ok(str.upper(trimmed))
+}
+
+test "match and if-expression work transitively inside a list.map callback" {
+  let labels = list.map([1, 9, 3, 10], &label)
+  expect.equal(list.get(labels, 0), "low")
+  expect.equal(list.get(labels, 1), "high")
+  expect.equal(list.get(labels, 2), "low")
+  expect.equal(list.get(labels, 3), "high")
+}
+
+test "? propagates a failure out of a test body" {
+  let outcome = upper_or_fail("does-not-exist.txt")
+  expect.true(result.is_ok(outcome) == false)
+}
+
+test "? propagates a success out of a test body" {
+  let outcome = upper_or_fail("examples/callback_match_propagate.lume")
+  expect.true(result.is_ok(outcome))
+}
+
+fn main(args: [str]) -> int {
+  return 0
+}

@@ -678,16 +678,15 @@ no bracket generic-call syntax — `json.decode[[User]](text)` from an
 earlier draft was never implemented — the built-in containers infer their
 type parameters from ordinary arguments instead.
 
-**Callback bodies run in a restricted evaluator, both for `&name` and for
-inline closures.** Field access, arithmetic, comparisons, `if`/`while`,
-calls to other user functions (including recursively, transitively), calls
-to builtins, and `with` record updates all work inside a callback. The one
-thing that still does not work, anywhere in a callback's reachable call
-graph, is `match` — a callback (or any function it calls) that contains
-`match` fails at *run time*, not compile time, with `callback uses
-unsupported operation`. Something that needs to pattern-match on an enum
-inside a transformation should be written as an ordinary `while`-loop
-function called directly, not passed as `&name` or a closure.
+**Callback bodies run in a separate interpreter, both for `&name` and for
+inline closures** — a full bytecode-dispatch loop, not a deliberately
+restricted sandbox, so it supports the same core language a normal
+function body does: field access, arithmetic, comparisons, `if`/`while`,
+if-as-an-expression, `match`, `?`/`!` result propagation, calls to other
+user functions (including recursively, transitively), calls to builtins,
+and `with` record updates all work inside a callback and anywhere in its
+reachable call graph, including inside a native `test` block (which runs
+through this same evaluator).
 
 Protocols extend the constraint vocabulary and declare required method
 signatures. `impl Named for User { ... }` must provide every declared method
@@ -905,23 +904,12 @@ simply not built yet and carries no such argument against it.
 - string interpolation, `??`, and `T?` optional sugar
 - `for`/`in` loops, `break`, `continue`
 - `&&`, `||`, `not` boolean operators
-- `int`↔`str` conversion of any kind
 - `use ... as` import aliasing
 - a `(key, value)`-style two-parameter callback for `map.*` transforms
   (today's `map.map`/`map.filter`/`map.fold` take the value only)
 - closures/`&name` references as general first-class values (§6) — usable
   today only as the direct argument to the four `list.*` higher-order
   builtins
-- `match` inside a `list.*` callback's reachable call graph (§12)
-- recursive directory traversal (`dir.list` covers one level only; no
-  `isDirectory` check exists yet to build a walk on top of it, §11)
-- a `Duration` type — a distinct value kind with its own arithmetic and
-  unit tracking; `duration.seconds`/`minutes`/`hours`/`days(n) -> int`
-  cover named-unit construction as plain epoch-second `int`s today,
-  alongside the rest of `time.*` (getting the current time, showing it
-  as UTC or zone-local ISO-8601 or a custom `strftime`-style pattern,
-  reading UTC calendar components, and converting into an IANA
-  timezone), §11
 - multi-line call/record-construction argument lists (§2, §8)
 - postfix field access directly on a call expression's result (§8)
 - `let`/`var` type annotations (§5)
