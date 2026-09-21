@@ -98,6 +98,23 @@ $invalidTypedJson = & $Lume run (Join-Path $PSScriptRoot 'examples\invalid_typed
 if ($LASTEXITCODE -ne 0) { throw "invalid typed JSON example exited $LASTEXITCODE" }
 Assert-Equal 'typed JSON path error' 'User.age must be int' ($invalidTypedJson -join "`n")
 
+# The subprocess-embedding contract (docs/using-lume-the-fast-one.md
+# section 22) - typed JSON in via a CLI argument, typed JSON out via
+# stdout, with print()/eprint() kept on separate streams. Only the
+# .lume side runs here; examples/embed_demo_host.py demonstrates the
+# same contract from a genuinely different host language and is run
+# manually (python3 examples/embed_demo_host.py), not wired into this
+# suite, to avoid making a Python interpreter a hard dependency of the
+# main test run.
+$embedDemoPath = Join-Path $PSScriptRoot 'examples\embed_demo.lume'
+$embedDemoOk = & $Lume run $embedDemoPath '{"n": 5}'
+if ($LASTEXITCODE -ne 0) { throw "embed_demo success path exited $LASTEXITCODE" }
+Assert-Equal 'embed_demo produces typed JSON on stdout' '{"input":5,"squared":25}' ($embedDemoOk -join "`n")
+
+$embedDemoErr = & $Lume run $embedDemoPath '{"n": -3}' 2>&1
+if ($LASTEXITCODE -ne 1) { throw "embed_demo negative-n path should exit 1" }
+Assert-Equal 'embed_demo reports a negative n on stderr, not stdout' 'invalid argument: n must be positive, got -3' ($embedDemoErr -join "`n")
+
 $jsonEncode = & $Lume run (Join-Path $PSScriptRoot 'examples\json_encode.lume')
 if ($LASTEXITCODE -ne 0) { throw "json encode exited $LASTEXITCODE" }
 Assert-Equal 'json encode' "{`"name`":`"Ada`",`"age`":30,`"active`":true,`"tags`":[`"admin`",`"eng`"],`"address`":{`"city`":`"London`"}}`ntrue`ntrue`ntrue`ntrue`ntrue" ($jsonEncode -join "`n")
