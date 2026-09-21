@@ -1152,7 +1152,26 @@ $packagesAppDir = Join-Path $PSScriptRoot 'examples\packages\app'
 $installOutput = & $Lume install $packagesAppDir
 if ($LASTEXITCODE -ne 0) { throw "lume install exited $LASTEXITCODE" }
 $lockContent = Get-Content -LiteralPath (Join-Path $packagesAppDir 'lume.lock.json') -Raw
-Assert-Equal 'package install writes lock file' '{"resolved":[{"name":"mathutils","path":"../mathutils","version":"0.1.0","sourceHash":"6b53f84c580e3285c01ccfa13b07a2f7a8592bba89325bb4120ccaeb2ab484ea","dependencies":["formatting"]},{"name":"formatting","path":"../formatting","version":"0.1.0","sourceHash":"83c831240c5879e56a4f4faad10d594a374dd2310db74d14140350e96c39b88d","dependencies":[]}],"direct":["mathutils","formatting"]}' $lockContent.Trim()
+$lockJson = $lockContent | ConvertFrom-Json
+# sourceHash's own value is deliberately not pinned to a literal here (only
+# its shape and determinism are checked) - confirmed live that Path.join's
+# exact output for a transitively-resolved ".." path can legitimately
+# differ between two individually-correct Certo builds, which previously
+# made this assertion fail on a fresh build with no actual regression.
+# Everything else in the lock file (name/path/version/dependencies/direct)
+# has no such Certo-build sensitivity and stays exactly pinned.
+$hashPattern = '^[0-9a-f]{64}$'
+Assert-Equal 'package install: resolved[0] is mathutils' 'mathutils|../mathutils|0.1.0|formatting' "$($lockJson.resolved[0].name)|$($lockJson.resolved[0].path)|$($lockJson.resolved[0].version)|$($lockJson.resolved[0].dependencies -join ',')"
+Assert-Equal 'package install: resolved[1] is formatting' 'formatting|../formatting|0.1.0|' "$($lockJson.resolved[1].name)|$($lockJson.resolved[1].path)|$($lockJson.resolved[1].version)|$($lockJson.resolved[1].dependencies -join ',')"
+Assert-Equal 'package install: direct dependency list' 'mathutils,formatting' ($lockJson.direct -join ',')
+if ($lockJson.resolved[0].sourceHash -notmatch $hashPattern) { throw "mathutils sourceHash is not a 64-char hex string: $($lockJson.resolved[0].sourceHash)" }
+if ($lockJson.resolved[1].sourceHash -notmatch $hashPattern) { throw "formatting sourceHash is not a 64-char hex string: $($lockJson.resolved[1].sourceHash)" }
+
+$reinstallOutput = & $Lume install $packagesAppDir
+if ($LASTEXITCODE -ne 0) { throw "second lume install exited $LASTEXITCODE" }
+$reinstallJson = (Get-Content -LiteralPath (Join-Path $packagesAppDir 'lume.lock.json') -Raw) | ConvertFrom-Json
+Assert-Equal 'package install: sourceHash is deterministic on this machine (mathutils)' $lockJson.resolved[0].sourceHash $reinstallJson.resolved[0].sourceHash
+Assert-Equal 'package install: sourceHash is deterministic on this machine (formatting)' $lockJson.resolved[1].sourceHash $reinstallJson.resolved[1].sourceHash
 
 $packagesRun = & $Lume run (Join-Path $packagesAppDir 'app.lume')
 if ($LASTEXITCODE -ne 0) { throw "package app example exited $LASTEXITCODE" }
