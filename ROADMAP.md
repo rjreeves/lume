@@ -1181,7 +1181,32 @@ things rather than writing the obvious thing.
   simulate "same program, different compiler build" correctly forced a
   transparent recompile with the right output, and rewrote the cache
   with the real hash afterward;
-- a narrow C ABI or subprocess-based interoperability story;
+- ~~a narrow C ABI or subprocess-based interoperability story~~ — the
+  subprocess half investigated and verified live, not just assumed:
+  `dist\lume.exe run <script> [args...]` already works as a callable
+  subroutine from any host language that can spawn a process, with no
+  new engineering. Confirmed end to end from a genuinely different host
+  (Python, via `subprocess.run`) with 12 checks covering the success
+  path and three distinct failure modes: `stdout` is exclusively the
+  script's own `print(...)` output, `stderr` is exclusively diagnostics
+  (`eprint(...)` plus compile errors), and the exit code is `main`'s own
+  return value - all confirmed clean on every path, not assumed.
+  Measured cost: ~9ms median per call (20 samples), the same
+  process-startup floor `BENCHMARKS.md` already measures elsewhere, not
+  a new per-embedding tax. Two real gaps surfaced along the way and now
+  documented (`docs/using-lume-the-fast-one.md` section 22, section 26):
+  no `str`-to-`int` parsing builtin exists for Lume programs (only the
+  reverse), and there is no generic/untyped JSON parsing - only typed
+  decoding via `SomeType.from_json(text)` against a record type agreed
+  on ahead of time (arguably the right contract for embedding, not a
+  defect, but worth knowing about). See
+  [`examples/embed_demo.lume`](../examples/embed_demo.lume)/
+  [`examples/embed_demo_host.py`](../examples/embed_demo_host.py) for a
+  runnable proof. **A narrow C ABI remains a separate, unstarted, and
+  much larger item** - Certo's own build path only ever produces a
+  standalone executable today, not a linkable library, and Lume's
+  runtime value representation (tagged strings) would need real
+  marshaling design to cross a C ABI at all;
 - ~~release archives~~ — the archive half shipped, Windows-only (this
   dev environment has no cross-platform build infrastructure, the same
   constraint "reproducible standalone executable builds" above already

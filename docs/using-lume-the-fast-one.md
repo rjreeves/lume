@@ -43,10 +43,11 @@ always [`ai/lume-api.json`](../ai/lume-api.json), regenerated on every build.
 19. Packages
 20. Testing
 21. Building, bytecode, and performance
-22. Editor and AI tooling
-23. A complete automation program
-24. Design habits
-25. Current boundaries and known gotchas
+22. Embedding Lume in another program
+23. Editor and AI tooling
+24. A complete automation program
+25. Design habits
+26. Current boundaries and known gotchas
 
 ---
 
@@ -1046,7 +1047,80 @@ reproducible measurements and methodology, and for the acceptance gate a
 feature must clear (no more than a 5% median clean-compile regression
 without an offsetting benefit).
 
-## 22. Editor and AI tooling
+## 22. Embedding Lume in another program
+
+Lume has no embeddable library form (no `liblume.dll`/`.so`, no C API
+to link against) — `dist/lume.exe` is a standalone executable, and
+that's the only integration point that exists today. The real,
+already-available option is subprocess embedding: any host language
+that can spawn a process and read its stdout/stderr/exit code can use
+`lume.exe run <script.lume> [args...]` as a callable subroutine, with
+no new engineering on either side.
+
+The contract:
+
+- **stdout is exclusively the script's own `print(...)` output.** Never
+  mix diagnostic text into it — use `eprint(...)` for anything the host
+  shouldn't try to parse.
+- **stderr is exclusively diagnostics** — compile errors and whatever
+  the script writes via `eprint(...)`.
+- **The exit code is meaningful**: `main`'s own `return` value, not a
+  fixed success/failure convention layered on top. Return `0` for
+  success and a non-zero value the host can check for failure.
+- **Passing structured data in is typed, not dynamic.** There is no
+  generic "parse arbitrary JSON into a dynamic value" builtin for Lume
+  programs — only `SomeType.from_json(text)` against a record type
+  declared ahead of time (section 12). For an embedding contract this
+  is a feature, not a limitation: the host and the script agree on a
+  schema up front, and a malformed payload is a caught `Err`, not a
+  runtime crash reading an untyped blob.
+- **There is no way to read stdin** from a Lume program. Pass input via
+  CLI arguments (as JSON, if it's structured) or a file path; a
+  genuinely large payload should go through a temp file, not an
+  argument.
+
+A minimal round trip, from a Python host:
+
+```python
+import json, os, subprocess
+
+lume = os.path.abspath("dist/lume.exe")
+script = os.path.abspath("examples/embed_demo.lume")
+result = subprocess.run(
+    [lume, "run", script, json.dumps({"n": 5})],
+    capture_output=True, text=True,
+)
+if result.returncode == 0:
+    print(json.loads(result.stdout))  # {"input": 5, "squared": 25}
+else:
+    raise RuntimeError(result.stderr.strip())
+```
+
+See [`examples/embed_demo.lume`](../examples/embed_demo.lume) for the
+Lume side (typed JSON in, typed JSON out, clean stdout/stderr
+separation on every path) and
+[`examples/embed_demo_host.py`](../examples/embed_demo_host.py) for a
+runnable version of the above with both the success path and three
+distinct failure modes checked (`python3 examples/embed_demo_host.py`).
+
+Two gotchas worth knowing before reaching for this: there is no
+`str`-to-`int` parsing builtin (only `str.from_int`, the reverse
+direction — an example expecting a bare numeric argument has to route
+it through JSON instead, as `embed_demo.lume` does), and on Windows,
+`subprocess.run`'s underlying `CreateProcess` call needs an *absolute*
+path to `lume.exe` — a relative forward-slash path that a shell would
+resolve happily raises `FileNotFoundError`.
+
+Measured cost for this pattern: **~9ms median per call** (a trivial
+script, 20 samples) — the same process-startup floor
+[`BENCHMARKS.md`](../BENCHMARKS.md) already measures elsewhere, not a
+per-embedding-call tax. Cheap enough for most CLI-orchestration and
+batch use cases; for a tight loop calling into Lume many times per
+second, that per-call cost is a real one to budget for, since there is
+no way to keep a Lume process warm and feed it multiple distinct
+requests today.
+
+## 23. Editor and AI tooling
 
 **Two separate pieces of editor support exist, at different levels of
 depth — use whichever fits, and don't assume they behave identically:**
@@ -1090,11 +1164,11 @@ Good prompts state input/output data shapes, permitted effects (files,
 subprocesses, network), desired exit-code behavior, whether failures should
 be returned or terminate execution, and concrete expected output — then ask
 the model to run `lume check` before treating a draft as done. Static
-diagnostics make repair local and specific; the gotchas in section 25 below
+diagnostics make repair local and specific; the gotchas in section 26 below
 are exactly the kind of thing worth stating up front in a prompt, since they
 are easy for a model to get wrong by analogy to more common languages.
 
-## 23. A complete automation program
+## 24. A complete automation program
 
 ```lume
 type CommandConfig { executable: str, arguments: [str] }
@@ -1148,7 +1222,7 @@ There is no command-string interpolation, configuration fields are checked,
 JSON failures preserve their field paths, and every operational outcome
 becomes an explicit exit code.
 
-## 24. Design habits
+## 25. Design habits
 
 1. Model external data with records immediately after reading it.
 2. Model state transitions with enums rather than strings.
@@ -1166,7 +1240,7 @@ becomes an explicit exit code.
 11. Run `lume check` continuously and test both success and failure paths.
 12. Measure compiler performance after expanding the language core.
 
-## 25. Current boundaries and known gotchas
+## 26. Current boundaries and known gotchas
 
 Real, current limitations — not aspirational roadmap items from other
 documents in this repository:
@@ -1187,9 +1261,15 @@ documents in this repository:
   returns. Mixing them produces a type-mismatch or "match requires an
   enum" error rather than a clear diagnostic (section 10) — `Option<T>`
   has no such split.
-- **A function call's return value cannot have a field accessed directly**
-  — `f(x).field` is a syntax error (`expected )`); bind it to a `let`
-  first, then access the field on that binding (section 12).
+- **No `str`-to-`int` parsing** — `str.from_int` converts the other
+  direction, but there is no builtin to parse a numeric string back
+  into an `int`. A CLI argument or other string-shaped numeric input
+  has to be routed through typed JSON decoding instead (section 12,
+  section 22).
+- **No generic/untyped JSON parsing** — only `SomeType.from_json(text)`
+  against a record type declared ahead of time (section 12). There is
+  no way for a Lume program to read an arbitrary, schema-less JSON
+  value.
 - **Closures and `&name` references are not first-class values** — usable
   only as the direct argument to a `list.*`/`map.*` transform, and cannot
   contain `match` anywhere in their reachable call graph (section 6).

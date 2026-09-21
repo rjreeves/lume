@@ -1,0 +1,36 @@
+// The Lume side of the subprocess-embedding contract documented in
+// docs/using-lume-the-fast-one.md section 22 - a host process passes
+// structured input via a CLI argument (typed JSON, not a bare numeric
+// string - there is no str-to-int parsing builtin) and reads structured
+// output from stdout, with print()/eprint() kept strictly separate so
+// the host never has to guess which stream carries which.
+
+type Input {
+  n: int
+}
+
+type Output {
+  input: int
+  squared: int
+}
+
+fn main(args: [str]) -> int {
+  if args.count() == 0 {
+    eprint("missing argument: expected a JSON object like {\"n\": 5}")
+    return 1
+  }
+  let decoded = Input.from_json(args.get(0))
+  if result.is_ok(decoded) {
+    let value = result.value(decoded)
+    if value.n <= 0 {
+      eprint("invalid argument: n must be positive, got " + str.from_int(value.n))
+      return 1
+    }
+    let output = Output(input: value.n, squared: value.n * value.n)
+    print(result.value(json.encode(output)))
+    return 0
+  } else {
+    eprint("invalid argument: " + result.error(decoded))
+    return 1
+  }
+}
