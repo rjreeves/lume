@@ -1269,6 +1269,44 @@ $corruptLockRun = & $Lume run (Join-Path $corruptLockAppDir 'corrupt_lock_app.lu
 if ($LASTEXITCODE -ne 1) { throw "corrupt lock file run should exit 1" }
 Assert-Equal 'corrupt lock file reports E0738, not a misleading E0701' "E0738 cannot parse lock file ``$corruptLockAppDir/lume.lock.json``" ($corruptLockRun -join "`n")
 
+# examples/taskgraph - the "validate representative shell/Python
+# replacement programs" 0.2 milestone criterion (ROADMAP.md). A real,
+# substantial multi-module program (dependency-graph resolution, cycle
+# detection, transitive-closure target scoping, subprocess execution,
+# failure/skip propagation, JSON reporting) that existed and had been
+# manually verified once (PR #40) but was never wired into this suite,
+# confirmed live before this block existed - nothing would have caught
+# a regression in it.
+$taskgraphDir = Join-Path $PSScriptRoot 'examples\taskgraph'
+$taskgraphMain = Join-Path $PSScriptRoot 'examples\taskgraph.lume'
+$taskgraphReport = Join-Path $taskgraphDir 'taskgraph-report.json'
+
+$taskgraphDryRun = & $Lume run $taskgraphMain (Join-Path $taskgraphDir 'tasks.json') '--dry-run'
+if ($LASTEXITCODE -ne 0) { throw "taskgraph dry-run exited $LASTEXITCODE" }
+Assert-Equal 'taskgraph dry-run plans a topological order' "planned order:`ninstall`nlint (after install)`nbuild (after install)`ntest (after build)`nrelease (after build, test, lint)" ($taskgraphDryRun -join "`n")
+
+$taskgraphRun = & $Lume run $taskgraphMain (Join-Path $taskgraphDir 'tasks.json')
+if ($LASTEXITCODE -ne 0) { throw "taskgraph real execution exited $LASTEXITCODE" }
+Assert-Contains 'taskgraph runs all five tasks and reports zero failures' "passed:`n5`nfailed:`n0`nskipped:`n0" ($taskgraphRun -join "`n")
+if (-not (Test-Path -LiteralPath $taskgraphReport)) { throw "taskgraph did not write its JSON report" }
+Remove-Item -LiteralPath $taskgraphReport -Force
+
+$taskgraphCycle = & $Lume run $taskgraphMain (Join-Path $taskgraphDir 'tasks_cycle.json') '--dry-run' 2>&1
+if ($LASTEXITCODE -ne 1) { throw "taskgraph cycle detection should exit 1" }
+Assert-Equal 'taskgraph detects a dependency cycle' 'dependency cycle detected involving task build' ($taskgraphCycle -join "`n")
+
+$taskgraphFailure = & $Lume run $taskgraphMain (Join-Path $taskgraphDir 'tasks_failure.json')
+if ($LASTEXITCODE -ne 1) { throw "taskgraph should exit 1 when a task fails" }
+$taskgraphFailureText = $taskgraphFailure -join "`n"
+Assert-Contains 'taskgraph reports a failed task' 'FAIL  build' $taskgraphFailureText
+Assert-Contains 'taskgraph skips tasks depending on a failed one' "SKIP  test - dependency failed: build`nSKIP  release - dependency failed: test" $taskgraphFailureText
+Assert-Contains 'taskgraph failure summary counts are correct' "passed:`n1`nfailed:`n1`nskipped:`n2" $taskgraphFailureText
+if (Test-Path -LiteralPath $taskgraphReport) { Remove-Item -LiteralPath $taskgraphReport -Force }
+
+$taskgraphNativeTests = & $Lume test (Join-Path $PSScriptRoot 'examples\taskgraph_test.lume')
+if ($LASTEXITCODE -ne 0) { throw "taskgraph native tests exited $LASTEXITCODE" }
+Assert-Equal 'taskgraph native test suite passes' "PASS contains_name finds an existing entry and rejects a missing one`nPASS first_unresolved_name reports the first task missing from resolved`nPASS first_unresolved_name reports nothing once every task resolved`nPASS join_names joins with a comma and space`nPASS to_json encodes a run's payload-carrying outcome enum`n5 passed; 0 failed" ($taskgraphNativeTests -join "`n")
+
 # lume lsp is a persistent stdio JSON-RPC server, not a one-shot command, so
 # it needs its own framed-message client rather than a plain stdout compare.
 function Send-LspMessage([System.Diagnostics.Process]$Proc, [string]$Json) {
