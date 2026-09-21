@@ -1188,9 +1188,10 @@ things rather than writing the obvious thing.
   documented). `release.ps1` reuses `build.ps1` unmodified (the same
   reproducible build, byte-identical per `rjreeves/Certo#2`'s
   `-Brepro` fix) to produce `dist\lume.exe`, reads the version string
-  from `src/lume.cto`'s own `println("lume X.Y.Z")` line (the same
-  string the `api` command's JSON manifest already embeds - no second,
-  divergence-prone copy), bundles it with `README.md`, `SPEC.md`,
+  from `src/lume.cto`'s own `lumeVersion()` function (the single source
+  of truth both the `help` banner and the `api` command's JSON manifest
+  now read from - it used to be duplicated by hand in both places),
+  bundles it with `README.md`, `SPEC.md`,
   `docs/using-lume-the-fast-one.md`, `docs/builtins.md`, and
   `ai/lume-api.json` into a versioned
   `lume-<version>-windows-x64.zip`, and writes a `.sha256` checksum
