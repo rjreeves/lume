@@ -1,0 +1,4 @@
+fn main(args: [str]) -> int {
+  print(str.to_int(42))
+  return 0
+}

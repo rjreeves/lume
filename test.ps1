@@ -151,6 +151,14 @@ $invalidStrFromInt = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_st
 if ($LASTEXITCODE -ne 1) { throw "str.from_int argument validation should exit 1" }
 Assert-Equal 'str.from_int requires int' 'E0730 line 2: builtin `str.from_int` requires int' ($invalidStrFromInt -join "`n")
 
+$strToInt = & $Lume run (Join-Path $PSScriptRoot 'examples\str_to_int.lume')
+if ($LASTEXITCODE -ne 0) { throw "str.to_int exited $LASTEXITCODE" }
+Assert-Equal 'str.to_int' "42`n0`n-7`nfalse`ncannot parse ``not a number`` as int" ($strToInt -join "`n")
+
+$invalidStrToInt = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_str_to_int_args.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "str.to_int argument validation should exit 1" }
+Assert-Equal 'str.to_int requires str' 'E0746 line 2: builtin `str.to_int` requires str' ($invalidStrToInt -join "`n")
+
 $dirList = & $Lume run (Join-Path $PSScriptRoot 'examples\dir_list.lume')
 if ($LASTEXITCODE -ne 0) { throw "dir list exited $LASTEXITCODE" }
 Assert-Equal 'directory listing' "2`nmath_test.lume`ntext_test.lume" ($dirList -join "`n")

@@ -1193,13 +1193,14 @@ things rather than writing the obvious thing.
   return value - all confirmed clean on every path, not assumed.
   Measured cost: ~9ms median per call (20 samples), the same
   process-startup floor `BENCHMARKS.md` already measures elsewhere, not
-  a new per-embedding tax. Two real gaps surfaced along the way and now
+  a new per-embedding tax. Two real gaps surfaced along the way,
   documented (`docs/using-lume-the-fast-one.md` section 22, section 26):
-  no `str`-to-`int` parsing builtin exists for Lume programs (only the
-  reverse), and there is no generic/untyped JSON parsing - only typed
-  decoding via `SomeType.from_json(text)` against a record type agreed
-  on ahead of time (arguably the right contract for embedding, not a
-  defect, but worth knowing about). See
+  a missing `str`-to-`int` parsing builtin - since fixed, `str.to_int(text)
+  -> result<int, str>` now exists, parallel to `str.from_int` - and no
+  generic/untyped JSON parsing, which remains open: only typed decoding
+  via `SomeType.from_json(text)` against a record type agreed on ahead
+  of time (arguably the right contract for embedding, not a defect, but
+  worth knowing about). See
   [`examples/embed_demo.lume`](../examples/embed_demo.lume)/
   [`examples/embed_demo_host.py`](../examples/embed_demo_host.py) for a
   runnable proof. **A narrow C ABI remains a separate, unstarted, and

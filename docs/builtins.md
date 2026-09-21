@@ -42,6 +42,7 @@ Generated from `builtinNames()`/`builtinCounts()` in `src/lume.cto` (the same so
 - `str.upper` - 1 argument(s)
 - `str.lower` - 1 argument(s)
 - `str.from_int` - 1 argument(s)
+- `str.to_int` - 1 argument(s)
 - `str.contains` - 2 argument(s)
 - `str.starts_with` - 2 argument(s)
 - `str.ends_with` - 2 argument(s)

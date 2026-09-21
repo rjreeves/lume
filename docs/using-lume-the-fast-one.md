@@ -175,6 +175,19 @@ a number to text explicitly with `str.from_int(n)`:
 let message = "retry " + str.from_int(retries) + " of 3"
 ```
 
+The other direction, `str.to_int(text) -> result<int, str>`, parses a
+numeric string back into an `int` — useful for a CLI argument, since
+`args` is always `[str]`:
+
+```lume
+let parsed = str.to_int(args.get(1))
+if result.is_ok(parsed) {
+  print(result.value(parsed) * 2)
+} else {
+  eprint(result.error(parsed))
+}
+```
+
 There is no string-interpolation syntax (`"{expr}"` is printed completely
 literally, braces and all — it is not a template), and **there is no `??`
 null-coalescing operator** — that is Certo syntax (the separate language
@@ -1103,10 +1116,12 @@ separation on every path) and
 runnable version of the above with both the success path and three
 distinct failure modes checked (`python3 examples/embed_demo_host.py`).
 
-Two gotchas worth knowing before reaching for this: there is no
-`str`-to-`int` parsing builtin (only `str.from_int`, the reverse
-direction — an example expecting a bare numeric argument has to route
-it through JSON instead, as `embed_demo.lume` does), and on Windows,
+`embed_demo.lume` routes its input through JSON rather than a bare
+numeric argument — `str.to_int` exists for a single scalar value
+(section 3), but JSON is still the better choice once a host needs to
+pass more than one field, since it's self-describing and the schema
+lives in one place (the `type` declaration) rather than being implied
+by argument order. One gotcha worth knowing on Windows:
 `subprocess.run`'s underlying `CreateProcess` call needs an *absolute*
 path to `lume.exe` — a relative forward-slash path that a shell would
 resolve happily raises `FileNotFoundError`.
@@ -1261,11 +1276,6 @@ documents in this repository:
   returns. Mixing them produces a type-mismatch or "match requires an
   enum" error rather than a clear diagnostic (section 10) — `Option<T>`
   has no such split.
-- **No `str`-to-`int` parsing** — `str.from_int` converts the other
-  direction, but there is no builtin to parse a numeric string back
-  into an `int`. A CLI argument or other string-shaped numeric input
-  has to be routed through typed JSON decoding instead (section 12,
-  section 22).
 - **No generic/untyped JSON parsing** — only `SomeType.from_json(text)`
   against a record type declared ahead of time (section 12). There is
   no way for a Lume program to read an arbitrary, schema-less JSON
