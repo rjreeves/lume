@@ -7237,10 +7237,16 @@ fn formatSource(source: Text): Text = {
   Text.join(output, newline()) ++ newline()
 }
 
+// The single source of truth for Lume's own version string - both the
+// `help` command's banner and the `api` command's JSON manifest read it
+// from here, rather than each hand-maintaining its own copy of the
+// literal (they used to, and could silently drift out of sync).
+fn lumeVersion(): Text = "0.1.0-bootstrap"
+
 fn apiManifest(): Text = {
   val root = Json.object()
   JsonValue.set(root, "language", Json.string("Lume"))
-  JsonValue.set(root, "version", Json.string("0.1.0-bootstrap"))
+  JsonValue.set(root, "version", Json.string(lumeVersion()))
   val features = Json.array()
   for feature in ["bindings", "static_types", "homogeneous_lists", "generics", "generic_constraints", "protocols", "protocol_methods", "static_protocol_dispatch", "explicit_protocol_implementations", "generic_records", "generic_enums", "option", "result", "list_map", "list_filter", "list_find", "list_fold", "maps", "map_map", "map_filter", "map_fold", "function_values", "closures", "immutable_capture", "native_test_runner", "test_directory_discovery", "result_propagation", "records", "nested_records", "field_access", "record_updates", "typed_json_decoding", "json_encode", "json_encode_enums", "path_manipulation", "directory_enumeration", "time_now", "time_calendar_components", "time_format", "time_timezones", "duration_units", "process_config", "http_get", "http_post_put_delete", "http_request_headers", "bytes_type", "http_request_bytes", "test_fixtures", "enums", "variant_payloads", "match_expressions", "exhaustive_matching", "payload_destructuring", "if_else", "while", "functions", "recursion", "bytecode_cache"] {
     JsonValue.push(features, Json.string(feature))
@@ -7323,7 +7329,7 @@ fn aiReference(): Text = {
 }
 
 fn usage(): Unit [io] = {
-  println("lume 0.1.0-bootstrap")
+  println("lume " ++ lumeVersion())
   println("usage: lume run <file.lume> [args...]")
   println("       lume check|tokens|bytecode <file.lume>")
   println("       lume build <file.lume> [output.lbc]")

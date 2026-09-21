@@ -20,12 +20,12 @@ $dist = Join-Path $root 'dist'
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 # The version string's single existing source of truth: src/lume.cto's
-# own `println("lume X.Y.Z")` line in the `help` command (the same
-# string the `api` command's JSON manifest also embeds) - read directly
+# own lumeVersion() function (both the `help` command's banner and the
+# `api` command's JSON manifest read it from there) - read directly
 # rather than tracking a second, divergence-prone copy.
 $sourceText = Get-Content -LiteralPath (Join-Path $root 'src\lume.cto') -Raw
-$versionMatch = [regex]::Match($sourceText, 'println\("lume ([^"]+)"\)')
-if (-not $versionMatch.Success) { throw 'could not find the lume version string in src/lume.cto' }
+$versionMatch = [regex]::Match($sourceText, 'fn lumeVersion\(\): Text = "([^"]+)"')
+if (-not $versionMatch.Success) { throw 'could not find lumeVersion() in src/lume.cto' }
 $version = $versionMatch.Groups[1].Value
 
 $archiveName = "lume-$version-windows-x64"
