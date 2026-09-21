@@ -1,0 +1,8 @@
+fn main(args: [str]) -> int {
+  print(result.value(str.to_int("42")))
+  print(result.value(str.to_int("0")))
+  print(result.value(str.to_int("-7")))
+  print(result.is_ok(str.to_int("not a number")))
+  print(result.error(str.to_int("not a number")))
+  return 0
+}
