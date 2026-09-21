@@ -566,16 +566,15 @@ Callback parameter and return types are validated at compile time. A plain
 `&name` function reference is deliberately non-capturing; an inline closure
 (`fn(value: int) -> int => ...`) may instead capture an enclosing `let`
 binding by value — capturing a `var` is rejected, so a closure is a stable
-snapshot rather than shared mutable state. Both run in the same restricted
-evaluator: field access, arithmetic, comparisons, `if`/`while`, calls to
-other functions (including builtins, transitively), and `with` updates all
-work; `match` does not, anywhere in the callback's reachable call graph —
-that one case fails at run time with "callback uses unsupported operation".
-A transformation that needs to pattern-match an enum should be written as
-an ordinary `while`-loop function called directly instead. Neither a
-`&name` reference nor a closure is a general first-class value yet — both
-are usable only as the direct, inline argument to `list.map`/`filter`/
-`find`/`fold`; a closure bound to a `let` cannot be called later.
+snapshot rather than shared mutable state. Both run through the same
+interpreter as an ordinary function body: field access, arithmetic,
+comparisons, `if`/`while`, if-as-an-expression, `match`, `?`/`!`
+propagation, calls to other functions (including builtins, transitively),
+and `with` updates all work anywhere in the callback's reachable call
+graph. Neither a `&name` reference nor a closure is a general first-class
+value yet — both are usable only as the direct, inline argument to
+`list.map`/`filter`/`find`/`fold`; a closure bound to a `let` cannot be
+called later.
 
 ### Typed maps
 
@@ -898,15 +897,15 @@ enum can't be encoded directly.
 ```
 
 A successful run also writes a `taskgraph-report.json` next to the manifest.
-[`examples/taskgraph_test.lume`](examples/taskgraph_test.lume) covers the
-match-free string/list helpers directly; `graph.validate`/`order`/
-`transitive_closure` and `report.to_json` all use `match` internally, and a
-`test` block's body runs through the same restricted evaluator as a
-`list.map`/`filter`/`find`/`fold` callback (see "Generic list
-transformations" above), where `match` anywhere in the reachable call graph
-fails at run time — so that logic is verified end-to-end through the `lume
-run` commands above instead, the same approach `task_board` (which has no
-native tests at all) already relies on.
+[`examples/taskgraph_test.lume`](examples/taskgraph_test.lume) currently
+covers the string/list helpers directly and verifies the `match`-using
+functions (`graph.validate`/`order`/`transitive_closure`, `report.to_json`)
+end-to-end through the `lume run` commands above instead — not because
+`match` can't be used inside a `test` block (it can; a `test` body runs
+through the same interpreter as an ordinary function, see "Generic list
+transformations" above), just because that coverage split predates this
+being possible and hasn't been revisited. `task_board` has no native tests
+at all.
 
 ## Bytecode cache and performance
 
