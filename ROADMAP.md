@@ -665,6 +665,41 @@ function (`Json.parse` plus recursive schema lookups, no `[io]`), so
 own handling exactly - `from_json` now works inside closures and test
 bodies for real.
 
+The same class of gap turned out to have two more instances,
+confirmed live via `BACKLOG.md` items 2 and 3: `match`, `?`/`!` result
+propagation, and (a related third case found alongside them)
+if-as-an-expression all failed the identical way - `callPure`'s own
+"unsupported operation" fallback, hit because `execute()` already
+supported these opcodes and `callPure` never gained them. Not a
+deliberate sandboxing restriction; no compile-time check anywhere
+enforced it. Fixed the same way as `decode_json`: ported
+`if_expr_start`/`then_end`/`finish` (a near-direct copy), `match_start`/
+`match_arm`/`match_arm_end`/`match_finish` (needing two new local
+scratch lists in `callPure` mirroring `execute()`'s own save/restore-
+scope-around-a-match-arm mechanism), and `unwrap`/`propagate` (actually
+*simpler* than `execute()`'s own version - `execute()` needs a
+`returnAddresses` stack to jump back across nested calls sharing one
+loop; `callPure` doesn't, since a nested call is already a separate
+Certo function invocation, so a propagate failure just ends the current
+`callPure` invocation early with the failed value as its own result,
+the same thing its existing `return`/`closure_end` handling already
+did). One real regression caught before merging: reusing `execute()`'s
+own `bindVariantPayload` for a match arm's payload binding depth-scopes
+the binding name (`scopedName(depth, name)`) for `execute()`'s single
+shared `variables` stack across recursive frames - `callPure` never
+needed that (each invocation already has an isolated `variables`), and
+passing `depth=0` caused a real, confirmed-live "callback binding
+unavailable" failure until split into an unscoped sibling,
+`bindVariantPayloadUnscoped`. Verified against `BACKLOG.md`'s own
+reproductions (now passing), the call-graph transitivity both items
+described (a `list.map` callback calling a helper that itself uses
+`match`/`?`), and the propagate success path (the original
+reproductions only exercised failure) - checked in as
+`examples/callback_match_propagate.lume`. `BACKLOG.md` items 2 and 3
+moved from "Pending" to "Resolved" accordingly. This closes what
+BACKLOG.md's own impact analysis called "in practice rules out most
+fallible, non-trivial Lume code" from being natively testable at all.
+
 ### 1. Complete collections
 
 - ~~add a typed `Map<K, V>` with a deliberately small API~~ — shipped (see

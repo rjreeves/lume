@@ -1065,6 +1065,14 @@ $nativeTestsJson = & $Lume test (Join-Path $PSScriptRoot 'examples\native_tests_
 if ($LASTEXITCODE -ne 0) { throw "from_json inside a test body exited $LASTEXITCODE" }
 Assert-Equal 'from_json works inside a test body' "PASS from_json works inside a test body`n1 passed; 0 failed" ($nativeTestsJson -join "`n")
 
+# The same class of gap decode_json above already closed once -
+# match/if-expression/? all used to fail anywhere in a test body's or a
+# list.*/map.* callback's reachable call graph (BACKLOG.md items 2/3),
+# confirmed live before callPure gained these opcodes.
+$callbackMatchPropagate = & $Lume test (Join-Path $PSScriptRoot 'examples\callback_match_propagate.lume')
+if ($LASTEXITCODE -ne 0) { throw "callback_match_propagate exited $LASTEXITCODE" }
+Assert-Equal 'match/if-expression/propagate work inside callPure' "PASS match and if-expression work transitively inside a list.map callback`nPASS ? propagates a failure out of a test body`nPASS ? propagates a success out of a test body`n3 passed; 0 failed" ($callbackMatchPropagate -join "`n")
+
 $nativeSuite = & $Lume test (Join-Path $PSScriptRoot 'examples\native_suite')
 if ($LASTEXITCODE -ne 0) { throw "native test directory discovery exited $LASTEXITCODE" }
 Assert-Contains 'native test directory math discovery' 'PASS math works' ($nativeSuite -join "`n")
