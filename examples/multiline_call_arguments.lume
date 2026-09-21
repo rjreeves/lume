@@ -1,0 +1,38 @@
+type Point {
+  x: int
+  y: int
+}
+
+enum Outcome {
+  passed(code: int)
+  failed(message: str)
+}
+
+fn add(a: int, b: int) -> int {
+  return a + b
+}
+
+fn main(args: [str]) -> int {
+  let sum = add(
+    10,
+    20
+  )
+  print(sum)
+
+  let p = Point(
+    x: 1,
+    y: 2
+  )
+  print(p.x)
+  print(p.y)
+
+  let outcome = Outcome.passed(
+    code: 7
+  )
+  let result = match outcome {
+    passed(code) => code
+    failed(message) => -1
+  }
+  print(result)
+  return 0
+}

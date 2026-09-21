@@ -463,7 +463,13 @@ fn parseLambda(tokens: List<Token>, start: Int): ExprResult = {
 }
 
 fn parseCallArguments(tokens: List<Token>, start: Int): CallArgsResult = {
-  var index = start
+  // Newline-tolerant at the same three points a with-update's own `{...}`
+  // field list already is (:762-774): right after the opening bracket,
+  // right after each parsed item (before checking for `,`/closer), and
+  // right after consuming a `,` - covers every parenthesized argument
+  // list in the language, since this one function also backs record and
+  // enum variant construction (single call site, see parsePrimary).
+  var index = skipNewlines(tokens, start)
   var code: List<Instruction> = []
   var count = 0
   var labels: List<Text> = []
@@ -490,8 +496,8 @@ fn parseCallArguments(tokens: List<Token>, start: Int): CallArgsResult = {
       code = appendCode(code, argument.code)
       if not Text.eq(label, "") then { labels = List.push(labels, label) }
       count = count + 1
-      index = argument.next
-      if Text.eq(at(tokens, index).text, ",") then { index = index + 1 }
+      index = skipNewlines(tokens, argument.next)
+      if Text.eq(at(tokens, index).text, ",") then { index = skipNewlines(tokens, index + 1) }
       else if Text.eq(at(tokens, index).text, ")") then {
         index = index + 1
         finished = true
@@ -502,7 +508,8 @@ fn parseCallArguments(tokens: List<Token>, start: Int): CallArgsResult = {
 }
 
 fn parseListItems(tokens: List<Token>, start: Int): CallArgsResult = {
-  var index = start
+  // Same newline-tolerant pattern as parseCallArguments above.
+  var index = skipNewlines(tokens, start)
   var code: List<Instruction> = []
   var count = 0
   var problem = ""
@@ -517,12 +524,12 @@ fn parseListItems(tokens: List<Token>, start: Int): CallArgsResult = {
     else {
       code = appendCode(code, item.code)
       count = count + 1
-      index = item.next
-      if Text.eq(at(tokens, index).text, ",") then { index = index + 1 }
+      index = skipNewlines(tokens, item.next)
+      if Text.eq(at(tokens, index).text, ",") then { index = skipNewlines(tokens, index + 1) }
       else if Text.eq(at(tokens, index).text, "]") then {
         index = index + 1
         finished = true
-      } else { problem = "E0104 expected `,` or `]` in list literal" }
+      } else { problem = "E0104 line " ++ intToText(at(tokens, index).line) ++ ": expected `,` or `]` in list literal" }
     }
   }
   CallArgsResult { next: index, code: code, count: count, labels: [], problem: problem }

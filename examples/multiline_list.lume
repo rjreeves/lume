@@ -1,0 +1,19 @@
+fn main(args: [str]) -> int {
+  let items = [
+    1,
+    2,
+    3
+  ]
+  print(list.len(items))
+
+  let no_trailing_comma = [
+    "a",
+    "b"
+  ]
+  print(list.len(no_trailing_comma))
+
+  let empty = [
+  ]
+  print(list.len(empty))
+  return 0
+}

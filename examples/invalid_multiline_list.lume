@@ -1,0 +1,8 @@
+fn main(args: [str]) -> int {
+  let items = [
+    1
+    2
+  ]
+  print(list.len(items))
+  return 0
+}

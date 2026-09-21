@@ -23,11 +23,12 @@ The language follows five rules:
 ## 2. Source model
 
 - UTF-8 source files use the `.lume` extension.
-- Newlines terminate statements except inside `[]` or `{}`. **Parenthesized
-  argument lists — function calls, record construction, closure
-  parameters — must stay on one line; a newline before the closing `)` is a
-  parse error.** This is narrower than the general rule below would suggest,
-  and is a bootstrap limitation rather than a design choice.
+- Newlines terminate statements except inside `[]`, `()`, or `{}` - a list
+  literal, a function call's or record/enum-variant construction's
+  parenthesized argument list, and a `with`-update's field list all tolerate
+  newlines between items. **The one exception: a closure's own parenthesized
+  parameter list (`fn(x: int, y: int) -> int => ...`) must still stay on one
+  line** - a bootstrap limitation, not a design choice.
 - Blocks use braces and must be formatted with two-space indentation.
 - Line comments start with `//`. Documentation comments start with `///`.
 - Identifiers are ASCII `snake_case`. Types are `PascalCase`.
@@ -241,17 +242,10 @@ Records use named, order-independent construction (`User(name: "Ada", id:
 classes, inheritance, methods with hidden dispatch, or structural
 subtyping.
 
-**Record- and enum-construction calls, like all call argument lists, must
-fit on one line** (§2) — a multi-line `User(\n  name: "Ada",\n  ...\n)` is a
-parse error, contrary to what §2's general newline rule would otherwise
-suggest. **Field access directly on a call expression's result is also not
-supported** — `list.get(users, 0).name` is a parse error; bind the call's
-result to a `let` first:
-
-```lume
-let user = list.get(users, 0)
-print(user.name)
-```
+Record- and enum-construction calls may span multiple lines like any other
+argument list (§2). Field access chains directly onto any expression,
+including a call's own result — `list.get(users, 0).name` works without
+binding the call to a `let` first.
 
 JSON decodes directly into a record via `Type.from_json(text)`, returning
 the shorthand `str`-error result described in §9. Decoding supports `str`,
@@ -910,8 +904,6 @@ simply not built yet and carries no such argument against it.
 - closures/`&name` references as general first-class values (§6) — usable
   today only as the direct argument to the four `list.*` higher-order
   builtins
-- multi-line call/record-construction argument lists (§2, §8)
-- postfix field access directly on a call expression's result (§8)
 - `let`/`var` type annotations (§5)
 
 Features may move from either list only if benchmarks show that their
