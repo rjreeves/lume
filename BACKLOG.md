@@ -10,7 +10,31 @@ and the exact compiler output, at commit `e7788cd` (`ai/lume-api.json`
 
 ## Pending
 
+Nothing currently pending - all three items found so far have been
+resolved (see below).
+
+## Resolved
+
 ### 1. Multi-line list literals fail to parse
+
+**Resolved:** `parseListItems` (`src/lume.cto`) and `parseCallArguments`
+(the one `(...)` argument-list parser every plain function call, record
+construction, and enum variant construction all share) neither ever
+called `skipNewlines`, unlike a `with`-update's own `{...}` field list,
+which already tolerated newlines via three `skipNewlines` calls at the
+points that matter: right after the opening bracket, right after each
+parsed item (before checking for `,`), and right after consuming a `,`.
+Fixed by porting that exact, already-proven pattern into both
+functions - closing this item and the separate "multi-line call/
+record-construction argument lists" gap `SPEC.md` §19 documented
+alongside it, in one change. Also added the missing line number to
+`E0104`'s own message, per this item's own "secondary diagnostics gap"
+note below. Verified against this item's own reproduction (now passes),
+a multi-line function call, a multi-line record construction, a
+multi-line enum variant construction, an empty multi-line list (`[\n]`),
+and a trailing item with no comma before the closing bracket - all now
+compile and run correctly, checked in as `examples/multiline_list.lume`
+and `examples/multiline_call_arguments.lume`.
 
 **Claim contradicted:** `SPEC.md` §2 — "Newlines terminate statements
 except inside `[]` or `{}`." List literals (`[]`) are one of only two
@@ -56,8 +80,6 @@ field list (see `with` update blocks), or `SPEC.md` §2 and the §19 gap list
 should be corrected to state plainly that multi-line list literals are not
 yet supported, alongside the existing "multi-line call/record-construction
 argument lists" entry.
-
-## Resolved
 
 ### 2. `test` block bodies run through the same match-forbidding restricted evaluator as `list.*` callbacks, undocumented in §13
 

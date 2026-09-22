@@ -86,6 +86,18 @@ $lists = & $Lume run (Join-Path $PSScriptRoot 'examples\lists.lume')
 if ($LASTEXITCODE -ne 0) { throw "lists exited $LASTEXITCODE" }
 Assert-Equal 'typed lists' "3`n20`n40" ($lists -join "`n")
 
+$multilineList = & $Lume run (Join-Path $PSScriptRoot 'examples\multiline_list.lume')
+if ($LASTEXITCODE -ne 0) { throw "multiline_list exited $LASTEXITCODE" }
+Assert-Equal 'multi-line list literals' "3`n2`n0" ($multilineList -join "`n")
+
+$multilineCallArgs = & $Lume run (Join-Path $PSScriptRoot 'examples\multiline_call_arguments.lume')
+if ($LASTEXITCODE -ne 0) { throw "multiline_call_arguments exited $LASTEXITCODE" }
+Assert-Equal 'multi-line call/record/variant construction arguments' "30`n1`n2`n7" ($multilineCallArgs -join "`n")
+
+$invalidMultilineList = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_multiline_list.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "invalid_multiline_list should exit 1" }
+Assert-Equal 'multi-line list literal missing comma reports a line number' 'E0104 line 4: expected `,` or `]` in list literal' ($invalidMultilineList -join "`n")
+
 $records = & $Lume run (Join-Path $PSScriptRoot 'examples\records.lume')
 if ($LASTEXITCODE -ne 0) { throw "records exited $LASTEXITCODE" }
 Assert-Equal 'typed records' "Ada@Sydney`n36`ntools" ($records -join "`n")
