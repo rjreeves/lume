@@ -1,0 +1,45 @@
+// JSON decoding into an enum field inside a record - confirmed live
+// during a SPEC.md reconciliation pass to already work (a payload-
+// carrying variant, and a list of records each with an enum field),
+// contradicting a previously-documented "not supported" claim.
+
+enum Status {
+  pending
+  running(started_at: int)
+  done
+}
+
+type Task {
+  name: str
+  status: Status
+}
+
+type Board {
+  tasks: [Task]
+}
+
+fn main(args: [str]) -> int {
+  let original = Task(name: "a", status: Status.running(started_at: 100))
+  let encoded = result.value(json.encode(original))
+  print(encoded)
+
+  let decoded = Task.from_json(encoded)
+  let task = result.value(decoded)
+  print(match task.status {
+    pending => "pending"
+    running(started_at) => "running at " + str.from_int(started_at)
+    done => "done"
+  })
+
+  let board_original = Board(tasks: [
+    Task(name: "a", status: Status.pending()),
+    Task(name: "b", status: Status.done())
+  ])
+  let board_encoded = result.value(json.encode(board_original))
+  let board_decoded = result.value(Board.from_json(board_encoded))
+  let first = list.get(board_decoded.tasks, 0)
+  let second = list.get(board_decoded.tasks, 1)
+  print(match first.status { pending => "pending" running(started_at) => "running" done => "done" })
+  print(match second.status { pending => "pending" running(started_at) => "running" done => "done" })
+  return 0
+}
