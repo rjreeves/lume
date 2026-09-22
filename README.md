@@ -68,28 +68,29 @@ Token count alone is not the objective. A cryptic language may use fewer tokens 
 ## Example
 
 ```lume
-use fs
-use json
-
 type Config {
   host: str
-  port: int = 5432
+  port: int
 }
 
 fn load_config(path: str) -> Config ! str {
-  let text = fs.read_text(path)!
-  return json.decode[Config](text)!
+  let text = fs.try_read_text(path)!
+  return Config.from_json(text)
 }
 
 fn main(args: [str]) -> int {
-  let path = list.get(args, 0) ?? "config.json"
+  var path = "config.json"
+  if args.count() > 0 {
+    path = args.get(0)
+  }
 
-  match load_config(path) {
-    ok config => print("{config.host}:{config.port}")
-    err message => {
-      eprint(message)
-      return 1
-    }
+  let outcome = load_config(path)
+  if result.is_ok(outcome) {
+    let config = result.value(outcome)
+    print(config.host + ":" + str.from_int(config.port))
+  } else {
+    eprint(result.error(outcome))
+    return 1
   }
 
   return 0
@@ -146,60 +147,30 @@ types, assignment consistency, boolean conditions, homogeneous lists, function
 argument types, builtin argument types, and declared return types before a
 program can run or be cached.
 
-The bootstrap includes canonical scripting APIs:
+The bootstrap includes canonical scripting APIs covering `args`, `fs`, `env`,
+`process`, `http`, `bytes`, `str`, `json`, `path`, `dir`, `time`, `duration`/
+`Duration`, `list`, `map`, `result`, `expect`, and `fixture`. The full,
+always-current list — regenerated from the compiler's own builtin table on
+every build, so it can't drift the way a hand-maintained copy would — is
+[`docs/builtins.md`](docs/builtins.md). A few of the more commonly used ones:
 
 ```text
 args.count()                 args.get(index)
-fs.exists(path)              fs.read_text(path)
-fs.write_text(path, text)
-fs.try_read_text(path)       fs.try_write_text(path, text)
-fs.read_bytes(path)          fs.write_bytes(path, data)
-env.get(name)                env.has(name)
-env.set(name, value)         env.unset(name)
-process.run(executable, args) process.ok(result)
-process.code(result)          process.stdout(result)
-process.stderr(result)
-process.run_with_input(executable, args, input)
-process.run_with_env(executable, args, envMap)
-http.get(url)                 http.delete(url)
-http.post(url, body, content_type)
-http.put(url, body, content_type)
-http.request(method, url, headers, body)
-http.request_bytes(method, url, headers, data)
-http.status(response)         http.body(response)
-http.content_type(response)   http.ok(response)
-http.body_bytes(response)
-bytes.from_str(text)         bytes.to_str(data)
-bytes.length(data)
-str.len(text)                str.trim(text)
-str.upper(text)              str.lower(text)
-str.contains(text, part)     str.starts_with(text, prefix)
-str.ends_with(text, suffix)
-json.valid(text)             json.get(text, key)
-json.encode(value)
-path.join(a, b)              path.basename(text)
-path.dirname(text)           path.stem(text)
-path.extension(text)         dir.list(path)
-time.now()                   time.to_iso(seconds)
-time.year(seconds)           time.month(seconds)
-time.day(seconds)            time.hour(seconds)
-time.minute(seconds)         time.second(seconds)
-list.len(values)             list.get(values, index)
-list.push(values, item)
-map.new()                    map.len(m)
-map.get(m, key)              map.has(m, key)
-map.set(m, key, value)       map.remove(m, key)
-map.keys(m)                  map.values(m)
-map.map/filter/fold(...)
-result.ok(value)              result.err(message)
-result.is_ok(result)          result.value(result)
-result.error(result)
-fixture.temp_dir()           fixture.cleanup(path)
+fs.read_text(path)           fs.try_read_text(path)
+process.run(executable, args) process.stdout(result)
+http.get(url)                 http.status(response)
+str.len(text)                 str.trim(text)
+json.encode(value)            Type.from_json(text)
+path.join(a, b)                dir.walk(path, maxDepth)
+list.len(values)               list.get(values, index)
+map.new()                      map.set(m, key, value)
+result.is_ok(result)           result.value(result)
 ```
 
-Functions declare structured failures as `value_type ! error_type`. Postfix `!`
+Functions declare structured failures as `value_type ! error_type`. Postfix `?`
 unwraps an `ok` value or immediately propagates an `err` result from the current
-result-returning function. There are no exceptions or hidden stack unwinds.
+result-returning function; `!` is a supported compatibility spelling of the same
+operator, not a different behavior. There are no exceptions or hidden stack unwinds.
 
 ## Modules
 
@@ -306,7 +277,9 @@ PASS or FAIL, followed by a summary; any failure produces exit code 1. Use
 `--filter text` to select tests by name. Assertions include `expect.equal`,
 `expect.true`, `expect.some`, `expect.ok`, and `expect.err`.
 
-Passing a directory discovers every direct child named `*_test.lume`:
+Passing a directory recursively discovers every `*_test.lume` file in the
+tree (a fixed 32-level depth bound, not a flag). `--ignore name1,name2`
+skips matching directory names anywhere in the tree, such as `node_modules`:
 
 ```text
 lume test tests
@@ -420,11 +393,11 @@ print(json.encode(State.done(code: 7)))   // {"variant":"done","code":7}
 print(json.encode(Option.Some(value: 1))) // {"variant":"Some","value":1}
 ```
 
-An enum nested inside a record or list field is encoded the same
-recursive way as any other value. This is one-directional — decoding a
-JSON payload back into an enum field is still not supported (see
-"Records" above), so there is no matching decode shape and no round-trip
-guarantee.
+An enum nested inside a record field or list element is encoded the same
+recursive way as anything else, and `Type.from_json` decodes that exact
+shape back — `json.encode` then `Type.from_json` round-trips a record
+containing enum fields correctly, including a payload-carrying variant
+and a list of records each with an enum field.
 
 ### Enums
 
@@ -649,7 +622,17 @@ if result.is_ok(listed) {
 }
 ```
 
-There is no recursive traversal yet — `dir.list` covers a single level.
+`dir.walk(path, maxDepth) -> Result<[str], str>` recurses up to `maxDepth`
+levels, returning full paths (not just entry names) for every file found —
+directories are descended into but not themselves included in the result.
+`maxDepth` bounds a symlink loop; there is no true infinite-recursion guard:
+
+```lume
+let files = dir.walk("reports", 8)
+if result.is_ok(files) {
+  print(list.len(result.value(files)))
+}
+```
 
 ### Time
 
@@ -706,15 +689,25 @@ print(time.now() + duration.minutes(5))
 print(time.now() + duration.hours(2))
 ```
 
-There is still no distinct `Duration` *type* — `duration.*` are plain
-functions returning `int`, the same representation `time.now()` and
-every other `time.*` value already uses, not a new value kind with its
-own arithmetic operators or unit tracking. This is a deliberate scope
-reduction: `int` arithmetic on epoch seconds already covers every
-offset these functions can express (`time.now() + duration.minutes(5)`
-is exactly `time.now() + 300`), so the readability win doesn't need a
-new type behind it, and skipping one avoids the parser/typechecker
-surface a distinct type would require.
+`Duration` is also a distinct record type for when that safety matters —
+a built-in record (`Duration { seconds: int }`, seeded the same way
+`Option<T>`/`Result<T, E>` are) rather than a plain `int`.
+`Duration.of_seconds`/`of_minutes`/`of_hours`/`of_days(n: int) -> Duration`
+construct one; `Duration.add(a, b)`/`Duration.sub(a, b) -> Duration` and
+`Duration.scale(d, factor: int) -> Duration` combine them — plain named
+functions, not operators, since this language has no operator
+overloading. `Duration.to_seconds(d) -> int` bridges back into plain-`int`
+epoch arithmetic:
+
+```lume
+let five_minutes = Duration.of_minutes(5)
+print(time.now() + Duration.to_seconds(five_minutes))
+```
+
+Its `seconds` field is also readable directly (`five_minutes.seconds`).
+Passing a plain `int` where a `Duration` is expected, or vice versa, is a
+compile error — the concrete gap the lowercase `duration.*` functions
+above cannot catch.
 
 ### Process configuration
 
@@ -734,8 +727,16 @@ let withEnv = process.run_with_env("powershell.exe", ["-NoProfile", "-Command", 
 print(str.trim(process.stdout(withEnv)))
 ```
 
-There is no working-directory or timeout support yet — Lume's underlying
-process primitives have no output-capturing call that accepts either.
+`process.run_with_options(executable, args, workingDir, timeoutMs)` covers
+both a working directory and a subprocess-level timeout: `workingDir` of
+`""` means "don't change directory"; `timeoutMs <= 0` means no timeout. A
+timed-out process is killed and reports `process.code(result) == -1` —
+the same value a normal launch failure reports:
+
+```lume
+let withOptions = process.run_with_options("powershell.exe", ["-NoProfile", "-Command", "Get-Location"], "C:\\", 5000)
+print(str.trim(process.stdout(withOptions)))
+```
 
 ### HTTP requests
 

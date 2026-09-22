@@ -3,8 +3,8 @@
 # Run this from the Lume repository root:
 #   ion-win.exe certo-toolchain.ion
 
-if not test -e C:/Users/robert/Desktop/Certo/target/release/certo.exe
-    echo "Certo executable not found: C:/Users/robert/Desktop/Certo/target/release/certo.exe"
+if not test -e C:/Users/robert/Desktop/root/Certo/target/release/certo.exe
+    echo "Certo executable not found: C:/Users/robert/Desktop/root/Certo/target/release/certo.exe"
     echo "Build Certo first with: cargo build --release -p certo-cli"
     exit 2
 end
@@ -15,4 +15,4 @@ if not test -e src/lume.cto
 end
 
 echo "Running native ion-win -> Certo -> Lume pipeline"
-C:/Users/robert/Desktop/Certo/target/release/certo.exe check src/lume.cto && echo "[1/5] Certo check passed" && mkdir dist && C:/Users/robert/Desktop/Certo/target/release/certo.exe src/lume.cto -o dist/lume.exe && echo "[2/5] Lume compiled" && dist/lume.exe api > ai/lume-api.json && echo "[3/5] API manifest exported" && dist/lume.exe check examples/functions.lume && dist/lume.exe check examples/control_flow.lume && dist/lume.exe check examples/lists.lume && dist/lume.exe check examples/core_api.lume && dist/lume.exe check examples/structured_errors.lume && dist/lume.exe check examples/process.lume && dist/lume.exe check examples/modules.lume && echo "[4/5] Representative programs passed static validation" && dist/lume.exe run examples/arithmetic.lume && dist/lume.exe run examples/functions.lume && dist/lume.exe run examples/lists.lume && echo "[5/5] Runtime checks passed" && echo "Certo toolchain completed successfully."
+C:/Users/robert/Desktop/root/Certo/target/release/certo.exe check src/lume.cto && echo "[1/5] Certo check passed" && mkdir dist && C:/Users/robert/Desktop/root/Certo/target/release/certo.exe src/lume.cto -o dist/lume.exe && echo "[2/5] Lume compiled" && dist/lume.exe api > ai/lume-api.json && echo "[3/5] API manifest exported" && dist/lume.exe check examples/functions.lume && dist/lume.exe check examples/control_flow.lume && dist/lume.exe check examples/lists.lume && dist/lume.exe check examples/core_api.lume && dist/lume.exe check examples/structured_errors.lume && dist/lume.exe check examples/process.lume && dist/lume.exe check examples/modules.lume && echo "[4/5] Representative programs passed static validation" && dist/lume.exe run examples/arithmetic.lume && dist/lume.exe run examples/functions.lume && dist/lume.exe run examples/lists.lume && echo "[5/5] Runtime checks passed" && echo "Certo toolchain completed successfully."
