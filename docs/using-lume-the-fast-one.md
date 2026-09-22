@@ -593,9 +593,28 @@ fn main(args: [str]) -> int {
 rest of its life — read it only with `result.*`, and if you wrap it in your
 own function, declare that function's return type in lowercase
 `result<T, E>` too. If you constructed it yourself with `Result.Ok(...)`/
-`Result.Err(...)`, it's world 1 — use `match`. Never mix the two: neither
-`result.is_ok` on a `Result.Ok(...)`-constructed value nor `match` on a
-builtin's return will type-check.
+`Result.Err(...)`, it's world 1 — use `match`. The two do not type-check
+against each other directly: neither `result.is_ok` on a
+`Result.Ok(...)`-constructed value nor `match` on a builtin's return will
+compile.
+
+When you genuinely need to `match` a world-2 value — a builtin's own
+`result<T, E>` — `result.to_result(outcome) -> Result<T, E>` lifts it into
+a real, matchable world-1 value on demand:
+
+```lume
+let shorthand = fs.try_read_text(path)          // world 2
+let bridged = result.to_result(shorthand)        // world 1, now matchable
+print(match bridged {
+  Ok(value) => value
+  Err(message) => "error: " + message
+})
+```
+
+This is one-directional (world 2 → world 1 only) and every existing
+`result.*` builtin and world-2 call site is unaffected — it's an escape
+hatch for the cases the split above actually blocks, not a unification of
+the two worlds.
 
 ## 11. Typed maps
 
@@ -652,10 +671,13 @@ if result.is_ok(decoded) {
 }
 ```
 
-(Bind the call's result to a `let` before accessing a field on it, as
-above — a function call's return value cannot have a field chained directly
-onto it, e.g. `result.value(decoded).name` is a syntax error, `expected
-)`.)
+A field can also be chained directly onto a call result without an
+intermediate `let` — `result.value(decoded).name` works the same as
+`user.name`, and so does a parenthesized `with`-update expression's field:
+
+```lume
+print(result.value(User.from_json(text)).name)
+```
 
 Decoding checks schemas recursively, including nested records, lists, and
 enums. Errors contain the failing field path (`User.address.city must be
@@ -866,9 +888,28 @@ duration.seconds/minutes/hours/days(n) -> int
 ```
 
 These are plain `int`-returning functions, the same representation
-`time.now()` uses — not a distinct `Duration` type with its own arithmetic.
-`time.now() + duration.minutes(5)` reads as what it means instead of a magic
-`300`.
+`time.now()` uses. `time.now() + duration.minutes(5)` reads as what it
+means instead of a magic `300` — but nothing stops a unit-confusion bug
+from compiling, since both sides are just `int`.
+
+`Duration` is also a distinct record type for when that type safety
+matters — a built-in record (`Duration { seconds: int }`) rather than a
+plain `int`. `Duration.of_seconds/of_minutes/of_hours/of_days(n: int) ->
+Duration` construct one; `Duration.add(a, b)`/`Duration.sub(a, b) ->
+Duration` and `Duration.scale(d, factor: int) -> Duration` combine them —
+plain named functions, not operators, since this language has no operator
+overloading. `Duration.to_seconds(d) -> int` bridges back to plain-`int`
+epoch arithmetic:
+
+```lume
+let five_minutes = Duration.of_minutes(5)
+print(time.now() + Duration.to_seconds(five_minutes))
+print(five_minutes.seconds)
+```
+
+Passing a plain `int` where a `Duration` is expected, mixing a `Duration`
+directly into `int` arithmetic, or vice versa, is a compile error — the
+concrete gap the lowercase `duration.*` functions above cannot catch.
 
 ## 18. Modules
 
@@ -1226,7 +1267,9 @@ becomes an explicit exit code.
 5. Handle `Option` and enum values with exhaustive `match`.
 6. Pass process arguments as lists, never as constructed shell command text.
 7. Keep list callbacks small; use named functions or immutable-capture
-   closures, and keep `match` out of them entirely.
+   closures. `match`, `?`/`!` propagation, and if-as-an-expression all work
+   inside a callback's reachable call graph (section 6), so this is a
+   readability preference, not a compiler restriction.
 8. Convert a number to text with `str.from_int`, not a workaround.
 9. Use `and`/`or`/`not` directly for compound conditions; reach for a
    small boolean-returning helper function only once a condition needs
@@ -1240,9 +1283,6 @@ becomes an explicit exit code.
 Real, current limitations — not aspirational roadmap items from other
 documents in this repository:
 
-- **`if`/`else` expressions don't work inside closures** — same
-  restriction `match` already has there; use a helper function with
-  early `return`s instead (section 4).
 - **No `??` operator** — that is Certo syntax, not Lume's (section 3).
 - **No `for` loop of any kind** — not a range loop, and not `for x in
   list` either. `while` with a manually managed index is the only loop
@@ -1267,10 +1307,6 @@ documents in this repository:
   `compare(a, b) -> int` by hand (section 9).
 - **`Map<K, V>` keys are limited** to `int`/`str`/`bool`, or a record/enum
   with an explicit `impl Eq` (section 11).
-- **JSON decoding into an enum *field* inside a record is still not
-  supported** — only decoding a top-level enum value directly
-  (`EnumName.from_json`) works; a record containing an enum field cannot
-  currently round-trip through `from_json` for that field.
 - **`bytes` is not NUL-safe** — it is represented identically to `str` at
   runtime, so an embedded NUL byte truncates content on round-trip
   (section 16).
