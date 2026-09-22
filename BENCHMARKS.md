@@ -2312,3 +2312,57 @@ file's read cost is itself no longer negligible.
 `benchmark-persistent-process.ps1` is a same-process repeated-compile
 proxy, not a real request-serving daemon - Lume has no IPC or persistent
 server, and this checkpoint doesn't claim to have measured one.
+
+## Health check after the callPure and multi-line-parsing PRs (2026-09-22)
+
+Two real compiler-internals changes landed since the last checkpoint,
+both touching extremely hot paths: `callPure` (the interpreter behind
+every `list.*`/`map.*` callback and every `test` body) gained opcode
+handling for `match`/`?`/`!`/if-as-an-expression, and `parseCallArguments`/
+`parseListItems` (the argument-list parser behind every function call,
+record construction, enum variant construction, and list literal) each
+gained newline-skipping to support multi-line forms. Worth a deliberate
+re-run against this file's own 5%-regression acceptance gate rather than
+assuming either change was free, since both sit on paths every compile
+already exercises.
+
+| Benchmark | Previous (2026-09-20) | Now | Delta |
+| --- | ---: | ---: | ---: |
+| Trivial 10,000-line (`benchmark-10000.ps1`, 20 iterations) | 28.10 ms | 25.75 ms / 26.55 ms (two runs) | ~6-8% faster |
+| Feature-mix (`benchmark-10000-features.ps1`, 30 fresh-process samples) | 107.92 ms | 112.19 ms / 111.23 ms (two runs) | ~3-4% slower |
+| Generic dispatch (`benchmark-10000-generic-dispatch.ps1`, 20 iterations) | 71.10 ms | 73.40 ms / 69.50 ms (two runs) | within noise, not reproducibly one direction |
+
+All three still comfortably clear their own 10,000-lines/second target
+(`TargetMet: True` throughout). Reported as two runs each, not one,
+since the feature-mix delta turned out to be real and reproducible, not
+noise - worth confirming before writing it down either way rather than
+trusting a single sample.
+
+**Feature-mix's ~3-4% slowdown is a genuine, explicable cost of the
+multi-line-parsing fix, not `callPure`'s.** `callPure` only ever runs at
+*execution* time (a `list.map` callback, a `test` body) - `benchmark-
+10000-features.ps1` times `lume check` alone, which never executes the
+program, so `callPure`'s new opcode branches cannot be the cause here.
+`parseCallArguments`/`parseListItems` gaining `skipNewlines` calls *does*
+run on every compile, and feature-mix's workload (records, enums,
+generics, `list.map`/`filter`/`fold`, closures) is unusually heavy on
+exactly the parenthesized-argument and list-literal forms those two
+functions parse - a small, real, and reasonable cost for closing a real
+readability gap. Comfortably inside this file's own "no more than a 5%
+regression without an offsetting benefit" acceptance gate, so not a
+blocker, but recorded honestly rather than waved off as noise now that
+it reproduced twice.
+
+**Trivial's small speedup (`28.10 ms → ~26 ms`) is unrelated to either
+change** - the trivial file (`total = total + 1` repeated) has
+essentially no function calls or list literals for `parseCallArguments`/
+`parseListItems` to spend extra time in, and `callPure` never runs
+during a pure `lume check`. Most likely ordinary machine-level variance
+between runs, not attributed to anything in this file's own history.
+
+Also re-ran `benchmark-persistent-process.ps1`: no meaningful drift
+(-9.8% trivial, -4.9% feature-mix, both within the same noise band this
+file's own earlier persistent-process checkpoint already established),
+consistent with that checkpoint's own finding that the known memory
+retention doesn't manifest as per-iteration latency growth at this
+scale.
