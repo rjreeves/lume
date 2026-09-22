@@ -151,6 +151,10 @@ $jsonDecodeEnumShape = & $Lume run (Join-Path $PSScriptRoot 'examples\invalid_js
 if ($LASTEXITCODE -ne 0) { throw "json decode enum wrong shape exited $LASTEXITCODE" }
 Assert-Equal 'json decode enum wrong shape' 'State must be State' ($jsonDecodeEnumShape -join "`n")
 
+$jsonDecodeEnumFieldOk = & $Lume run (Join-Path $PSScriptRoot 'examples\json_decode_enum_field.lume')
+if ($LASTEXITCODE -ne 0) { throw "json decode enum field exited $LASTEXITCODE" }
+Assert-Equal 'json decoding into an enum field inside a record' "{`"name`":`"a`",`"status`":{`"variant`":`"running`",`"started_at`":100}}`nrunning at 100`npending`ndone" ($jsonDecodeEnumFieldOk -join "`n")
+
 $pathFunctions = & $Lume run (Join-Path $PSScriptRoot 'examples\path_functions.lume')
 if ($LASTEXITCODE -ne 0) { throw "path functions exited $LASTEXITCODE" }
 Assert-Equal 'path functions' "reports/2026`nsummary.csv`nreports/2026`nsummary`ncsv`nnone" ($pathFunctions -join "`n")

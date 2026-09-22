@@ -74,12 +74,13 @@ deliberate, documented scope reduction (see §11) — it does not carry
 arbitrary binary content: an embedded NUL byte truncates on round-trip.
 
 **Not yet implemented:** `unit`/`never` as usable types, and the
-`T?` postfix sugar for `Option<T>` — write
-`Option<T>` explicitly. There are no implicit conversions, and — contrary to
-what the previous draft of this section claimed — there is currently **no
-conversion function either**: no `int.parse`, no `int`-to-`str`, no
-`str.from`. A program that needs to turn a number into displayable text has
-no way to do it except `print`/`eprint`, which accept any scalar directly.
+`T?` postfix sugar for `Option<T>` — write `Option<T>` explicitly. There
+are no implicit conversions, but explicit ones exist both directions:
+`str.from_int(n: int) -> str` and `str.to_int(text: str) -> Result<int,
+str>` (§11) — a program that needs to turn a number into displayable
+text, or parse a numeric string back into an `int`, has a real function
+for it; `print`/`eprint` accepting any scalar directly is a separate,
+additional convenience, not the only option.
 
 ## 5. Bindings
 
@@ -209,10 +210,19 @@ while ready == false {
 Conditions must be `bool`; Lume has no truthiness. **`for`/`in` loops,
 `break`, and `continue` are not yet implemented** — express iteration with
 `while` and an explicit index, or with `list.map`/`filter`/`find`/`fold`
-(§12). **There is also no `&&`, `||`, or `not`/`!` boolean operator** —
-compose conditions with nested `if` statements, and write predicate
-functions that return the polarity you need directly rather than negating
-one.
+(§12). Boolean composition uses the keywords `and`/`or`/`not`, not symbols
+— **there is no `&&`, `||`, or `!` for boolean logic** (`!` is reserved for
+`Result`/`Option` propagation, §9):
+
+```lume
+if ready and not stopped {
+  poll()
+}
+```
+
+`and`/`or` genuinely short-circuit (the right operand is never evaluated
+once the left already determines the result); `not` binds tighter than
+`and`, which binds tighter than `or`.
 
 `if` and `while` are statements, not expressions — an `if` cannot appear on
 the right-hand side of an assignment or as a match arm's body. `match` (§9)
@@ -249,19 +259,14 @@ binding the call to a `let` first.
 
 JSON decodes directly into a record via `Type.from_json(text)`, returning
 the shorthand `str`-error result described in §9. Decoding supports `str`,
-`int`, `bool`, nested records, and lists of records recursively (including
-lists of records nested inside other records). **It does not support enum
-fields** — a JSON payload with fields that map onto enum variants should
-decode into a flat record of scalars first, then be classified into an enum
-by ordinary code:
+`int`, `bool`, nested records, enum fields (matched against a
+`{"variant": "...", ...payload fields}` shape - the same one `json.encode`
+below produces, so the pair round-trips), and lists of any of the above
+recursively (including lists of records nested inside other records, and
+records containing enum fields nested inside a list):
 
 ```lume
-fn classify(raw: RawTask) -> Status {
-  if raw.status_code == "done" {
-    return Status.done(completed_by: raw.completed_by)
-  }
-  return Status.pending()
-}
+let decoded = Task.from_json("{\"name\":\"a\",\"status\":{\"variant\":\"pending\"}}")
 ```
 
 `json.encode(value) -> Result<str, str>` encodes back the other direction,
@@ -272,11 +277,13 @@ under a `"variant"` key, with any payload fields flattened alongside it —
 `State.done(code: 0)` becomes `{"variant":"done","code":0}`, and a
 payload-free variant like `Option.None()` becomes `{"variant":"None"}`.
 An enum nested inside a record field or list element is encoded the same
-recursive way as anything else. This is one-directional: decoding a JSON
-payload into an enum field is still not supported (§8), so there is no
-matching decode shape and no round-trip guarantee. There is no schema or
-expected-type argument: every value already carries its own runtime type
-tag, so encoding a valid, already-typechecked value cannot itself fail.
+recursive way as anything else, and `Type.from_json` decodes that exact
+shape back (§8) - `json.encode` then `Type.from_json` round-trips a
+record containing enum fields correctly, verified live including a
+payload-carrying variant and a list of records each with an enum field.
+There is no schema or expected-type argument to `json.encode`: every
+value already carries its own runtime type tag, so encoding a valid,
+already-typechecked value cannot itself fail.
 
 Records are updated immutably with `with`:
 
@@ -483,25 +490,29 @@ process.code(result)           process.stdout(result)
 process.stderr(result)
 process.run_with_input(exe, args, input)
 process.run_with_env(exe, args, envMap)
+process.run_with_options(exe, args, workingDir, timeoutMs)
 http.get(url)                     http.delete(url)
 http.post(url, body, content_type)
 http.put(url, body, content_type)
 http.request(method, url, headers, body)
+http.request_with_limit(method, url, headers, body, maxBytes)
 http.request_bytes(method, url, headers, data)
 http.status(response)             http.body(response)
 http.content_type(response)       http.ok(response)
-http.body_bytes(response)
+http.body_bytes(response)         http.truncated(response)
 bytes.from_str(text)            bytes.to_str(data)
 bytes.length(data)
 str.len(text)                  str.trim(text)
 str.upper(text)                str.lower(text)
 str.contains(text, part)       str.starts_with(text, prefix)
 str.ends_with(text, suffix)
+str.from_int(n)                str.to_int(text)
 json.valid(text)                json.get(text, key)
 json.encode(value)
 path.join(a, b)                  path.basename(text)
 path.dirname(text)               path.stem(text)
 path.extension(text)             dir.list(path)
+dir.walk(path, maxDepth)
 time.now()                        time.to_iso(seconds)
 time.year(seconds)                time.month(seconds)
 time.day(seconds)                 time.hour(seconds)
@@ -510,6 +521,10 @@ time.format(seconds, pattern)
 time.in_timezone(seconds, zone)   time.format_in_timezone(seconds, pattern, zone)
 duration.seconds(n)               duration.minutes(n)
 duration.hours(n)                 duration.days(n)
+Duration.of_seconds(n)            Duration.of_minutes(n)
+Duration.of_hours(n)              Duration.of_days(n)
+Duration.add(a, b)                Duration.sub(a, b)
+Duration.scale(d, factor)         Duration.to_seconds(d)
 list.len(values)                list.get(values, index)
 list.push(values, item)         list.map/filter/find/fold(...)
 map.new()                        map.len(m)
@@ -519,7 +534,7 @@ map.keys(m)                      map.values(m)
 map.map/filter/fold(...)
 result.ok(value)                result.err(message)
 result.is_ok(result)            result.value(result)
-result.error(result)
+result.error(result)             result.to_result(x)
 expect.equal/true/ok/err/some(...)   (inside `test { ... }` blocks only, §13)
 expect.exit_code/stdout_contains/stderr_contains(...)  (process assertions, §13)
 fixture.temp_dir()               fixture.cleanup(path)
@@ -539,7 +554,11 @@ a leading-dot name like `.gitignore` (no extension, not an empty one).
 `dir.list(path) -> Result<[str], str>` lists one directory level — entry
 names only (not full paths; combine with `path.join` when a full path is
 needed), in whatever order the filesystem returns them (not sorted).
-Recursive traversal is not implemented yet.
+`dir.walk(path, maxDepth) -> Result<[str], str>` recurses up to
+`maxDepth` levels, returning full paths (not just entry names) for every
+file found - directories are descended into but not themselves included
+in the result. `maxDepth` bounds a symlink loop; there is no true
+inode-based cycle detection.
 
 `time.now() -> int` returns the current time as Unix epoch seconds (UTC);
 `time.to_iso(seconds) -> str` formats an epoch value as a fixed
@@ -610,11 +629,15 @@ accessors on the result. `process.run_with_env(exe, args, envMap) ->
 process`, where `envMap: Map<str, str>`, runs a command with the given
 variables overridden for the duration of that one call; each overridden
 variable is restored to its prior value (or unset, if it wasn't set
-before) once the call returns. Neither a working directory nor a
-subprocess-level timeout is supported yet — Lume's underlying process
-primitives have no output-capturing call that accepts either (a
-*test's* own timeout, §13, is a separate, already-shipped mechanism
-enforced by the interpreter, not by `process.run` itself).
+before) once the call returns. `process.run_with_options(exe, args,
+workingDir, timeoutMs) -> process` covers both a working directory and a
+subprocess-level timeout: `workingDir` of `""` means "don't change
+directory"; `timeoutMs <= 0` means no timeout. A timed-out process is
+killed and reports `process.code(result) == -1` — the same value a
+failed-to-spawn process reports, since the underlying result has no
+separate "timed out" flag; don't rely on `-1` alone to distinguish the
+two cases (a *test's* own timeout, §13, is a separate, independent
+mechanism enforced by the interpreter, not by `process.run` itself).
 
 `http.get(url) -> Result<http, str>` and `http.delete(url) ->
 Result<http, str>` make a GET/DELETE request; `http.post(url, body,
@@ -707,9 +730,11 @@ fn main(args: [str]) -> int {
 
 An optional `, timeout: <milliseconds>` clause after the name bounds how
 long the test body may run before it is failed automatically — protection
-against an infinite loop in test code hanging the whole run, not a
-subprocess timeout (see the `process.run` note in §11, which remains
-unsupported):
+against an infinite loop in test code hanging the whole run. This is a
+separate, independent mechanism from a subprocess's own timeout
+(`process.run_with_options`, §11) - a test's `timeout:` bounds the
+*interpreter* running the test body, not any process it happens to
+spawn:
 
 ```lume
 test "settles quickly", timeout: 500 {
@@ -739,12 +764,17 @@ test "process exits cleanly" {
 }
 ```
 
-Run one file, or a directory (every direct-child `*_test.lume` file — one
-level only, not recursive):
+Run one file, or a directory - every `*_test.lume` file found by a
+recursive walk (a fixed 32-level depth bound, not a `--max-depth` flag,
+generous enough for any real project layout while still bounding a
+pathological or looping tree). `--ignore name1,name2` skips matching
+directory names entirely, anywhere in the tree (checked by name, not
+full path) - useful for excluding something like `node_modules`:
 
 ```powershell
 .\dist\lume.exe test .\examples\native_tests.lume
 .\dist\lume.exe test .\examples\native_suite
+.\dist\lume.exe test .\examples\native_suite --ignore node_modules
 ```
 
 `--filter text` runs only tests whose stable id (`<path>#<name>`, the
@@ -790,10 +820,10 @@ expression := Pratt expression with fixed, non-overloadable operators;
 ```
 
 The complete grammar remains LL(2) outside expressions. There is no
-`for_stmt`, `break_stmt`, or `continue_stmt` production (§7), and no general
-postfix `.field` production after a call expression (§8) — both are listed
-in §19 as gaps rather than folded into this grammar, so the grammar here
-matches what actually parses.
+`for_stmt`, `break_stmt`, or `continue_stmt` production (§7) - listed in
+§19 as a gap rather than folded into this grammar, so the grammar here
+matches what actually parses. Postfix `.field` chains onto any primary
+expression, including a call's own result (§8), not just a bare name.
 
 ## 16. Compiler pipeline
 
@@ -897,7 +927,7 @@ simply not built yet and carries no such argument against it.
 
 - string interpolation, `??`, and `T?` optional sugar
 - `for`/`in` loops, `break`, `continue`
-- `&&`, `||`, `not` boolean operators
+- `&&`/`||` symbol operators (use the `and`/`or`/`not` keywords, §7)
 - `use ... as` import aliasing
 - a `(key, value)`-style two-parameter callback for `map.*` transforms
   (today's `map.map`/`map.filter`/`map.fold` take the value only)
