@@ -1253,6 +1253,67 @@ things rather than writing the obvious thing.
   Revisit once packages can come from somewhere other than the local
   filesystem, the same trigger condition already on record for the
   content-hash-caching item.
+- **a git-based package source, with no central index — design sketch,
+  not yet implemented.** The recurring blocker on registry-adjacent work
+  above (signing, content-hash caching, semver ranges) is the same one
+  every time: nothing points outside the local filesystem yet. A full
+  npm/crates.io-style registry (hosting, name reservation, an authority
+  to sign against) is a large, ongoing service commitment this project
+  isn't ready to take on; a git-based source is the smaller step that
+  actually unblocks the others, matching how Go modules resolve a
+  dependency directly by its repository location instead of through a
+  separate index:
+  - `lume.json`'s `dependencies` array gains a second entry shape
+    alongside the existing `{name, path}`: `{name, git, ref}` (e.g.
+    `{"name": "mathutils", "git": "https://github.com/user/mathutils.git",
+    "ref": "v1.2.0"}`), `ref` being a tag, branch, or commit. Exactly one
+    of `path`/`git` must be present per entry — both or neither is a
+    manifest error, the same class as the existing missing-`name`/
+    `version` checks (`E0737`);
+  - `lume install` is already the one place all resolution work happens
+    — `run`/`check`/`test` never read the manifest, only the lock file
+    (see "2. Packages and dependency resolution" above's own closing
+    constraint) — so a git source only needs to teach `install` a second
+    way to produce a local `path` for the lock file, not touch anything
+    downstream of it. Concretely: shell
+    out to a real `git` binary via the already-stable, already-public
+    `process.run` builtin (`git ls-remote`/`clone`/`checkout`) - this is
+    genuinely implementable today, the first package-system item in this
+    file *not* blocked on a new Certo primitive, since Certo's own
+    process-execution support already covers everything this needs;
+  - determinism (this section's own repeated requirement): `ref` is
+    resolved to a concrete commit SHA at `install` time and that SHA -
+    not the possibly-mutable branch/tag name - is what `lume.lock.json`
+    records and what `install --check` re-verifies, exactly mirroring
+    how `--check` already treats a hand-edited dependency source file as
+    drift for the local-path case;
+  - the resolved clone lives in a shared local cache keyed by
+    `(git URL, resolved commit)`, not inside the consuming project's own
+    directory - this is what finally gives the still-deferred "cache
+    resolved dependencies by content hash" item above a real reason to
+    exist (a network fetch has a genuine cost to avoid repeating; a local
+    path read never did), and lets two projects pinned to the same
+    package/commit share one clone instead of duplicating it;
+  - cycle detection (`E0709`) and ambiguous-name detection (`E0708`)
+    apply exactly as they do today - the dependency-graph walk just needs
+    to recurse into a cloned git dependency's own `lume.json` the same
+    way it already recurses into a local one, source-kind-agnostic from
+    that point on;
+  - explicitly out of scope for this first cut, consistent with "the
+    smaller step that unblocks the others" framing above: no central
+    index or package search (a name only ever resolves through its own
+    declared `git` URL, never a registry lookup), and no semver-range
+    resolution (a `ref` is one exact tag/branch/commit, not a version
+    constraint to satisfy against other packages' own constraints - that
+    remains the item's own separate, later gap);
+  - worth stating plainly rather than glossing over: unlike a local path
+    (already inside the developer's own filesystem, inherently trusted),
+    a `git` source fetches source from a remote the consumer doesn't
+    control. Cloning itself executes no code - Lume's own compile/run
+    pipeline is the first thing that ever reads the fetched `.lume`
+    source, same as it does for any other file - but this is still a
+    real trust boundary, the same one every other language's package
+    manager already accepts rather than a gap unique to this design.
   ~~One real, narrower gap exists independently of signing, confirmed
   live: the lock file records each dependency's *declared* metadata
   but never a hash of its actual `.lume` source files, so `lume
