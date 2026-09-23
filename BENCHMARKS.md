@@ -2366,3 +2366,45 @@ file's own earlier persistent-process checkpoint already established),
 consistent with that checkpoint's own finding that the known memory
 retention doesn't manifest as per-iteration latency growth at this
 scale.
+
+## Health check after the Result unification (2026-09-23)
+
+One real compiler-internals change landed since the last checkpoint:
+`resultOk`/`resultErr` were rewritten to build the same `"v:"`-tagged
+variant shape a hand-built `Result.Ok`/`Result.Err` already produces
+(closing the two-non-interchangeable-Result-conventions gap), and
+`findEnumSchema`/`typesCompatible` gained a `normalizeResultSpelling`
+step so the lowercase `result<T,E>` and capitalized `Result<T,E>`
+spellings compare equal. The runtime rewrite only matters at execution
+time (inside `callBuiltin`), which `lume check` never reaches, but
+`findEnumSchema` is called on every enum-schema lookup during type
+checking - worth confirming that an unconditional extra `Text.startsWith`
+call there is genuinely free rather than assumed, especially against
+`benchmark-10000-features.ps1`'s enum/`match`-heavy workload.
+
+A same-session cross-checkpoint comparison against 2026-09-22's numbers
+initially looked like a real ~5% feature-mix regression (112-118 ms
+depending on which of that day's two runs it's measured against) - worth
+a stronger check than trusting a comparison across two different
+machine sessions, given this file's own prior noise findings. Built the
+pre-#142 compiler directly (`git show 56b667d:src/lume.cto`, compiled
+standalone alongside the current `dist/lume.exe`, both invoked via each
+benchmark script's own `-Lume` override) for a same-session,
+same-machine-state A/B comparison instead:
+
+| Benchmark | Pre-#142 (two runs) | Current (two runs) |
+| --- | ---: | ---: |
+| Trivial 10,000-line (`benchmark-10000.ps1`) | 28.15 ms / 27.35 ms | 28.10 ms / 27.35 ms |
+| Feature-mix (`benchmark-10000-features.ps1`) | 120.16 ms / 116.80 ms | 118.20 ms / 117.03 ms |
+| Generic dispatch (`benchmark-10000-generic-dispatch.ps1`) | 81.25 ms / 75.00 ms | 72.65 ms / 74.20 ms |
+
+All three overlap within the same noisy band on both sides of the
+change - the pre-#142 binary's own two feature-mix runs (120.16 ms vs
+116.80 ms) already span more spread than the difference either one has
+from current. **The Result unification added no measurable compile-time
+cost**: the apparent cross-checkpoint regression was session-to-session
+machine noise, the same class of variance this file's 2026-09-22 entry
+already found and attributed correctly for the trivial benchmark's
+unexplained speedup. A same-session A/B against the actual prior binary,
+not just the prior checkpoint's recorded numbers, resolved it directly
+rather than by inference.
