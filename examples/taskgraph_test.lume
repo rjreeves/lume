@@ -2,19 +2,24 @@ use taskgraph.model
 use taskgraph.graph
 use taskgraph.report
 
-// A `test` block runs its whole body through the same restricted evaluator
-// as a list.map/filter/find/fold callback (see README "Generic list
-// transformations" and SPEC.md §12/§13): `match` anywhere in the reachable
-// call graph fails at run time with "callback uses unsupported operation".
-// graph.validate/order/transitive_closure all use match internally (directly
-// or through helpers like graph_map_get_list), so they are exercised
-// end-to-end via `lume run` instead (see the taskgraph.lume section of
-// README.md for the exact commands and their expected output).
-// report.to_json is match-free (json.encode is a builtin, not Lume-level
-// match) and so is testable directly, below.
+// A `test` block used to run its whole body through the same restricted
+// evaluator as a list.map/filter/find/fold callback (see README "Generic
+// list transformations" and SPEC.md §12/§13), where `match` failed at run
+// time with "callback uses unsupported operation" - this is why coverage
+// below was originally split, with graph.validate/order/transitive_closure
+// (all match-using, directly or through helpers like graph_map_get_list)
+// only exercised end-to-end via `lume run` (see the taskgraph.lume section
+// of README.md). That restriction is gone (ROADMAP.md's own "Now" status
+// report; examples/callback_match_propagate.lume), so all three are now
+// tested directly here too, alongside the match-free helpers that were
+// always testable this way.
 
 fn task_stub(name: str) -> Task {
   return Task(name: name, command: "cmd", args: [], depends_on: [])
+}
+
+fn task_dep(name: str, depends_on: [str]) -> Task {
+  return Task(name: name, command: "cmd", args: [], depends_on: depends_on)
 }
 
 test "contains_name finds an existing entry and rejects a missing one" {
@@ -46,6 +51,73 @@ test "to_json encodes a run's payload-carrying outcome enum" {
   let encoded = report.to_json(runs)
   expect.ok(encoded)
   expect.equal(result.value(encoded), "[{\"name\":\"build\",\"outcome\":{\"variant\":\"failed\",\"exit_code\":1,\"message\":\"boom\"}}]")
+}
+
+test "graph.validate accepts a task set with satisfied dependencies" {
+  let tasks = [task_dep("install", []), task_dep("build", ["install"])]
+  let outcome = graph.validate(tasks)
+  expect.true(graph.is_valid(outcome))
+}
+
+test "graph.validate rejects a duplicate task name" {
+  let tasks = [task_stub("install"), task_stub("install")]
+  let outcome = graph.validate(tasks)
+  expect.true(graph.is_valid(outcome) == false)
+  expect.equal(graph.error_of(outcome), "duplicate task name: install")
+}
+
+test "graph.validate rejects a self-dependency" {
+  let tasks = [task_dep("build", ["build"])]
+  let outcome = graph.validate(tasks)
+  expect.equal(graph.error_of(outcome), "task build depends on itself")
+}
+
+test "graph.validate rejects an unknown dependency" {
+  let tasks = [task_dep("build", ["missing"])]
+  let outcome = graph.validate(tasks)
+  expect.equal(graph.error_of(outcome), "task build depends on unknown task missing")
+}
+
+test "graph.order returns a topological order for a linear chain" {
+  let tasks = [task_dep("build", ["install"]), task_dep("install", [])]
+  let outcome = graph.order(tasks)
+  expect.true(graph.is_valid(outcome))
+  expect.equal(join_names_from(graph.unwrap(outcome)), "install, build")
+}
+
+test "graph.order detects a dependency cycle" {
+  let tasks = [task_dep("a", ["b"]), task_dep("b", ["a"])]
+  let outcome = graph.order(tasks)
+  expect.true(graph.is_valid(outcome) == false)
+  expect.equal(graph.error_of(outcome), "dependency cycle detected involving task a")
+}
+
+test "graph.transitive_closure restricts to a target and its dependencies, in original manifest order" {
+  let tasks = [task_dep("build", ["install"]), task_dep("install", []), task_dep("deploy", ["build"])]
+  let outcome = graph.transitive_closure(tasks, "build")
+  expect.true(graph.is_valid(outcome))
+  expect.equal(join_names_from(graph.unwrap(outcome)), "build, install")
+}
+
+test "graph.transitive_closure rejects an unknown target" {
+  let tasks = [task_stub("install")]
+  let outcome = graph.transitive_closure(tasks, "missing")
+  expect.true(graph.is_valid(outcome) == false)
+  expect.equal(graph.error_of(outcome), "unknown target task: missing")
+}
+
+fn join_names_from(tasks: [Task]) -> str {
+  var names = empty_names_for_join()
+  var index = 0
+  while index < list.len(tasks) {
+    names = list.push(names, list.get(tasks, index).name)
+    index = index + 1
+  }
+  return join_names(names)
+}
+
+fn empty_names_for_join() -> [str] {
+  return []
 }
 
 fn main(args: [str]) -> int {

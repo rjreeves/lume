@@ -1355,7 +1355,7 @@ if (Test-Path -LiteralPath $taskgraphReport) { Remove-Item -LiteralPath $taskgra
 
 $taskgraphNativeTests = & $Lume test (Join-Path $PSScriptRoot 'examples\taskgraph_test.lume')
 if ($LASTEXITCODE -ne 0) { throw "taskgraph native tests exited $LASTEXITCODE" }
-Assert-Equal 'taskgraph native test suite passes' "PASS contains_name finds an existing entry and rejects a missing one`nPASS first_unresolved_name reports the first task missing from resolved`nPASS first_unresolved_name reports nothing once every task resolved`nPASS join_names joins with a comma and space`nPASS to_json encodes a run's payload-carrying outcome enum`n5 passed; 0 failed" ($taskgraphNativeTests -join "`n")
+Assert-Equal 'taskgraph native test suite passes' "PASS contains_name finds an existing entry and rejects a missing one`nPASS first_unresolved_name reports the first task missing from resolved`nPASS first_unresolved_name reports nothing once every task resolved`nPASS join_names joins with a comma and space`nPASS to_json encodes a run's payload-carrying outcome enum`nPASS graph.validate accepts a task set with satisfied dependencies`nPASS graph.validate rejects a duplicate task name`nPASS graph.validate rejects a self-dependency`nPASS graph.validate rejects an unknown dependency`nPASS graph.order returns a topological order for a linear chain`nPASS graph.order detects a dependency cycle`nPASS graph.transitive_closure restricts to a target and its dependencies, in original manifest order`nPASS graph.transitive_closure rejects an unknown target`n13 passed; 0 failed" ($taskgraphNativeTests -join "`n")
 
 # lume lsp is a persistent stdio JSON-RPC server, not a one-shot command, so
 # it needs its own framed-message client rather than a plain stdout compare.
