@@ -506,9 +506,11 @@ or incorrectly typed methods. There is no reflection or dynamic dispatch.
 `Eq` can be extended the same way — `impl Eq for Point {}` — to make a record
 or enum type usable wherever `T: Eq` is required, including as a `Map<K, V>`
 key. This is an explicit opt-in, not automatic derivation: a type without the
-`impl` does not satisfy `Eq`, matching every other marker protocol. `Ord`
-does not support this yet — ordered comparison has no generic implementation
-for compound types.
+`impl` does not satisfy `Eq`, matching every other marker protocol. `Ord` is
+extensible too, but — unlike `Eq` — needs a real method body, since ordered
+comparison has no structural fallback: `impl Ord for Point { fn compare(a,
+b) -> int { ... } }`, returning negative/zero/positive; `<`/`<=`/`>`/`>=`
+then dispatch to it at runtime.
 
 ```lume
 type Point {
@@ -592,13 +594,15 @@ let total = map.fold(scores, 0, &sum)
 ```
 
 Like `list.push`, every `map.*` mutation returns a new map rather than
-changing the original in place. Keys are restricted to `int`, `str`, or
-`bool` for now — the same three types the built-in `Eq` constraint already
-recognizes; broader key types (records, enums, lists) are a separate,
-later extension. `map.get` returns `Option<V>`, matched the same way as
-any other `Option`. `map.map`/`map.filter`/`map.fold` mirror the
-`list.*` transforms exactly, except the callback takes the value only
-(`(V) -> ...`) — keys pass through unchanged for `map.map`/`map.filter`.
+changing the original in place. Keys are `int`, `str`, or `bool` out of
+the box — the same three types the built-in `Eq` constraint already
+recognizes — extended to any record or enum type via an explicit
+`impl Eq for MyType {}` (not automatic; a structural `[T]` list still
+can't be a key, since `impl` always targets a named type). `map.get`
+returns `Option<V>`, matched the same way as any other `Option`.
+`map.map`/`map.filter`/`map.fold` mirror the `list.*` transforms exactly,
+except the callback takes the value only (`(V) -> ...`) — keys pass
+through unchanged for `map.map`/`map.filter`.
 There is no map literal syntax and no `(key, value)` two-parameter
 callback shape yet.
 
