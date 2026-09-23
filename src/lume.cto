@@ -7479,7 +7479,7 @@ fn aiReference(): Text = {
   "Record construction requires every field exactly once and is statically checked. Operators: + - * / % == != < <= > >=, plus the boolean keyword-operators and/or/not (short-circuiting: and/or's right operand is only evaluated when the left doesn't already determine the result; not binds tighter than and, which binds tighter than or; both operands of and/or and not's own operand must be bool). " ++
   "Builtins and arities are returned by `lume api`. main signature: fn main(args: [str]) -> int. " ++
   "Use two-space indentation, braces, one statement per line, and no semicolons. " ++
-  "lume lsp runs a diagnostics-only Language Server Protocol server over stdio (Content-Length-framed JSON-RPC, full-document sync): initialize/shutdown/exit are handled, and textDocument/didOpen/didChange/didClose each publish at most one diagnostic (compileSource, like every Lume compile path, reports only the first problem it finds)."
+  "lume lsp runs a persistent Language Server Protocol server over stdio (Content-Length-framed JSON-RPC, full-document sync), backed by the real compiler's own declaration data: diagnostics (one level of `use`-import resolution, so a multi-file project doesn't show spurious errors), go-to-definition, hover, find-references, rename, document/workspace symbols, completion, and quickfix code actions (insert a missing `fn main`, add a missing `use` import, \"did you mean\" for a misspelled name). The one limitation: compileSource, like every Lume compile path, reports only the first diagnostic per file."
 }
 
 fn usage(): Unit [io] = {
