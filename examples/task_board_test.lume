@@ -1,0 +1,159 @@
+use task_board.model
+use task_board.rules
+use task_board.board
+use task_board.render
+use task_board.insights
+
+fn raw(id: str, title: str, priority_level: int, status_code: str, assignee: str, reason: str, completed_by: str) -> RawTask {
+  return RawTask(id: id, title: title, priority_level: priority_level, status_code: status_code, assignee: assignee, reason: reason, completed_by: completed_by)
+}
+
+fn task_with(id: str, title: str, priority: Priority, status: Status) -> Task {
+  return Task(id: id, title: title, priority: priority, status: status)
+}
+
+fn sample_tasks() -> [Task] {
+  return [
+    task_with("t-1", "Design the schema", Priority.high(), Status.pending()),
+    task_with("t-2", "Build auth", Priority.critical(), Status.in_progress(assignee: "Grace")),
+    task_with("t-3", "Investigate flaky test", Priority.medium(), Status.blocked(reason: "infra")),
+    task_with("t-4", "Publish changelog", Priority.low(), Status.done(completed_by: "Ada"))
+  ]
+}
+
+test "classify_priority maps levels to the right variant" {
+  expect.equal(render.task(task_with("x", "n", classify_priority(4), Status.pending())), render.task(task_with("x", "n", Priority.critical(), Status.pending())))
+  expect.equal(render.task(task_with("x", "n", classify_priority(3), Status.pending())), render.task(task_with("x", "n", Priority.high(), Status.pending())))
+  expect.equal(render.task(task_with("x", "n", classify_priority(2), Status.pending())), render.task(task_with("x", "n", Priority.medium(), Status.pending())))
+  expect.equal(render.task(task_with("x", "n", classify_priority(1), Status.pending())), render.task(task_with("x", "n", Priority.low(), Status.pending())))
+  expect.equal(render.task(task_with("x", "n", classify_priority(0), Status.pending())), render.task(task_with("x", "n", Priority.low(), Status.pending())))
+}
+
+test "classify_status maps every status code, defaulting to pending" {
+  expect.equal(render.task(task_with("x", "n", Priority.low(), classify_status(raw("x", "n", 1, "in_progress", "Grace", "", "")))), render.task(task_with("x", "n", Priority.low(), Status.in_progress(assignee: "Grace"))))
+  expect.equal(render.task(task_with("x", "n", Priority.low(), classify_status(raw("x", "n", 1, "blocked", "", "infra", "")))), render.task(task_with("x", "n", Priority.low(), Status.blocked(reason: "infra"))))
+  expect.equal(render.task(task_with("x", "n", Priority.low(), classify_status(raw("x", "n", 1, "done", "", "", "Ada")))), render.task(task_with("x", "n", Priority.low(), Status.done(completed_by: "Ada"))))
+  expect.equal(render.task(task_with("x", "n", Priority.low(), classify_status(raw("x", "n", 1, "unknown", "", "", "")))), render.task(task_with("x", "n", Priority.low(), Status.pending())))
+}
+
+test "model.parse decodes a JSON manifest into promoted tasks" {
+  let text = "{\"tasks\":[{\"id\":\"t-1\",\"title\":\"Design\",\"priority_level\":3,\"status_code\":\"pending\",\"assignee\":\"\",\"reason\":\"\",\"completed_by\":\"\"}]}"
+  let parsed = model.parse(text)
+  expect.ok(parsed)
+  let tasks = result.value(parsed)
+  expect.equal(list.len(tasks), 1)
+  expect.equal(render.task(list.get(tasks, 0)), render.task(task_with("t-1", "Design", Priority.high(), Status.pending())))
+}
+
+test "model.parse reports an error for malformed JSON" {
+  let parsed = model.parse("not json")
+  expect.true(result.is_ok(parsed) == false)
+}
+
+test "rules.validate accepts a task set with unique, non-empty titles and ids" {
+  let outcome = rules.validate(sample_tasks())
+  expect.true(rules.is_valid(outcome))
+}
+
+test "rules.validate rejects an empty title" {
+  let tasks = [task_with("t-1", "", Priority.low(), Status.pending())]
+  let outcome = rules.validate(tasks)
+  expect.true(rules.is_valid(outcome) == false)
+  expect.equal(rules.error_of(outcome), "task t-1 has an empty title")
+}
+
+test "rules.validate rejects a duplicate id" {
+  let tasks = [task_with("t-1", "a", Priority.low(), Status.pending()), task_with("t-1", "b", Priority.low(), Status.pending())]
+  let outcome = rules.validate(tasks)
+  expect.true(rules.is_valid(outcome) == false)
+  expect.equal(rules.error_of(outcome), "duplicate task id t-1")
+}
+
+test "board counts each status independently" {
+  let tasks = sample_tasks()
+  expect.equal(board.count_pending(tasks), 1)
+  expect.equal(board.count_in_progress(tasks), 1)
+  expect.equal(board.count_blocked(tasks), 1)
+  expect.equal(board.count_done(tasks), 1)
+}
+
+test "board.total_priority_weight sums every task's weight" {
+  expect.equal(board.total_priority_weight(sample_tasks()), 3 + 4 + 2 + 1)
+}
+
+test "board.filter_blocked keeps only blocked tasks" {
+  let filtered = board.filter_blocked(sample_tasks())
+  expect.equal(list.len(filtered), 1)
+  expect.equal(list.get(filtered, 0).id, "t-3")
+}
+
+test "board.next_task picks the highest-priority open task" {
+  let picked = board.next_task(sample_tasks())
+  expect.equal(match picked {
+    None => "none"
+    Some(task) => task.id
+  }, "t-2")
+}
+
+test "board.next_task reports none when every task is done" {
+  let tasks = [task_with("t-1", "a", Priority.high(), Status.done(completed_by: "Ada"))]
+  let picked = board.next_task(tasks)
+  expect.equal(match picked {
+    None => "none"
+    Some(task) => task.id
+  }, "none")
+}
+
+test "board.complete_task marks only the targeted task done" {
+  let updated = board.complete_task(sample_tasks(), "t-1", "Grace")
+  let completed = list.get(updated, 0)
+  expect.equal(render.task(completed), render.task(task_with("t-1", "Design the schema", Priority.high(), Status.done(completed_by: "Grace"))))
+  expect.equal(board.count_in_progress(updated), 1)
+  expect.equal(board.count_done(updated), 2)
+}
+
+test "render.task formats id, priority, title, and status" {
+  let text = render.task(task_with("t-2", "Build auth", Priority.critical(), Status.in_progress(assignee: "Grace")))
+  expect.equal(text, "t-2 [CRITICAL] Build auth - IN PROGRESS (Grace)")
+}
+
+test "render.board joins every task's line with a trailing newline" {
+  let tasks = [task_with("t-1", "a", Priority.low(), Status.pending()), task_with("t-2", "b", Priority.low(), Status.pending())]
+  expect.equal(render.board(tasks), render.task(list.get(tasks, 0)) + "\n" + render.task(list.get(tasks, 1)) + "\n")
+}
+
+test "insights.search matches titles containing the needle" {
+  let found = insights.search(sample_tasks(), "auth")
+  expect.equal(list.len(found), 1)
+  expect.equal(list.get(found, 0).id, "t-2")
+}
+
+test "insights.first_match reports the first matching task, or none" {
+  expect.equal(match insights.first_match(sample_tasks(), "auth") {
+    None => "none"
+    Some(task) => task.id
+  }, "t-2")
+  expect.equal(match insights.first_match(sample_tasks(), "nope") {
+    None => "none"
+    Some(task) => task.id
+  }, "none")
+}
+
+test "insights.short_title_count counts titles under 30 characters" {
+  expect.equal(insights.short_title_count(sample_tasks()), 4)
+}
+
+test "insights.export writes the rendered board to disk" {
+  let dir = fixture.temp_dir()
+  let path = path.join(dir, "board.txt")
+  let saved = insights.export(sample_tasks(), path)
+  expect.ok(saved)
+  let read_back = fs.try_read_text(path)
+  expect.ok(read_back)
+  expect.equal(result.value(read_back), render.board(sample_tasks()))
+  let cleaned = fixture.cleanup(dir)
+}
+
+fn main(args: [str]) -> int {
+  return 0
+}

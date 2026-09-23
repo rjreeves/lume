@@ -875,6 +875,7 @@ and file I/O (`fs.try_write_text` for `export`).
 .\dist\lume.exe run .\examples\task_board.lume .\examples\task_board\seed.json complete t-1 Ada
 .\dist\lume.exe run .\examples\task_board.lume .\examples\task_board\seed.json search auth
 .\dist\lume.exe run .\examples\task_board.lume .\examples\task_board\seed.json export board.txt
+.\dist\lume.exe test .\examples\task_board_test.lume
 ```
 
 ## Example: a dependency-aware task runner
@@ -919,7 +920,10 @@ and `report.to_json` — a `test` body runs through the same interpreter as
 an ordinary function (see "Generic list transformations" above), so `match`
 works there like anywhere else; an earlier coverage split that routed those
 four through the `lume run` commands above instead, predating that being
-possible, no longer exists. `task_board` still has no native tests at all.
+possible, no longer exists. [`examples/task_board_test.lume`](examples/task_board_test.lume)
+covers every module (`model`/`rules`/`board`/`render`/`insights`) directly,
+including its own JSON decoding, validation errors, and file-writing
+`insights.export` path.
 
 ## Bytecode cache and performance
 
