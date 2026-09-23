@@ -379,14 +379,15 @@ inferred from memory:
 ### Typed data
 
 - records, nested records, field access, and record update/copy syntax;
-- typed JSON decoding into records, and `json.encode(value)` for the
-  reverse direction — schema-free (every value already carries its own
-  runtime type tag), supporting `str`/`int`/`bool`/records/lists
-  recursively, plus enum values (including `Option<T>`/`Result<T,E>`,
-  enums under the hood): a variant encodes as its name under a `"variant"`
-  key with any payload fields flattened alongside it. One-directional —
-  decoding a JSON payload into an enum field is still not supported,
-  symmetric with decoding's own existing enum-field limitation;
+- typed JSON decoding into records via `Type.from_json(text)`, and
+  `json.encode(value)` for the reverse direction — schema-free (every
+  value already carries its own runtime type tag), both supporting
+  `str`/`int`/`bool`/records/lists recursively, plus enum values
+  (including `Option<T>`/`Result<T,E>`, enums under the hood): a variant
+  round-trips as its name under a `"variant"` key with any payload
+  fields flattened alongside it, on both the encode and decode side —
+  including an enum field nested inside a record, and inside a list of
+  records;
 - enums, variant construction, and statically checked variant payloads;
 - exhaustive matching, duplicate-arm validation, and payload destructuring;
 - built-in `Option<T>` and `Result<T, E>`.
@@ -470,14 +471,18 @@ inferred from memory:
   (`map.new/len/get/set/has/remove/keys/values/map/filter/fold`),
   architecturally closer to `List<T>` (its own runtime value tag, no
   schema) than to the enum-backed `Option`/`Result`; no map literal
-  syntax, construction is via `map.new()` only. Key type is restricted to
-  `int`/`str`/`bool` — the same set the built-in `Eq` constraint already
-  recognizes — deferred extension to records/lists/enums is a separate,
-  later item alongside the general "equality and ordering through
-  constraints" work. `map.map`/`filter`/`fold` mirror the `list.*`
-  transforms exactly, except the callback takes the value only
-  (`(V) -> ...`) — keys pass through unchanged for `map.map`/`filter`; a
-  `(key, value)` two-parameter callback shape is a separate, later item.
+  syntax, construction is via `map.new()` only. Key type is `int`/`str`/
+  `bool` out of the box (the same set the built-in `Eq` constraint
+  already recognizes), extended to any record or enum type via an
+  explicit `impl Eq for MyType {}` (verified live: a record and an enum
+  both round-trip correctly through `map.set`/`map.get` once they carry
+  the `impl`) — not automatic/derived conformance, matching how `Eq`
+  extension works everywhere else in the language. A structural `[T]`
+  list still cannot be a key — `impl` always targets a named type, never
+  a list. `map.map`/`filter`/`fold` mirror the `list.*` transforms
+  exactly, except the callback takes the value only (`(V) -> ...`) —
+  keys pass through unchanged for `map.map`/`filter`; a `(key, value)`
+  two-parameter callback shape is a separate, later item.
 
 ### Scripting and tooling
 

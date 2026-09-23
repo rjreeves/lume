@@ -61,7 +61,8 @@ general postfix `.` chaining (see §8).
 ```text
 bool int float str bytes
 [T]             list
-Map<K, V>       key/value map; K restricted to int, str, or bool
+Map<K, V>       key/value map; K is int/str/bool, or any record/enum
+                type with `impl Eq for K {}` (see §6)
 Option<T>       some T or none, spelled `Some`/`None`
 Result<T, E>    ok T or err E, spelled `Ok`/`Err`
 T ! E           sugar for a function's return type only; see §9
