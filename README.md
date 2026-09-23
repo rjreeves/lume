@@ -875,6 +875,7 @@ and file I/O (`fs.try_write_text` for `export`).
 .\dist\lume.exe run .\examples\task_board.lume .\examples\task_board\seed.json complete t-1 Ada
 .\dist\lume.exe run .\examples\task_board.lume .\examples\task_board\seed.json search auth
 .\dist\lume.exe run .\examples\task_board.lume .\examples\task_board\seed.json export board.txt
+.\dist\lume.exe test .\examples\task_board_test.lume
 ```
 
 ## Example: a dependency-aware task runner
@@ -913,15 +914,16 @@ enum can't be encoded directly.
 ```
 
 A successful run also writes a `taskgraph-report.json` next to the manifest.
-[`examples/taskgraph_test.lume`](examples/taskgraph_test.lume) currently
-covers the string/list helpers directly and verifies the `match`-using
-functions (`graph.validate`/`order`/`transitive_closure`, `report.to_json`)
-end-to-end through the `lume run` commands above instead — not because
-`match` can't be used inside a `test` block (it can; a `test` body runs
-through the same interpreter as an ordinary function, see "Generic list
-transformations" above), just because that coverage split predates this
-being possible and hasn't been revisited. `task_board` has no native tests
-at all.
+[`examples/taskgraph_test.lume`](examples/taskgraph_test.lume) covers every
+helper directly, including `graph.validate`/`order`/`transitive_closure`
+and `report.to_json` — a `test` body runs through the same interpreter as
+an ordinary function (see "Generic list transformations" above), so `match`
+works there like anywhere else; an earlier coverage split that routed those
+four through the `lume run` commands above instead, predating that being
+possible, no longer exists. [`examples/task_board_test.lume`](examples/task_board_test.lume)
+covers every module (`model`/`rules`/`board`/`render`/`insights`) directly,
+including its own JSON decoding, validation errors, and file-writing
+`insights.export` path.
 
 ## Bytecode cache and performance
 
