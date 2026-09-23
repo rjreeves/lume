@@ -1,5 +1,13 @@
 # Lume language server
 
+This is the lighter of two LSP options. For most editors, prefer the
+compiler's own built-in server instead — `dist\lume.exe lsp` — which adds
+go-to-definition/hover/references/rename with one level of cross-file
+`use`-import resolution, document and workspace symbols, and quickfix code
+actions; see the main [README.md](../README.md#editor-support) for details.
+Reach for this script when you specifically want its independent formatter,
+or don't want to depend on the compiler binary's own LSP subcommand.
+
 `lume-lsp.ps1` is a standard LSP 3.x server over stdio. It uses the Certo-built
 Lume compiler for live static diagnostics and provides:
 

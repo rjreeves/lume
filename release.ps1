@@ -1,5 +1,5 @@
 param(
-  [string]$Certo = 'C:\Users\robert\Desktop\Certo\target\release\certo.exe'
+  [string]$Certo = 'C:\Users\robert\Desktop\root\Certo\target\release\certo.exe'
 )
 
 $ErrorActionPreference = 'Stop'

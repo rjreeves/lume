@@ -1141,18 +1141,44 @@ requests today.
 **Two separate pieces of editor support exist, at different levels of
 depth — use whichever fits, and don't assume they behave identically:**
 
-- **`lume lsp`** (built into the compiler itself) runs a diagnostics-only
-  Language Server Protocol server over stdio (`Content-Length`-framed
-  JSON-RPC, full-document sync). It handles `initialize`/`shutdown`/`exit`
-  and publishes at most one real, compiler-verified diagnostic per file on
-  `textDocument/didOpen`/`didChange`/`didClose` (`lume.cto`'s own compile
-  pipeline reports only the first error it finds, so a file with multiple
-  problems only ever shows the first until that pipeline is widened to a
-  real diagnostic list — a known, deliberate scope boundary). It does not
-  provide completion, hover, or go-to-definition.
-- **`lsp\lume-lsp.ps1`** (a separate PowerShell script, `lsp/README.md`)
-  wraps `lume check <tempfile> --json` for the same one-diagnostic-per-file
-  behavior, and *additionally* provides:
+- **`lume lsp`** (built into the compiler itself, `dist\lume.exe lsp`) is a
+  real, fairly complete Language Server Protocol server over stdio
+  (`Content-Length`-framed JSON-RPC, full-document sync), backed directly
+  by the compiler's own declaration data rather than a thin wrapper around
+  `check`:
+  - **diagnostics** on `didOpen`/`didChange`/`didClose`, including one
+    level of `use`-import resolution — a multi-file project doesn't show
+    spurious "unknown function" errors just because a name lives in an
+    imported file (`lume.cto`'s own compile pipeline still reports only
+    the first error it finds, so a file with multiple problems only ever
+    shows the first — that part of the original scope boundary still
+    holds);
+  - **`textDocument/definition`**, **`hover`**, **`references`**, and
+    **`rename`**, each resolving one level of direct `use` imports (not a
+    transitive walk of the whole import graph) — hovering or renaming a
+    name declared only in a directly-imported sibling file works; one
+    declared two imports away does not;
+  - **`textDocument/completion`**: every builtin plus every file-local
+    `fn`/`type`/`enum` declaration, unfiltered by cursor position or
+    partial word — real editors fuzzy-filter client-side, so this is a
+    deliberate flat scope, not a placeholder;
+  - **`textDocument/documentSymbol`** (a flat per-file outline, including
+    `impl` methods as their own entries) and **`workspace/symbol`** (a
+    fresh recursive directory walk per query, case-insensitive substring
+    match, from `initialize`'s own `rootUri`);
+  - **`textDocument/codeAction`**: three deterministic quickfixes — insert
+    a missing `fn main` stub, add a missing `use <module>` import (one
+    action per matching sibling file if more than one declares the same
+    name), and "did you mean `<name>`" for a misspelled builtin or
+    file-local function (edit-distance scored, `E0216` only). Every fix
+    is verified to produce source that actually compiles, not just an
+    edit that looks plausible.
+
+  This one is the better default for most editors today.
+- **`lsp\lume-lsp.ps1`** (a separate, deliberately lighter PowerShell
+  script, `lsp/README.md`) wraps `lume check <tempfile> --json` for the
+  same one-diagnostic-per-file behavior (without the import-resolution
+  fix above), and *additionally* provides:
   - **completion**: a small static keyword list plus every name in
     `ai/lume-api.json` — not scope- or type-aware; it always offers the
     same list regardless of context;
@@ -1160,10 +1186,13 @@ depth — use whichever fits, and don't assume they behave identically:**
     under the cursor, matched against the same static lists — no real type
     information;
   - **go-to-definition**: a same-document-only regex search for
-    `fn <name>(` — it cannot jump across files;
+    `fn <name>(` — it cannot jump across files, and has no references,
+    rename, symbols, or code actions at all;
   - **formatting**: a simple, independent brace-depth reindenter — **not**
     the same implementation as the compiler's own canonical `lume fmt`, and
-    not guaranteed to agree with it on every input.
+    not guaranteed to agree with it on every input (`lume lsp` has no
+    formatting support at all, so this is the only one of the two that
+    can format).
 
   Start it with `powershell.exe -File .\lsp\lume-lsp.ps1` (expects
   `dist\lume.exe`; pass `-Lume <path>` otherwise). Run `lsp\test.ps1` for

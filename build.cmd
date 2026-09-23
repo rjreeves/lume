@@ -2,7 +2,7 @@
 setlocal
 
 set "CERTO=%~1"
-if "%CERTO%"=="" set "CERTO=C:\Users\robert\Desktop\Certo\target\release\certo.exe"
+if "%CERTO%"=="" set "CERTO=C:\Users\robert\Desktop\root\Certo\target\release\certo.exe"
 
 set "ROOT=%~dp0"
 if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"

@@ -1,5 +1,5 @@
 fn main(args: [str]) -> int {
-  var certo = "C:/Users/robert/Desktop/Certo/target/release/certo.exe"
+  var certo = "C:/Users/robert/Desktop/root/Certo/target/release/certo.exe"
   if args.count() > 0 {
     certo = args.get(0)
   }

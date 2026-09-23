@@ -132,15 +132,30 @@ ion-win.exe certo-toolchain.ion
 
 ## Editor support
 
-After building Lume, point any standard LSP client at:
+After building Lume, point any standard LSP client at the compiler's own
+built-in server:
 
 ```powershell
-powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\lsp\lume-lsp.ps1
+.\dist\lume.exe lsp
 ```
 
-The server validates unsaved buffers with the Certo-built compiler and supports
-live diagnostics, completion, hover, go-to-definition, and formatting. See
-[`lsp/README.md`](lsp/README.md) for details.
+It's a persistent stdio JSON-RPC server backed by the real compiler's
+declaration data, not a thin wrapper: live diagnostics (including one level
+of `use`-import resolution, so a multi-file project doesn't show spurious
+errors), go-to-definition, hover, find-references, rename, document and
+workspace symbols, unfiltered name/builtin completion, and three quickfix
+code actions (insert a missing `fn main`, add a missing `use` import,
+"did you mean" for a misspelled builtin or local function) — definition,
+hover, references, and rename all resolve one level of direct `use`
+imports, not just the open file. The one real limitation: the compile
+pipeline reports only the first error per file, so diagnostics are
+one-per-file, never a list.
+
+A separate, deliberately lighter `lsp\lume-lsp.ps1` PowerShell script also
+exists — diagnostics via `lume check`, a static keyword/builtin completion
+list, same-file-only regex go-to-definition, and an independent formatter
+that isn't guaranteed to agree with `lume fmt`. See
+[`lsp/README.md`](lsp/README.md) for when you'd reach for it instead.
 
 The emitted bytecode is verified in a linear static-type pass. It checks operand
 types, assignment consistency, boolean conditions, homogeneous lists, function
