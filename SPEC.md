@@ -169,9 +169,13 @@ compare any two values of the same declared type structurally. This is
 an explicit opt-in, not automatic/derived conformance (implicit protocol
 conformance is a non-goal of the core language, see `ROADMAP.md`); a
 record without the `impl` does not satisfy `T: Eq`, matching any other
-marker protocol. `Ord` remains restricted to `int`/`str` — ordered
-comparison (`<`, `<=`, `>`, `>=`) has no generic runtime implementation
-for compound types yet, so `impl Ord for ...` is not accepted.
+marker protocol. `Ord` is also extensible to any record or enum type,
+but — unlike `Eq` — needs a real method body, since ordered comparison
+has no structural fallback: `impl Ord for Point { fn compare(a: Point, b:
+Point) -> int { ... } }`, returning negative/zero/positive (the `strcmp`
+convention). `<`/`<=`/`>`/`>=` on a value with an `Ord` impl dispatch to
+that method at runtime, the same way `T.method()` protocol dispatch
+already does.
 
 ### Closures
 
