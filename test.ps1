@@ -501,6 +501,21 @@ $resultBridgeTypeError = & $Lume check (Join-Path $PSScriptRoot 'examples\invali
 if ($LASTEXITCODE -ne 1) { throw "result.to_result on a non-result value should fail to compile" }
 Assert-Equal 'result.to_result requires a result value' 'E0622 line 2: result operation requires result value' ($resultBridgeTypeError -join "`n")
 
+# The two Result representations are now the same runtime value (resultOk/
+# resultErr build the same "v:"-tagged shape buildVariant does for a
+# hand-built Result.Ok/Result.Err) - result.to_result above still works as
+# a validating identity, but none of these four cases need it: a builtin's
+# own result can be matched directly, returned from a Result<T,E>-typed
+# signature, and result.is_ok/value/error accept a hand-built Result.Ok/Err.
+$resultUnifyOk = & $Lume run (Join-Path $PSScriptRoot 'examples\result_unification.lume') (Join-Path $PSScriptRoot 'examples\result_bridge_input.txt')
+if ($LASTEXITCODE -ne 0) { throw "result_unification Ok path exited $LASTEXITCODE" }
+Assert-Equal 'match and Result<T,E> return type work directly on a builtin result' "match-ok: bridged`ngeneric-ok: bridged`nis_ok: true`nvalue: hand-built`nis_ok: false`nerror: boom" ($resultUnifyOk -join "`n")
+
+$resultUnifyMissingPath = Join-Path $PSScriptRoot 'examples\does_not_exist_result_bridge.txt'
+$resultUnifyErr = & $Lume run (Join-Path $PSScriptRoot 'examples\result_unification.lume') $resultUnifyMissingPath
+if ($LASTEXITCODE -ne 0) { throw "result_unification Err path exited $LASTEXITCODE" }
+Assert-Equal 'match and Result<T,E> return type work directly on a builtin error' ('match-err: cannot read file `' + $resultUnifyMissingPath + '`' + "`n" + 'generic-err: cannot read file `' + $resultUnifyMissingPath + '`' + "`nis_ok: true`nvalue: hand-built`nis_ok: false`nerror: boom") ($resultUnifyErr -join "`n")
+
 # Duration is a real record type (not a plain int) for type safety -
 # time.now() + duration.minutes(5) and time.now() + userId type-check
 # identically today since both are plain int, but a Duration can't be

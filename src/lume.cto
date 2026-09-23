@@ -2228,14 +2228,28 @@ fn findRecordSchema(code: List<Instruction>, name: Text): Text? = {
   if Text.eq(found, "") then None else Some(found)
 }
 
+// The `T ! E` shorthand return type desugars to the lowercase pseudo-type
+// `result<T,E>` (see functionReturnType) - the same real Result<T,E> enum
+// seeded once as a compile-start prelude instruction, just spelled
+// differently depending on which syntax produced it. Normalizing the
+// spelling here (and in typesCompatible) is what lets match, a
+// Result<T,E>-typed signature, and result.is_ok/value/error all treat a
+// builtin's or a `T ! E` function's own result as the exact same type as
+// one built with Result.Ok/Result.Err - genericArguments' own parsing
+// doesn't care about this prefix's case, so nothing downstream needs to
+// change once the spelling lines up.
+fn normalizeResultSpelling(value: Text): Text =
+  if Text.startsWith(value, "result<") then "Result<" ++ Text.slice(value, 7, Text.len(value)) else value
+
 fn findEnumSchema(code: List<Instruction>, name: Text): Text? = {
   var index = 0
   var found = ""
+  val normalizedName = normalizeResultSpelling(name)
   while index < List.len(code) and Text.eq(found, "") {
     val item = List.getOrPanic(code, index)
     val declaration = beforePipe(item.text)
-    if Text.eq(item.op, "enum_type") and (Text.eq(declaration, name) or Text.eq(genericBase(declaration), genericBase(name))) then {
-      found = specializeSchema(afterPipe(item.text), declaration, name)
+    if Text.eq(item.op, "enum_type") and (Text.eq(declaration, normalizedName) or Text.eq(genericBase(declaration), genericBase(normalizedName))) then {
+      found = specializeSchema(afterPipe(item.text), declaration, normalizedName)
     }
     else { index = index + 1 }
   }
@@ -2411,8 +2425,9 @@ fn resultErrorType(resultType: Text): Text = {
 
 fn typesCompatible(expected: Text, actual: Text): Bool = {
   if Text.eq(expected, actual) then true
+  else if Text.eq(normalizeResultSpelling(expected), normalizeResultSpelling(actual)) then true
   else if Text.eq(genericBase(expected), genericBase(actual)) and Text.contains(actual, "any") then true
-  else if Text.startsWith(expected, "result<") and Text.eq(resultValueType(actual), "any") then true
+  else if (Text.startsWith(expected, "result<") or Text.startsWith(expected, "Result<")) and Text.eq(resultValueType(actual), "any") then true
   else if Text.startsWith(expected, "list<") and Text.eq(listElementType(actual), "any") then true
   else false
 }
@@ -2875,20 +2890,20 @@ fn checkBuiltinTypes(code: List<Instruction>, name: Text, stackInput: List<Text>
   } else if Text.eq(name, "result.is_ok") or Text.eq(name, "result.value") or Text.eq(name, "result.error") then {
     val valueType = pop(stack)
     stack = valueType.stack
-    if not Text.startsWith(valueType.value, "result<") then { problem = "E0622 result operation requires result value" }
+    if not Text.startsWith(valueType.value, "result<") and not Text.startsWith(valueType.value, "Result<") then { problem = "E0622 result operation requires result value" }
     if Text.eq(name, "result.is_ok") then { resultType = "bool" }
     else if Text.eq(name, "result.error") then { resultType = "str" }
     else { resultType = resultValueType(valueType.value) }
   } else if Text.eq(name, "result.to_result") then {
-    // Bridges the shorthand `result<T,E>` builtins return into a real,
-    // matchable `Result<T,E>` enum value - the two runtime
-    // representations are otherwise non-interchangeable (see SPEC.md's
-    // "Two different Result representations"). resultValueType/
-    // resultErrorType already tolerate either case prefix.
+    // Every result-shaped value - whichever spelling produced it - is
+    // now the same runtime Result<T,E> value (see resultOk/resultErr),
+    // so this is a validating identity kept only so existing callers
+    // (and the Result<T,E>-typed signatures they pass into) don't need
+    // to change.
     val valueType = pop(stack)
     stack = valueType.stack
-    if not Text.startsWith(valueType.value, "result<") then { problem = "E0622 result operation requires result value" }
-    resultType = "Result<" ++ resultValueType(valueType.value) ++ "," ++ resultErrorType(valueType.value) ++ ">"
+    if not Text.startsWith(valueType.value, "result<") and not Text.startsWith(valueType.value, "Result<") then { problem = "E0622 result operation requires result value" }
+    resultType = normalizeResultSpelling(valueType.value)
   } else if Text.eq(name, "fs.write_text") or Text.eq(name, "fs.try_write_text") or Text.eq(name, "str.contains") or Text.eq(name, "str.starts_with") or Text.eq(name, "str.ends_with") or Text.eq(name, "json.get") or Text.eq(name, "path.join") or Text.eq(name, "env.set") then {
     val right = pop(stack)
     val left = pop(right.stack)
@@ -3910,10 +3925,40 @@ fn tempDirPath(): Text = {
   dir
 }
 
-fn resultOk(value: Text): Text = "r:o:" ++ value
-fn resultErr(message: Text): Text = "r:e:" ++ message
-fn lumeResultIsOk(value: Text): Bool = Text.startsWith(value, "r:o:")
-fn resultInner(value: Text): Text = Text.slice(value, 4, Text.len(value))
+// Every builtin that can fail (fs.*, http.*, dir.*, Type.from_json, ...)
+// used to build a cheap flat "r:o:"/"r:e:" shorthand here, incompatible
+// with the "v:"-tagged JSON shape every real enum (including a hand-built
+// Result.Ok/Result.Err) uses - match, result.is_ok, and a Result<T,E>-typed
+// signature each only understood one of the two shapes. Unified onto the
+// single "v:" shape buildVariant already produces for the seeded
+// "Result<T,E>|Ok=value=T;Err=error=E" schema, so a builtin's own result is
+// now a real, matchable Result<T,E> value with no bridging needed - see
+// findEnumSchema/typesCompatible's own `normalizeResultSpelling` for the
+// matching fix on the static-type side.
+fn resultOk(value: Text): Text = {
+  val root = Json.object()
+  JsonValue.set(root, "$enum", Json.string("Result"))
+  JsonValue.set(root, "$variant", Json.string("Ok"))
+  JsonValue.set(root, "value", Json.string(value))
+  "v:" ++ Json.stringify(root)
+}
+fn resultErr(message: Text): Text = {
+  // message arrives raw/untagged (every call site passes a bare error
+  // string); the "error" field holds an ordinarily-tagged value like any
+  // other enum payload, so tag it here rather than storing it bare.
+  val root = Json.object()
+  JsonValue.set(root, "$enum", Json.string("Result"))
+  JsonValue.set(root, "$variant", Json.string("Err"))
+  JsonValue.set(root, "error", Json.string(textValue(message)))
+  "v:" ++ Json.stringify(root)
+}
+fn lumeResultIsOk(value: Text): Bool = Text.eq(runtimeVariantName(value), "Ok")
+fn resultInner(value: Text): Text = {
+  val root = Json.parse(valueBody(value))
+  if Text.eq(runtimeVariantName(value), "Ok") then JsonValue.asText(JsonValue.get(root, "value"))
+  else JsonValue.asText(JsonValue.get(root, "error"))
+}
+fn isResultValue(value: Text): Bool = Text.eq(valueKind(value), "v:") and Text.eq(runtimeEnumName(value), "Result")
 
 fn buildList(input: List<Text>, count: Int): ListBuild = {
   var stack = input
@@ -4201,8 +4246,10 @@ fn decodeRecordJson(code: List<Instruction>, recordName: Text, input: Text): Tex
 // any other value. This is one-directional: decodeJsonValue still never
 // decodes into an enum field, so there is no matching decode shape to
 // stay symmetric with, and no round-trip is implied or required.
-// Anything else internal-only (closures "c:", process results "p:",
-// legacy results "r:") is still not supported.
+// Anything else internal-only (closures "c:", process results "p:") is
+// still not supported. A builtin's own result value is a real "v:" enum
+// like any other (see resultOk/resultErr), so it already falls into the
+// "v:" branch below rather than needing its own case.
 // JsonValue.keys() empirically returns an empty list for an object that
 // was built via Json.object()/JsonValue.set() then round-tripped through
 // Json.stringify()+Json.parse() (confirmed directly: a debug print showed
@@ -4465,16 +4512,8 @@ fn callPure(code: List<Instruction>, callable: Text, arguments: List<Text>, dead
       // here: callPure always has a real caller on the Certo side.
       val wrapped = pop(stack)
       stack = wrapped.stack
-      val legacy = Text.eq(valueKind(wrapped.value), "r:")
-      val variant = Text.eq(valueKind(wrapped.value), "v:") and Text.eq(runtimeEnumName(wrapped.value), "Result")
-      val succeeded = if legacy then lumeResultIsOk(wrapped.value) else variant and Text.eq(runtimeVariantName(wrapped.value), "Ok")
-      var inner = if legacy then resultInner(wrapped.value) else ""
-      if variant and succeeded then {
-        val root = Json.parse(valueBody(wrapped.value))
-        inner = JsonValue.asText(JsonValue.get(root, "value"))
-      }
-      if not legacy and not variant then { problem = "E0324 result propagation requires a result value" }
-      else if succeeded then { stack = List.push(stack, inner) }
+      if not isResultValue(wrapped.value) then { problem = "E0324 result propagation requires a result value" }
+      else if lumeResultIsOk(wrapped.value) then { stack = List.push(stack, resultInner(wrapped.value)) }
       else {
         result = wrapped.value
         running = false
@@ -4651,11 +4690,8 @@ fn callBuiltin(code: List<Instruction>, name: Text, input: List<Text>, deadlineM
   } else if Text.eq(name, "expect.ok") or Text.eq(name, "expect.err") then {
     val value = pop(stack)
     stack = value.stack
-    val isLegacy = Text.eq(valueKind(value.value), "r:")
-    val isVariant = Text.eq(valueKind(value.value), "v:") and Text.eq(runtimeEnumName(value.value), "Result")
-    val isOk = if isLegacy then lumeResultIsOk(value.value) else isVariant and Text.eq(runtimeVariantName(value.value), "Ok")
     val wanted = Text.eq(name, "expect.ok")
-    if (isLegacy or isVariant) and isOk == wanted then { result = boolValue(true) }
+    if isResultValue(value.value) and lumeResultIsOk(value.value) == wanted then { result = boolValue(true) }
     else { result = "x:expected " ++ (if wanted then "Ok" else "Err") ++ ", got " ++ display(value.value) }
   } else if Text.eq(name, "expect.some") then {
     val value = pop(stack)
@@ -4703,42 +4739,24 @@ fn callBuiltin(code: List<Instruction>, name: Text, input: List<Text>, deadlineM
     else if Text.eq(name, "result.err") then {
       if Text.eq(valueKind(one.value), "s:") then { result = resultErr(valueBody(one.value)) }
       else { problem = "E0317 result.err requires str" }
-    } else if not Text.eq(valueKind(one.value), "r:") then { problem = "E0318 result operation requires a result value" }
+    } else if not isResultValue(one.value) then { problem = "E0318 result operation requires a result value" }
     else if Text.eq(name, "result.is_ok") then { result = boolValue(lumeResultIsOk(one.value)) }
     else if Text.eq(name, "result.value") then {
       if lumeResultIsOk(one.value) then { result = resultInner(one.value) }
       else { problem = "E0319 cannot read value from err result" }
     } else {
       if lumeResultIsOk(one.value) then { problem = "E0320 cannot read error from ok result" }
-      else { result = textValue(resultInner(one.value)) }
+      else { result = resultInner(one.value) }
     }
   } else if Text.eq(name, "result.to_result") then {
-    // Bridges a shorthand result into the same "v:"-tagged JSON shape
-    // buildVariant produces for any real enum value - the Ok/Err payload
-    // field names (value/error) match the Result<T,E> schema seeded once
-    // as a compile-start prelude instruction (enum_type
-    // "Result<T,E>|Ok=value=T;Err=error=E"). resultOk's own inner value
-    // is already a normally-tagged runtime value (e.g. "s:hello"), same
-    // as any other enum payload - but resultErr's own inner value is a
-    // *plain, untagged* Text message (confirmed live: every resultErr
-    // call site passes a bare error string straight through, unlike
-    // resultOk's callers), so it needs textValue's own "s:" tag applied
-    // here before use - storing it untagged corrupted the first two
-    // characters of every bridged error message when later code tried
-    // to read the payload as an ordinarily-tagged value and stripped
-    // what it assumed was a two-character tag prefix.
+    // resultOk/resultErr already build the same "v:"-tagged Result<T,E>
+    // shape a hand-built Result.Ok/Result.Err does, so every result value
+    // is already in the target shape - this is a validating identity kept
+    // only so existing callers don't need to change.
     val one = pop(stack)
     stack = one.stack
-    if not Text.eq(valueKind(one.value), "r:") then { problem = "E0318 result operation requires a result value" }
-    else {
-      val isOk = lumeResultIsOk(one.value)
-      val payload = if isOk then resultInner(one.value) else textValue(resultInner(one.value))
-      val root = Json.object()
-      JsonValue.set(root, "$enum", Json.string("Result"))
-      JsonValue.set(root, "$variant", Json.string(if isOk then "Ok" else "Err"))
-      JsonValue.set(root, (if isOk then "value" else "error"), Json.string(payload))
-      result = "v:" ++ Json.stringify(root)
-    }
+    if not isResultValue(one.value) then { problem = "E0318 result operation requires a result value" }
+    else { result = one.value }
   } else if Text.eq(name, "process.code") or Text.eq(name, "process.stdout") or Text.eq(name, "process.stderr") or Text.eq(name, "process.ok") then {
     val one = pop(stack)
     stack = one.stack
@@ -5405,16 +5423,8 @@ fn execute(code: List<Instruction>): RunResult [io] = {
     } else if Text.eq(current.op, "unwrap") or Text.eq(current.op, "propagate") then {
       val wrapped = pop(stack)
       stack = wrapped.stack
-      val legacy = Text.eq(valueKind(wrapped.value), "r:")
-      val variant = Text.eq(valueKind(wrapped.value), "v:") and Text.eq(runtimeEnumName(wrapped.value), "Result")
-      val succeeded = if legacy then lumeResultIsOk(wrapped.value) else variant and Text.eq(runtimeVariantName(wrapped.value), "Ok")
-      var inner = if legacy then resultInner(wrapped.value) else ""
-      if variant and succeeded then {
-        val root = Json.parse(valueBody(wrapped.value))
-        inner = JsonValue.asText(JsonValue.get(root, "value"))
-      }
-      if not legacy and not variant then { problem = "E0324 result propagation requires a result value" }
-      else if succeeded then { stack = List.push(stack, inner) }
+      if not isResultValue(wrapped.value) then { problem = "E0324 result propagation requires a result value" }
+      else if lumeResultIsOk(wrapped.value) then { stack = List.push(stack, resultInner(wrapped.value)) }
       else if List.len(returnAddresses) > 0 then {
         val address = popInt(returnAddresses)
         returnAddresses = address.stack
@@ -5423,7 +5433,12 @@ fn execute(code: List<Instruction>): RunResult [io] = {
         ip = address.value
         advance = false
       } else {
-        problem = resultInner(wrapped.value)
+        // No caller left to propagate to (a `?`/`!` failing directly
+        // inside main, with no enclosing result-returning function) -
+        // resultInner returns the error payload's own ordinarily-tagged
+        // value (e.g. "s:message"), so strip that tag for the plain
+        // diagnostic text this becomes.
+        problem = valueBody(resultInner(wrapped.value))
       }
     } else if Text.eq(current.op, "neg") then {
       val item = pop(stack)

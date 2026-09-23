@@ -1117,18 +1117,45 @@ run against the real compiler, not assumed:
   split — every source of an `Option` (`list.find`, `map.get`, or a
   hand-declared `-> Option<T>` function) interoperates freely with
   `match`. ~~This asymmetry is confirmed, not yet designed around or
-  fixed~~ — a bridge shipped rather than a full unification: full
+  fixed~~ ~~— a bridge shipped rather than a full unification: full
   unification would mean rewriting all 36 existing call sites that
   produce the shorthand shape plus `result.is_ok`/`value`/`error`'s own
   dispatch to use the enum representation directly, a much larger,
-  higher-risk change than the gap actually requires. `result.to_result(x):
-  Result<T, E>` lifts a builtin's own shorthand result into a real,
-  matchable `Result<T, E>` value on demand - confirmed live it can be
-  `match`ed and passed where a `Result<T, E>`-typed parameter is
-  expected. One-directional (shorthand → generic only) and leaves every
-  existing `result.*` builtin and call site untouched; the split itself
-  still exists by design, now with an escape hatch where it actually
-  blocked something;
+  higher-risk change than the gap actually requires.~~ **Fully unified,
+  not just bridged**: the "36 call sites" estimate above turned out to
+  overstate the real cost, because every one of them already funneled
+  through exactly two shared functions, `resultOk`/`resultErr` — rewriting
+  those two (to build the same `"v:"`-tagged JSON shape `buildVariant`
+  already produces for a hand-built `Result.Ok`/`Result.Err`, instead of
+  the flat `"r:o:"`/`"r:e:"` shorthand) made every one of the 36 call
+  sites, with zero further changes, return a real, matchable `Result<T,
+  E>`. The static-type side needed its own fix: `T ! E`'s lowercase
+  `result<T,E>` and the enum's `Result<T,E>` are the same seeded schema
+  spelled two ways, so `findEnumSchema` and `typesCompatible` now
+  normalize the spelling before comparing (`normalizeResultSpelling`) —
+  this alone closes both the `match`-on-a-builtin-result gap (E0650) and
+  the assignability gap (E0618), since `typesCompatible` is the single
+  choke point every assignment/return/argument/field type check already
+  shared. `result.is_ok`/`value`/`error`/`to_result`'s own argument-type
+  checks (`E0622`) were widened to accept either spelling too, closing the
+  third confirmed gap directly. The `?`/`!` propagate/unwrap opcode
+  handlers (in both `execute()` and the pure-callback interpreter
+  `callPure`) already tolerated both representations at the runtime level
+  before this change (that duality is what made them safe to simplify
+  down to a single `isResultValue`/`lumeResultIsOk` check now that nothing
+  produces the old shorthand tag); `expect.ok`/`expect.err` had the same
+  duality and got the same simplification. `result.to_result(x)` is kept
+  as a validating identity (still errors on a non-`Result` argument) so no
+  existing call site needs to change, but nothing new needs it — verified
+  live: a builtin's own result now `match`es directly, returns cleanly
+  from a function declared `-> Result<T, E>`, and `result.is_ok`/`value`/
+  `error` accept a hand-built `Result.Ok`/`Result.Err` — the exact three
+  cases confirmed broken above, plus a `!`-propagation chain across two
+  shorthand-typed functions, checked end to end
+  (`examples/result_unification.lume`). Full `test.ps1` suite re-verified
+  green throughout, including the pre-existing `result.to_result` bridge
+  tests (still valid — the function still behaves the same from a
+  caller's perspective, just with nothing left to bridge);
 - ~~a function call's return value cannot have a field accessed
   directly~~ — `result.value(decoded).name` used to be a syntax error
   (`E0206 expected )`); the call's result had to be bound to a `let`
