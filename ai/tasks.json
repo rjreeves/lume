@@ -55,25 +55,25 @@
   },
   {
     "id": "boolean_and",
-    "prompt": "Compose two conditions with a nested if statement to express logical AND (Lume has no and/or/not operators).",
+    "prompt": "Compose two conditions with a nested if statement to express logical AND, without using the and operator.",
     "args": [],
     "stdout": "false"
   },
   {
     "id": "boolean_or",
-    "prompt": "Compose two conditions with sequential if statements to express logical OR (Lume has no and/or/not operators).",
+    "prompt": "Compose two conditions with sequential if statements to express logical OR, without using the or operator.",
     "args": [],
     "stdout": "true"
   },
   {
     "id": "boolean_not",
-    "prompt": "Write a predicate function that returns the negated polarity directly, since Lume has no not/! operator.",
+    "prompt": "Write a predicate function that returns the negated polarity directly, without using the not operator.",
     "args": [],
     "stdout": "true"
   },
   {
     "id": "boolean_combo",
-    "prompt": "Combine two conditions with nested if statements, since Lume has no and/or operators.",
+    "prompt": "Combine two conditions with nested if statements, without using the and/or operators.",
     "args": [],
     "stdout": "true"
   },
