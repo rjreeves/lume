@@ -491,11 +491,14 @@ inferred from memory:
   returning just the basename minus extension) — it's composed instead
   from `Path.basename` + `Path.extension`, matching the file-stem
   convention every other language uses;
-- single-level directory enumeration (`dir.list(path) -> Result<[str],
+- directory enumeration: single-level (`dir.list(path) -> Result<[str],
   str>`) — entry names only, unsorted (matching this file's own existing
-  `listDir` call site, which was never sorted either); recursive
-  traversal remains deferred (see "Now" above) since no `isDirectory`
-  primitive exists in Certo's stdlib to build one safely on top of;
+  `listDir` call site, which was never sorted either) — and recursive
+  (`dir.walk(path, maxDepth) -> Result<[str], str>`, full paths of files
+  only, directories descended into but not themselves included), once
+  Certo shipped `isDirectory` to build the latter safely on top of; a
+  symlink loop is bounded by `maxDepth`, not detected as a cycle (no
+  inode-based cycle detection);
 - typed time (`time.now() -> int`, `time.to_iso(seconds) -> str`,
   `time.year`/`month`/`day`/`hour`/`minute`/`second(seconds) -> int` for
   UTC calendar components, `time.format(seconds, pattern) -> str` for
@@ -503,28 +506,40 @@ inferred from memory:
   zone)`/`time.format_in_timezone(seconds, pattern, zone) ->
   Result<str, str>` for IANA-zone-aware output, and
   `duration.seconds`/`minutes`/`hours`/`days(n) -> int` for named-unit
-  offsets) — still a slice of Certo's much larger
-  `DateTime`/`Duration`/`Timezone`/`Date` stdlib API; a distinct
-  `Duration` type with its own arithmetic remains deferred (see "Now"
-  above) — `duration.*` are plain functions returning `int`, not a new
-  value kind;
+  offsets, still plain `int`-returning convenience functions) — still a
+  slice of Certo's much larger `DateTime`/`Duration`/`Timezone`/`Date`
+  stdlib API. `Duration` is also a real, distinct record type (see "Now"
+  above), with its own constructors (`Duration.of_seconds`/`of_minutes`/
+  `of_hours`/`of_days`), arithmetic (`Duration.add`/`sub`/`scale`, plain
+  named functions, not operators), and `Duration.to_seconds` to bridge
+  back to plain-`int` epoch arithmetic — catching the unit-confusion bugs
+  the plain-`int` `duration.*` functions can't;
 - process exit-code, standard-output, and standard-error inspection;
-- process configuration for stdin and environment overrides
-  (`process.run_with_input(exe, args, input)`, `process.run_with_env(exe,
-  args, envMap)`) — both return the same `process` result as
-  `process.run`; environment overrides are restored to their prior value
-  after the call returns; working directory and timeout remain deferred
-  (see "Now" above) since no output-capturing Certo primitive accepts
-  either;
+- process configuration for stdin, environment overrides, working
+  directory, and a real timeout (`process.run_with_input(exe, args,
+  input)`, `process.run_with_env(exe, args, envMap)`,
+  `process.run_with_options(exe, args, workingDir, timeoutMs)`) — all
+  return the same `process` result as `process.run`; environment
+  overrides are restored to their prior value after the call returns;
+  `workingDir` `""` means don't change directory, `timeoutMs <= 0` means
+  no timeout. Working directory and timeout were blocked until Certo
+  shipped `Process.run` (an output-capturing exec with both) to close
+  them. A timed-out process is killed and reports `process.code(result)
+  == -1`, the same value a failed-to-spawn process reports, since the
+  underlying result carries no separate timed-out flag;
 - `http.get`/`http.post`/`http.put`/`http.delete(url[, body,
   content_type]) -> Result<http, str>` and `http.request(method, url,
   headers: Map<str,str>, body) -> Result<http, str>` for arbitrary
   methods and headers, with `http.status/body/content_type/ok(response)`
-  accessors — a hard 10 MiB response-size cap is enforced after the
-  (already-complete) download, since Certo's HTTP client has no
-  streaming or early-abort mode; Windows only, since Certo's
-  non-Windows `Http.*` calls are stubs that abort the process rather
-  than returning an error;
+  accessors — a hard 10 MiB response cap is enforced at request time
+  (Certo stops reading once the limit is hit, not after downloading
+  past it), once Certo shipped `Http.requestWithLimit`/
+  `HttpResponse.truncated`; `http.request_with_limit(method, url,
+  headers, body, maxBytes) -> Result<http, str>` lets a caller choose
+  their own limit instead, returning `Ok` with a truncated body rather
+  than erroring, and `http.truncated(response) -> bool` reports whether
+  that happened. Windows only, since Certo's non-Windows `Http.*` calls
+  are stubs that abort the process rather than returning an error;
 - a `bytes` type, distinct from `str` at the type-checker level but
   represented identically at runtime — a deliberate scope reduction,
   since Lume's entire value representation is a single tagged `Text`
@@ -540,8 +555,11 @@ inferred from memory:
   truncates at the NUL on round-trip — the same limitation Certo's own
   `Bytes.toText` conversion already documents, not silently different;
 - human-readable and structured compiler errors;
-- native test declarations, assertions, filters, and direct-child
-  `*_test.lume` discovery;
+- native test declarations, assertions, filters, and recursive
+  `*_test.lume` discovery (`lume test <dir>` finds test files in
+  subdirectories too, not just the given directory, with `--ignore
+  name1,name2` skipping any matching subdirectory by name; no default
+  ignore list);
 - temporary-directory and environment fixtures for tests
   (`fixture.temp_dir() -> str`, `fixture.cleanup(path) -> bool`,
   `env.set(name, value) -> bool`, `env.unset(name) -> bool`) — no
