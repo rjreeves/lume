@@ -950,7 +950,7 @@ into every compilation.
   symlink loop is still only bounded by `maxDepth`, not detected as a
   cycle; explicitly out of scope, unchanged from this bullet's own
   original assessment;
-- ~~typed time and duration values~~ — partially shipped: `time.now() ->
+- ~~typed time and duration values~~ — shipped: `time.now() ->
   int` (Unix epoch seconds), `time.to_iso(seconds) -> str` (fixed UTC
   ISO-8601), `time.year`/`month`/`day`/`hour`/`minute`/
   `second(seconds) -> int` (UTC calendar components),
@@ -1421,7 +1421,7 @@ things rather than writing the obvious thing.
 ### Developer experience
 
 - ~~richer completion, hover, definition, references, rename, and code
-  actions~~ — partially shipped: `textDocument/definition`
+  actions~~ — shipped, all six: `textDocument/definition`
   (go-to-definition), the first of the six chosen as the cheapest to
   build on `scanFunctions`/`scanRecords`/`scanEnums`'s existing
   declaration data. Required two foundational pieces first: `Token`
