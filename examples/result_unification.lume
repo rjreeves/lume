@@ -1,0 +1,37 @@
+// A builtin's result (the `T ! E` shorthand's `result<T,E>` type) and a
+// hand-built `Result<T,E>` are now the same runtime value - no
+// `result.to_result` bridge required. See SPEC.md's "One Result type,
+// two spellings".
+
+fn describe_builtin_result(path: str) -> str {
+  return match fs.try_read_text(path) {
+    Ok(value) => "match-ok: " + value
+    Err(error) => "match-err: " + error
+  }
+}
+
+fn as_generic(path: str) -> Result<str, str> {
+  return fs.try_read_text(path)
+}
+
+fn main(args: [str]) -> int {
+  let path = args.get(0)
+
+  print(describe_builtin_result(path))
+
+  let generic = as_generic(path)
+  print(match generic {
+    Ok(value) => "generic-ok: " + value
+    Err(error) => "generic-err: " + error
+  })
+
+  let handBuilt = Result.Ok(value: "hand-built")
+  print(if result.is_ok(handBuilt) { "is_ok: true" } else { "is_ok: false" })
+  print("value: " + result.value(handBuilt))
+
+  let handErr = Result.Err(error: "boom")
+  print(if result.is_ok(handErr) { "is_ok: true" } else { "is_ok: false" })
+  print("error: " + result.error(handErr))
+
+  return 0
+}

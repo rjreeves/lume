@@ -310,11 +310,11 @@ fn first<T>(items: [T]) -> Option<T> {
 }
 ```
 
-### Two different `Result` representations
+### One `Result` type, two spellings
 
-This is the sharpest gap between the previous draft and reality: **there
-are two, non-interchangeable ways to work with a fallible value**, depending
-on how the function declares its return type.
+A function's return type can be written two ways, and both produce the
+exact same runtime `Result<T, E>` value — freely interchangeable with
+`match`, `result.*`, and each other.
 
 **Shorthand, `str`-only errors** — a function declared with `T ! E` where
 `E` is `str`:
@@ -326,8 +326,8 @@ fn upper_file(path: str) -> str ! str {
 }
 ```
 
-is inspected with the builtin functions `result.is_ok`, `result.value`, and
-`result.error` — never `match`:
+can be inspected either with the builtin functions `result.is_ok`,
+`result.value`, and `result.error`:
 
 ```lume
 let outcome = upper_file(path)
@@ -338,10 +338,26 @@ if result.is_ok(outcome) {
 }
 ```
 
+or with `match`, directly, no conversion needed:
+
+```lume
+print(match upper_file(path) {
+  Ok(value) => value
+  Err(error) => "failed: " + error
+})
+```
+
 `result.ok`/`result.err` construct this shape, and `result.err` rejects any
 error value that isn't `str`. Every I/O builtin that can fail
 (`fs.try_read_text`, `fs.try_write_text`, `Type.from_json`) returns this
-shape.
+shape — and can be declared to return `Result<T, E>` directly instead of
+`T ! E`, with no wrapping:
+
+```lume
+fn read_it(path: str) -> Result<str, str> {
+  return fs.try_read_text(path)
+}
+```
 
 **Fully generic errors** — declare the return type as `Result<T, E>` for
 any `E`, including a custom enum, and construct it with `Result.Ok(value:
@@ -361,12 +377,19 @@ fn validate(tasks: [Task]) -> Result<[Task], ValidationError> {
 ```
 
 This shape is inspected with `match { Ok(value) => ... Err(error) => ... }`
-— the `result.*` builtins reject it outright (`result operation requires
-result value`) because they only recognize the shorthand shape above.
+— and, since it's the same runtime value as the shorthand above,
+`result.is_ok`/`result.value`/`result.error` accept it too:
 
-`result.to_result(x)` bridges the shorthand shape into the fully generic
-one, so a builtin's own result can be `match`ed or passed where a
-`Result<T, E>`-typed parameter is expected:
+```lume
+let outcome = Result.Ok(value: 42)
+print(if result.is_ok(outcome) { "ok" } else { "err" })
+```
+
+`result.to_result(x)` still exists as a validating identity (it errors on
+a non-`Result` argument, same as before) — no existing call needs to
+change, but a new one doesn't need it: a builtin's own result can already
+be `match`ed or passed where a `Result<T, E>`-typed parameter is expected
+without it.
 
 ```lume
 fn describe(outcome: Result<str, str>) -> str {
@@ -377,18 +400,13 @@ fn describe(outcome: Result<str, str>) -> str {
 }
 
 fn main(args: [str]) -> int {
-  print(describe(result.to_result(fs.try_read_text(args.get(0)))))
+  print(describe(fs.try_read_text(args.get(0))))
   return 0
 }
 ```
 
-This is one-directional (shorthand → generic only) and does not remove
-the split above — it's an escape hatch for the one place the split
-actually blocks something (matching, or passing to a `Result<T, E>`-typed
-signature), not a unification of the two representations.
-
 `?` (and the compatibility spelling `!`) propagates an error out of the
-current function immediately in both shapes, as long as the enclosing
+current function immediately in both spellings, as long as the enclosing
 function's own error type matches:
 
 ```lume

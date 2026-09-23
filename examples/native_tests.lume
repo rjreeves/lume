@@ -14,6 +14,8 @@ test "adds two values" {
 test "recognizes present values" {
   expect.some(list.find([1, 2, 3], &positive))
   expect.ok(Result.Ok(value: 42))
+  expect.ok(result.ok("value"))
+  expect.err(result.err("boom"))
 }
 
 fn main(args: [str]) -> int {

@@ -514,15 +514,15 @@ let display = match selected {
 }
 ```
 
-**`Result` is not this simple — there are two separate, non-interchangeable
-"Result" conventions in the current bootstrap, confirmed by direct testing
-against the real compiler, not documented anywhere else in this
-repository.** Getting this wrong produces confusing type-mismatch errors
-rather than a clear diagnostic, so it is worth learning as one fact rather
-than debugging by trial and error.
+**`Result` has two spellings for its return type, but only one runtime
+value** — `fs.try_read_text`/`try_write_text`, `dir.list`, `dir.walk`,
+every `http.*` request function, `fs.read_bytes`, and
+`Type.from_json`/`EnumName.from_json` (section 12) all return the exact
+same `Result<T, E>` value a hand-built `Result.Ok(...)`/`Result.Err(...)`
+does — `match`, `result.is_ok`/`value`/`error`, `?`/`!`, and a
+`Result<T, E>`-typed signature all work on either one interchangeably.
 
-**World 1 — the `Result` enum**, for a function *you* write and construct
-by hand:
+**Construct or declare it either way** — with the enum directly:
 
 ```lume
 fn validate(port: int) -> Result<int, str> {
@@ -535,52 +535,44 @@ fn validate(port: int) -> Result<int, str> {
 print(match validate(5432) { Ok(value) => value, Err(message) => 0 })
 ```
 
-Read this kind with `match { Ok(x) => ..., Err(e) => ... }`, or with `?`/`!`
-to propagate out of another function that also declares `-> Result<T, E>`
-(capitalized):
+or with the `T ! E` shorthand and `result.ok`/`result.err`, which is what
+every failable builtin (`fs.*`, `dir.*`, `http.*`, `.from_json(...)`) does
+internally:
 
 ```lume
-fn checked_port() -> Result<int, str> {
-  let port = validate(5432)?
-  return Result.Ok(value: port)
+type AppConfig { name: str }
+
+fn load_config(path: str) -> AppConfig ! str {
+  let source = fs.try_read_text(path)?
+  return AppConfig.from_json(source)
 }
 ```
 
-**World 2 — the lowercase `result<T, E>` builtins produce**: `fs.try_read_text`/
-`try_write_text`, `dir.list`, `dir.walk`, every `http.*` request function,
-`fs.read_bytes`, and `Type.from_json`/`EnumName.from_json` (section 12) all
-return this second kind, not the `Result` enum above — confirmed directly:
-a value from any of these **cannot be matched with `match { Ok(...) =>
-..., Err(...) => ... }`** (`E0650 match requires an enum`) and **cannot be
-returned from a function declared `-> Result<T, E>`** (capitalized —
-`E0618 type mismatch`), even though both "look like a Result." Read and
-build this kind exclusively through the plain `result.*` helper functions,
-and declare a wrapping function's own return type in **lowercase**:
+**Read it either way, regardless of which syntax produced it** — with
+`match`:
 
 ```lume
-result.ok(value)          // wraps value as this kind's own Ok
-result.err(message)       // wraps message as this kind's own Err
+print(match load_config("app.json") {
+  Ok(config) => config.name
+  Err(message) => "error: " + message
+})
+```
+
+or with the plain helper functions:
+
+```lume
+result.ok(value)          // wraps value as Ok
+result.err(message)       // wraps message as Err
 result.is_ok(outcome)     // -> bool
 result.value(outcome)     // unwraps Ok, panics on Err
 result.error(outcome)     // unwraps Err, panics on Ok
 ```
 
-`?`/`!` still work for propagation, but only inside a function whose own
-declared return type is the matching lowercase `result<T, E>`:
-
 ```lume
-type AppConfig { name: str }
-
-fn load_config(path: str) -> result<AppConfig, str> {
-  let source = fs.try_read_text(path)?
-  return AppConfig.from_json(source)
-}
-
 fn main(args: [str]) -> int {
   let loaded = load_config("app.json")
   if result.is_ok(loaded) {
-    let config = result.value(loaded)
-    print(config.name)
+    print(result.value(loaded).name)
   } else {
     eprint(result.error(loaded))
   }
@@ -588,33 +580,21 @@ fn main(args: [str]) -> int {
 }
 ```
 
-**The practical rule**: if the value came from `fs.*`/`dir.*`/`http.*`/
-`.from_json(...)` at any point in its history, treat it as world 2 for the
-rest of its life — read it only with `result.*`, and if you wrap it in your
-own function, declare that function's return type in lowercase
-`result<T, E>` too. If you constructed it yourself with `Result.Ok(...)`/
-`Result.Err(...)`, it's world 1 — use `match`. The two do not type-check
-against each other directly: neither `result.is_ok` on a
-`Result.Ok(...)`-constructed value nor `match` on a builtin's return will
-compile.
-
-When you genuinely need to `match` a world-2 value — a builtin's own
-`result<T, E>` — `result.to_result(outcome) -> Result<T, E>` lifts it into
-a real, matchable world-1 value on demand:
+A function you declare with `-> Result<T, E>` can `return` a failable
+builtin's own result directly — no wrapping needed:
 
 ```lume
-let shorthand = fs.try_read_text(path)          // world 2
-let bridged = result.to_result(shorthand)        // world 1, now matchable
-print(match bridged {
-  Ok(value) => value
-  Err(message) => "error: " + message
-})
+fn read_config_text(path: str) -> Result<str, str> {
+  return fs.try_read_text(path)
+}
 ```
 
-This is one-directional (world 2 → world 1 only) and every existing
-`result.*` builtin and world-2 call site is unaffected — it's an escape
-hatch for the cases the split above actually blocks, not a unification of
-the two worlds.
+`?`/`!` propagate the same way regardless of which spelling the enclosing
+function used to declare its return type, as long as the error types
+match. `result.to_result(x)` still exists (it validates its argument is a
+`Result` and returns it unchanged) for any code written against the older
+two-representation design — no existing call needs to change, and no new
+one needs it.
 
 ## 11. Typed maps
 
@@ -1290,12 +1270,6 @@ documents in this repository:
   boolean flag checked in the loop condition instead.
 - **No `let`/`var` type annotations at all.** A binding's type always comes
   from its initializer (section 3).
-- **Two separate, non-interchangeable `Result` conventions** — the
-  capitalized `Result` enum you construct yourself vs. the lowercase
-  `result<T, E>` every filesystem/directory/HTTP/JSON-decode builtin
-  returns. Mixing them produces a type-mismatch or "match requires an
-  enum" error rather than a clear diagnostic (section 10) — `Option<T>`
-  has no such split.
 - **No generic/untyped JSON parsing** — only `SomeType.from_json(text)`
   against a record type declared ahead of time (section 12). There is
   no way for a Lume program to read an arbitrary, schema-less JSON
