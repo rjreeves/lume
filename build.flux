@@ -1,6 +1,6 @@
 uses proc.exec, fs.write;
 
-let certo = "C:/Users/robert/Desktop/Certo/target/release/certo.exe";
+let certo = "C:/Users/robert/Desktop/root/Certo/target/release/certo.exe";
 
 let checkResult = exec([certo, "check", "src/lume.cto"], "2m")?;
 if checkResult.success {
