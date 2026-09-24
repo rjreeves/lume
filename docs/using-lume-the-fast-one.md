@@ -963,6 +963,40 @@ to two different locations is `E0708`. There is no real version-range
 resolution or registry yet — `version` is recorded but not checked against
 anything.
 
+A dependency can also come straight from a git repository instead of a
+local path — no registry, just a direct URL, the same way Go modules
+resolve a dependency by its repository location:
+
+```json
+{
+  "name": "app",
+  "version": "0.1.0",
+  "dependencies": [
+    { "name": "mathutils", "git": "https://example.com/org/mathutils.git", "ref": "v1.2.0" }
+  ]
+}
+```
+
+`ref` can be a tag, a branch, or a raw commit SHA; `lume install` shells
+out to a real `git` binary to clone it, checks out `ref`, and resolves it
+to a concrete commit — that commit, not the possibly-moving `ref`, is
+what `lume.lock.json` records and what `install --check` re-verifies. The
+resolved clone lives in a shared cache outside the project (keyed by the
+git URL and the resolved commit, under `$LUME_HOME` or the platform home
+directory), so two projects pinned to the same package at the same
+commit share one clone instead of duplicating it, and a repeat `install`
+reuses it instead of re-cloning. Because `ref` is re-resolved over the
+network on every `install`/`--check`, a project with a git dependency
+needs network access (or a warm cache) where a purely local-path project
+doesn't. A dependency entry must declare exactly one of `path`/`git` —
+both or neither, or `git` without `ref`, is `E0747`; a `git` command that
+fails (bad URL, a `ref` that doesn't exist) is `E0748`. Everything past
+that — cycle detection, isolation, transitively resolving a git
+dependency's own further dependencies (`path` or `git`, freely mixed) —
+works exactly the same as a local-path dependency, since by the time it
+reaches the lock file a git dependency is just an ordinary resolved
+`path` pointing at the clone cache instead of the project tree.
+
 **Dependencies are isolated per package, not shared across the whole
 resolved tree.** If `app` depends on `mathutils`, and `mathutils` depends on
 `formatting`, `app` can call into `mathutils` freely — but `app` cannot

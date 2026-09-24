@@ -462,28 +462,61 @@ str}, ...]}` (`dependencies` is a JSON array, not an object keyed by
 name — deliberately, since `JsonValue.keys()` is not reliable on a
 nested object obtained via `JsonValue.get()`, only on a top-level
 parse; an array sidesteps it entirely via the already-proven
-`JsonValue.length`/`JsonValue.atText` pair). `dependencies` entries
-declare another package by a path relative to the manifest's own
-directory — no registry, no version ranges yet, `version` fields are
-declarative metadata only.
+`JsonValue.length`/`JsonValue.atText` pair). A `dependencies` entry
+declares another package one of two ways: `{"name": str, "path": str}`,
+a path relative to the manifest's own directory (no registry, no
+version ranges — `version` fields are declarative metadata only); or
+`{"name": str, "git": str, "ref": str}`, resolved directly from a git
+repository, matching how Go modules resolve a dependency by repository
+location instead of through a central index (no registry or search
+here either — a name only ever resolves through its own declared `git`
+URL). Exactly one of `path`/`git` must be present, and `git` requires
+`ref` (a tag, branch, or commit) — either violation is `E0747`.
 
 `lume install <dir>` is a separate step from ordinary compilation, per
 this project's own constraint that package resolution must not happen
 on every compile: it reads `<dir>/lume.json` and walks the full
 dependency tree — a dependency's own `dependencies` are resolved too,
-recursively — writing every reachable package into a single flat
-`<dir>/lume.lock.json`, each entry's `path` already computed relative
-to `<dir>` itself (not its immediate parent), so `use` resolution stays
-a flat, single-level lookup regardless of nesting depth. A path
-component is normalized (`..` segments collapsed) as it's computed, so
-two routes to the same physical directory compare equal — without
-that, a genuine cycle or a legitimate diamond dependency (two branches
-depending on the same package) would produce different, incomparable
-strings for the same location. Missing/malformed root manifest is
-`E0705`; a dependency whose own manifest can't be read is `E0706`; the
-same declared name resolving to two different locations is `E0708`; a
+recursively, `path` and `git` entries freely mixed — writing every
+reachable package into a single flat `<dir>/lume.lock.json`. A `path`
+entry's lock `path` is computed relative to `<dir>` itself (not its
+immediate parent), so `use` resolution stays a flat, single-level
+lookup regardless of nesting depth; that path component is normalized
+(`..` segments collapsed) as it's computed, so two routes to the same
+physical directory compare equal — without that, a genuine cycle or a
+legitimate diamond dependency (two branches depending on the same
+package) would produce different, incomparable strings for the same
+location. A `git` entry's lock `path` is different in kind: `ref` is
+resolved to a concrete commit SHA by shelling out to a real `git`
+binary (clone, checkout, then `rev-parse HEAD` — a full clone, not a
+shallow one, since `ref` may be an arbitrary commit rather than a
+branch/tag tip), and the result is placed in a shared local clone cache
+under the platform home directory (`$LUME_HOME` if set, else the usual
+per-OS home var), keyed by `(git URL, resolved commit)` — not `(URL,
+ref)`, since `ref` can be a floating branch name but the cache needs a
+stable, immutable identity. That cache path is absolute, outside the
+project tree entirely, so every place that turns a lock-recorded `path`
+back into a real location treats an already-absolute path as-is rather
+than joining it onto the project root (`Path.join` is pure string
+concatenation — it does not special-case an absolute second argument).
+The lock entry also records the manifest's own declared `git`/`ref`
+(empty strings for a `path` entry), so `install --check` can tell the
+two kinds of entry apart; because `--check` re-resolves `ref` to a SHA
+the same way `install` does, a project with a `git` dependency needs
+network access (or a warm cache) for `--check` too, unlike the fully
+offline check a `path`-only project gets. A `git` subprocess step that
+fails (bad URL, unresolvable `ref`) is `E0748`, carrying the
+underlying git error. Missing/malformed root manifest is `E0705`; a
+dependency whose own manifest can't be read is `E0706`; the same
+declared name resolving to two different locations is `E0708`; a
 genuine dependency cycle is `E0709`; a lock file write failure is
 `E0707`.
+
+Explicitly out of scope for this first cut: no shallow-clone/bandwidth
+optimization (a `git ls-remote` fast path that skips a full clone for
+the common branch/tag case is a worthwhile follow-up, not implemented),
+and no credential handling of any kind — whatever the local `git`
+binary's own credential helper already supports is what works.
 
 `use` resolution (`loadModule`) reads `lume.lock.json` once, at the
 very start of loading the root file — never the manifest, and never
