@@ -1428,7 +1428,19 @@ things rather than writing the obvious thing.
   Verified live: patching a real cache's embedded build-hash field to
   simulate "same program, different compiler build" correctly forced a
   transparent recompile with the right output, and rewrote the cache
-  with the real hash afterward;
+  with the real hash afterward. That covered `run`'s own transparent
+  cache (`compileOrCache`); `lume exec` - the command that runs a
+  standalone `.lbc` artifact independent of its source, so the one
+  place a build mismatch actually matters most (no source to fall back
+  to recompiling from) - read the identical header field and never
+  compared it against anything, confirmed live by hand-corrupting just
+  those bytes and exec'ing the result with no error (filed as
+  `BACKLOG.md` item 5). Fixed: `loadArtifact` (`exec`'s own loader, as
+  opposed to `decodeArtifact`, still deliberately lenient for
+  `compileOrCache`'s cache-hit/miss check) now rejects a mismatch
+  outright as a new `E0406`, since unlike `run` it has nothing to
+  transparently recompile from. Covered by `test.ps1`'s "exec rejects a
+  foreign-build-hash artifact" case;
 - ~~a narrow C ABI or subprocess-based interoperability story~~ — the
   subprocess half investigated and verified live, not just assumed:
   `dist\lume.exe run <script> [args...]` already works as a callable
