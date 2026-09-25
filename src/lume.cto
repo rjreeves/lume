@@ -825,13 +825,30 @@ fn parseAdd(tokens: List<Token>, index: Int): ExprResult = {
   while running {
     val operator = at(tokens, result.next)
     if Text.eq(operator.text, "+") or Text.eq(operator.text, "-") then {
-      val right = parseMultiply(tokens, result.next + 1)
-      if not Text.eq(right.problem, "") then {
-        result = right
+      // `++` isn't a Lume token at all - it lexes as two adjacent `+`
+      // symbols, so without this check the second one falls all the way
+      // through to parseAtom's generic "E0101 expected expression" (it's
+      // never a valid expression-starting token), with no hint toward the
+      // actual mistake. A natural one for anyone who's just been reading
+      // or writing Certo (this compiler's own implementation language,
+      // which uses `++` for concatenation) to reach for reflexively -
+      // confirmed live, including by this assistant while exercising the
+      // git-dependency feature (BACKLOG.md item 4). Caught right here,
+      // the one place that already knows "a binary `+` was just consumed
+      // and here's what immediately follows it", rather than trying to
+      // reconstruct that context down in parseAtom's context-free fallback.
+      if Text.eq(operator.text, "+") and Text.eq(at(tokens, result.next + 1).text, "+") then {
+        result = expressionError(result.next + 1, "E0749 line " ++ intToText(operator.line) ++ ": `++` is not a Lume operator; use `+` for concatenation")
         running = false
       } else {
-        val op = if Text.eq(operator.text, "+") then "add" else "sub"
-        result = ExprResult { next: right.next, code: List.push(appendCode(result.code, right.code), makeInstruction(op, "", 0, operator.line)), problem: "" }
+        val right = parseMultiply(tokens, result.next + 1)
+        if not Text.eq(right.problem, "") then {
+          result = right
+          running = false
+        } else {
+          val op = if Text.eq(operator.text, "+") then "add" else "sub"
+          result = ExprResult { next: right.next, code: List.push(appendCode(result.code, right.code), makeInstruction(op, "", 0, operator.line)), problem: "" }
+        }
       }
     } else { running = false }
   }

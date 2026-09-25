@@ -10,7 +10,24 @@ and the exact compiler output, at commit `e7788cd` (`ai/lume-api.json`
 
 ## Pending
 
+None currently.
+
+## Resolved
+
 ### 4. `++` (Certo's own concatenation operator, not Lume's) reports a generic `E0101 expected expression` with no hint of the actual mistake
+
+**Resolved:** `parseAdd` (`src/lume.cto`) - the one place that already
+consumes a binary `+`/`-` and knows what token immediately follows it -
+now checks for that immediately-following token also being `+` before
+recursing into `parseMultiply` for the right-hand operand, and reports
+a dedicated `E0749` ("`` `++` is not a Lume operator; use `+` for
+concatenation ``", with a line number) instead of falling through three
+levels down into `parseAtom`'s context-free `E0101` fallback. Verified
+against this item's own reproduction below (now reports `E0749 line 2`
+instead of `E0101 line 0`), plus that ordinary `+` concatenation and
+`-` subtraction are both unaffected, checked in as
+`examples/invalid_plus_plus_concatenation.lume` and test.ps1's
+"`` `++` is not a Lume operator ``" case.
 
 Found live while hand-writing a throwaway demo package to exercise the
 git-based dependency feature (`{name, git, ref}`, shipped in #153) -
@@ -71,18 +88,19 @@ fixed by a human/AI reviewer before being checked in, not by the
 compiler, and no diagnostic follow-up was filed at the time. This is
 the same mistake recurring, now with a reproduction on record.
 
-**Suggested fix:** give the lexer or parser a specific, cheap check for
+**Suggested fix:** ~~give the lexer or parser a specific, cheap check for
 this one confusable pattern - a `+` token immediately followed by
 another `+` token where a binary operator was just consumed (the same
 "precise diagnostic for a specific confusable case" pattern already
 used for the `&T.method` gap, `E0740`, in ROADMAP.md's "Now" section) -
 and report something like "`++` is not a Lume operator; use `+` for
-concatenation" instead of falling through to the generic `E0101`.
-Fixing `E0101`'s own missing line number (already flagged by backlog
-item 1 for a different reproduction) would help regardless of whether
-a dedicated message is added.
-
-## Resolved
+concatenation" instead of falling through to the generic `E0101`.~~
+Took exactly this fix, in `parseAdd` specifically (the point that
+already has both the just-consumed operator and the following token in
+hand, rather than reconstructing that context three levels down in
+`parseAtom`). `E0101`'s own missing line number (flagged by backlog
+item 1 for a different reproduction) is unaffected - still a separate,
+still-open gap for every *other* generic parse failure.
 
 ### 5. `lume exec` never checked a `.lbc` artifact's own build hash, unlike the `run` cache it was built alongside
 

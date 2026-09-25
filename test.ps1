@@ -74,6 +74,16 @@ $invalidIfExprNoElse = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_
 if ($LASTEXITCODE -ne 1) { throw "if-expression missing else validation should exit 1" }
 Assert-Equal 'if-expression requires else' 'E0733 line 2: if-expression requires `else`' ($invalidIfExprNoElse -join "`n")
 
+# `++` isn't a Lume token (it's Certo's own concatenation operator, and
+# lume.cto - this compiler - is itself written in Certo) - it used to lex
+# as two adjacent `+` symbols and fall all the way through to the generic
+# "E0101 expected expression" with no line number and no hint toward the
+# actual mistake (BACKLOG.md item 4, filed after this assistant made the
+# exact mistake live while exercising the git-dependency feature).
+$invalidPlusPlus = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_plus_plus_concatenation.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "'++' concatenation validation should exit 1" }
+Assert-Equal '`++` is not a Lume operator reports a precise hint, not a generic parse error' 'E0749 line 2: `++` is not a Lume operator; use `+` for concatenation' ($invalidPlusPlus -join "`n")
+
 $functions = & $Lume run (Join-Path $PSScriptRoot 'examples\functions.lume')
 if ($LASTEXITCODE -ne 0) { throw "functions exited $LASTEXITCODE" }
 Assert-Equal 'functions and recursion' "42`n120" ($functions -join "`n")
