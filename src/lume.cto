@@ -736,10 +736,24 @@ fn parsePrimary(tokens: List<Token>, index: Int): ExprResult = {
   var result = parseAtom(tokens, index)
   if Text.eq(result.problem, "") and (Text.eq(at(tokens, result.next).text, "!") or Text.eq(at(tokens, result.next).text, "?")) then {
     val postfix = at(tokens, result.next)
-    result = ExprResult {
-      next: result.next + 1,
-      code: List.push(result.code, makeInstruction(if Text.eq(postfix.text, "?") then "propagate" else "unwrap", "", 0, postfix.line)),
-      problem: ""
+    // `??` isn't a Lume token either (Certo's own Option/Result-default
+    // operator - BACKLOG.md item 6). Lume's postfix `?`/`!` (below) is
+    // single-use, so a second `?` immediately after the first is always
+    // an orphaned token with nothing to attach to - left unchecked, what
+    // happens to it next is position-dependent (a confusing, unrelated
+    // E0206 or E0207 depending on where in a larger expression this
+    // sits), never mentioning `?` in a way that points at `??`
+    // specifically. Caught right here, the one place that already knows
+    // a postfix `?` was just consumed and what immediately follows it -
+    // the same shape of fix as `++`'s own E0749 in parseAdd.
+    if Text.eq(postfix.text, "?") and Text.eq(at(tokens, result.next + 1).text, "?") then {
+      result = expressionError(result.next + 1, "E0750 line " ++ intToText(postfix.line) ++ ": `??` is not a Lume operator; use `match` to provide a default for `Option`/`Result`")
+    } else {
+      result = ExprResult {
+        next: result.next + 1,
+        code: List.push(result.code, makeInstruction(if Text.eq(postfix.text, "?") then "propagate" else "unwrap", "", 0, postfix.line)),
+        problem: ""
+      }
     }
   }
   // A field access chained directly onto any expression, not just a
