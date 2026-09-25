@@ -875,10 +875,35 @@ fallible, non-trivial Lume code" from being natively testable at all.
   overwriting it, reporting a mismatch (including "no lock file yet")
   as a new `E0739` and never writing — an opt-in CI gate that leaves
   `run`/`check`/`test`'s own zero-resolution-work guarantee untouched;
-- cache resolved dependencies by content hash — deferred: not
-  meaningful yet for local paths (reading a local directory has no
-  fetch cost to cache); revisit once packages can come from anywhere
-  other than the local filesystem.
+- ~~cache resolved dependencies by content hash~~ — the trigger
+  condition this bullet itself named ("revisit once packages can come
+  from anywhere other than the local filesystem") is now met: shipped
+  as part of the git-based package source below. `resolveGitDependency`
+  keys its shared, machine-wide cache (`gitCacheRoot`, not per-project)
+  by `(git URL, resolved commit)` — verified live via `test.ps1`'s "git
+  URL canonicalization" case, where two apps pinned to the same
+  commit through differently-spelled URLs resolve to the identical
+  cache path, and via the `tag`/`branch`/`commit` cases, where all
+  three `ref` spellings for the same commit land in the same cache
+  entry. Repeat installs skip the fetch cost too, not just the storage
+  cost: a literal commit-SHA `ref` checks the cache directory directly
+  with no network call at all, and a floating branch/tag `ref` costs
+  only one lightweight `git ls-remote` round-trip (no object transfer)
+  before reusing an already-cached commit, both confirmed against
+  `resolveGitDependency`'s `fastShaOpt`/`lsRemoteSha` path. One
+  narrower gap deliberately not chased further: the cache key is the
+  resolved *commit* (already a stable, immutable identity for a given
+  URL — matching this project's own repeated "no fetch cost to
+  cache" standard for when caching is worth it at all), not a hash of
+  the checked-out tree's own content, so two different git sources
+  (a mirror, a fork, a re-tagged release) with byte-identical files
+  would still clone and store separately rather than sharing one
+  entry. No dependency in this project's own examples or tests
+  exercises that case, and closing it for real would mean a
+  cross-entry content-hash index with its own concurrent-write and
+  cleanup correctness questions — the same "revisit if a real gap
+  shows up" bar the sibling deferred items in this section already
+  use, not a benefit observed in practice today.
 
 Package management must not introduce source-level package graph resolution
 into every compilation.
@@ -1287,11 +1312,13 @@ things rather than writing the obvious thing.
     drift for the local-path case;
   - the resolved clone lives in a shared local cache keyed by
     `(git URL, resolved commit)`, not inside the consuming project's own
-    directory - this is what finally gives the still-deferred "cache
-    resolved dependencies by content hash" item above a real reason to
-    exist (a network fetch has a genuine cost to avoid repeating; a local
-    path read never did), and lets two projects pinned to the same
-    package/commit share one clone instead of duplicating it;
+    directory - this is what finally gives the "cache resolved
+    dependencies by content hash" item above (see "2. Packages and
+    dependency resolution") a real reason to exist (a network fetch has
+    a genuine cost to avoid repeating; a local path read never did),
+    and lets two projects pinned to the same package/commit share one
+    clone instead of duplicating it - closing that item, see there for
+    what was verified live and the one narrower gap left open;
   - cycle detection (`E0709`) and ambiguous-name detection (`E0708`)
     apply exactly as they do today - the dependency-graph walk just needs
     to recurse into a cloned git dependency's own `lume.json` the same
