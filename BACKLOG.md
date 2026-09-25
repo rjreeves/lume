@@ -10,7 +10,84 @@ and the exact compiler output, at commit `e7788cd` (`ai/lume-api.json`
 
 ## Pending
 
-None currently.
+### 6. `??` (Certo's own Option/Result-default operator, not Lume's) reports a generic, position-dependent parse error with no hint of the actual mistake
+
+Found live while probing `path.extension`/`path.stem` edge cases for a
+different check (looking for a new backlog item after item 4 shipped)
+- found by an AI (this assistant) making essentially the same class of
+mistake item 4 already covers, for a *different* Certo operator, not
+by inspection. At commit `260dd1e` (`ai/lume-api.json`
+`version: 0.1.0-bootstrap`).
+
+**Claim contradicted:** none directly - Lume has no `??` operator and
+`SPEC.md` never claims one. The gap is the same category item 4
+already established as real: an ergonomic trap for a language whose
+own stated top-level principle is "reliable AI generation," this time
+for the *other* Certo operator someone who's just been reading or
+writing Certo (this compiler's own implementation language, which uses
+`??` as its Option-default operator - see e.g. `src/lume.cto`'s own
+`gitCacheRoot`/`tempDirPath`) is naturally likely to reach for.
+
+**Reproduction:**
+
+```lume
+fn main(args: [str]) -> int {
+  let x = path.extension("noext") ?? "default"
+  print(x)
+  return 0
+}
+```
+
+```
+$ lume check repro.lume --json
+{"code":"E0207","severity":"error","file":"repro.lume","line":2,"message":"unsupported statement `?`"}
+```
+
+Root cause, confirmed by bisection (`5 ?? 10` alone reproduces it - not
+specific to `path.extension`, `Option`, or any particular type): Lume's
+own `?`/`!` result-propagation operator (§9) is a *postfix, single-use*
+operator - `parsePrimary`'s postfix check (`src/lume.cto`) consumes at
+most one `?`/`!` per expression, not a loop. `x ??` therefore lexes and
+parses as `(x ?)` followed by a second, now-orphaned `?` token with
+nothing before it to attach to. What happens to that orphaned `?` is
+*position-dependent*, unlike item 4's single, consistent `E0101`:
+- At statement level (`let x = 5 ?? 10`), the first `?` completes the
+  `let` statement, and the second `?` is left to start a new statement
+  - never a valid statement-starting token - giving `E0207 unsupported
+  statement \`?\``.
+- Inside a call's argument list (`print(5 ?? 10)`), the first `?`
+  completes the argument, and the argument-list parser then expects
+  `,` or `)` and finds `?` instead, giving the unrelated-looking
+  `E0206 expected \`)\``.
+
+Two different generic codes for the identical underlying mistake,
+neither mentioning `?` at all in a way that points at `??` specifically.
+
+**Impact:** unlike item 4 (a `+`-vs-`++` mistake with an easy, already-
+idiomatic replacement, plain `+`), this one has no direct Lume
+equivalent to suggest reaching for instead - Lume's *only* way to
+extract an `Option<T>`/`Result<T, E>` value with a fallback is an
+explicit exhaustive `match` (§6, §9); there is no `unwrap_or`-shaped
+builtin or operator anywhere in the documented API surface (confirmed:
+no such name appears in `SPEC.md` or the real `lume api` builtin list).
+"Give me a default if this is empty" is an extremely common operation
+on exactly the two types (`Option`/`Result`) this language's own
+stdlib returns constantly (`path.extension`, `dir.list`, `map.get`,
+every `result.*` builtin) - so this is a likely mistake for anyone
+coming from Certo (or Rust, Kotlin, C#, Swift, JS - `??` means the same
+thing in all of them) to make repeatedly, not a one-off.
+
+**Suggested fix:** at minimum, the same class of fix as item 4 - a
+cheap, specific check in `parsePrimary`'s postfix handling (or right
+after it) for a second `?`/`!` immediately following the first, and a
+dedicated diagnostic ("`??` is not a Lume operator; use an explicit
+\`match\` to provide a default", or similar) instead of falling through
+to either generic code. Worth also considering the larger question this
+item's own "Impact" section raises, separate from the diagnostic: since
+there is genuinely no sugar for "unwrap with a default" today, is that
+its own gap worth closing (a builtin like `option.unwrap_or(value,
+fallback)`, or a real `??` operator) rather than only making the
+mistake's error message better?
 
 ## Resolved
 
