@@ -10,7 +10,113 @@ and the exact compiler output, at commit `e7788cd` (`ai/lume-api.json`
 
 ## Pending
 
-None currently.
+### 8. `T?` (`Option<T>` postfix sugar) silently corrupts the parse of everything after it instead of being rejected
+
+Found live while hunting for a new backlog item after item 7 shipped -
+checking whether `T?`, the other bootstrap gap grouped alongside `??`
+on the same §19 line, actually behaves the way SPEC.md's opening
+Reconciliation Note promises. At commit `1e60318`
+(`ai/lume-api.json` `version: 0.1.0-bootstrap`).
+
+**Claim contradicted:** the same Reconciliation Note items 4/6/7 all
+cite: "not yet implemented" syntax "will parse-error or type-error
+today." §1 lists `T?` postfix sugar for `Option<T>` exactly this way.
+In a *return-type* position this is item 7's own silent-no-op pattern
+again (the `?` is dropped, `int?` is silently treated as plain `int`);
+in a *parameter-type* position it's categorically worse - not a no-op,
+active corruption that misparses an unbounded amount of subsequent
+source, producing wildly incorrect, unrelated-looking errors with no
+connection to the real mistake.
+
+**Reproduction (parameter position - the severe case):**
+
+```lume
+fn identity(x: int?) -> int {
+  return 0
+}
+
+fn main(args: [str]) -> int {
+  print(identity(5))
+  return 0
+}
+```
+
+```
+$ lume check repro.lume --json
+{"code":"E0217","severity":"error","file":"repro.lume","line":6,"message":"function `identity` expects 7 arguments, got 1"}
+```
+
+`identity` takes exactly one declared parameter; the reported "7" is
+not a real count of anything. Confirmed by varying unrelated,
+downstream file content: inserting one extra unrelated function before
+`main` (same `x: int?` signature, otherwise unrelated) changes the
+reported count from 7 to 6 - proof this number is an artifact of where
+the parser happens to resynchronize, not a meaningful arity. A third
+variant (`x: int?, y: int, z: int)`, called with three arguments)
+fails differently again, with `E0210 undefined binding \`y\`` *inside
+the function body* - `y` and `z` are declared parameters, but the
+corruption already consumed them as bogus type information before the
+body was ever reached, so they were never actually registered as
+bindings.
+
+**Reproduction (return-type position - the quieter case):**
+
+```lume
+fn giveOption() -> int? {
+  return Option.Some(value: 5)
+}
+```
+
+```
+$ lume check repro2.lume --json
+{"code":"E0618","severity":"error","file":"repro2.lume","line":2,"message":"return type mismatch; expected int, got Option<int>"}
+```
+
+"expected int" confirms `int?`'s `?` was silently dropped rather than
+rejected or understood - the declared return type is treated as plain
+`int`, matching item 7's exact silent-no-op shape for a different
+"not yet implemented" claim.
+
+Root cause, confirmed by reading `typeNext` (`src/lume.cto`) directly -
+the one function both `parameterTypes` and `functionReturnType` use to
+find where a type annotation ends: it has cases for a bare name
+(`start + 1`), a `[...]` list type (recurses), and a `<...>` generic
+(scans to the matching `>`), but *no* case for a trailing `?` - it
+falls through to the plain `start + 1` branch, landing exactly on the
+`?` token itself rather than past it. In `functionReturnType` this only
+truncates the extracted type text (the lone caller of `typeAt`/
+`typeNext` there, no loop) - the quieter, item-7-shaped bug. In
+`parameterTypes`'s per-parameter `while` loop, that one-token-short
+position is far worse: the loop's own `,`/`)` boundary checks (looking
+for a comma to continue, or a `)` to stop) both run against a value
+that's still sitting on `?`, neither matches, so the loop treats `?`
+as the start of *another* parameter, pushes a bogus `"unknown"` type,
+advances past the *real* `)`, and keeps recursing into subsequent
+tokens (the function body, the next declaration, whatever comes next)
+as further bogus parameters until the drifting index happens to land
+on some unrelated `)` later in the file - the closing paren of a
+different function's own parameter list, in both reproductions above.
+
+**Impact:** the most severe class of gap in this backlog - items 4/6
+fail loudly but precisely, item 7 fails silently but locally (one
+string, one wrong value), this one fails silently-or-loudly
+*unpredictably*, and when it does fail loudly the error points
+somewhere else in the file entirely, actively misleading whoever (human
+or AI) is trying to fix it. Unlike items 4/6/7, this isn't scoped to
+the one line containing the mistake - the blast radius depends on
+wherever a `)` next happens to occur in the source, which could be
+the very next function, or much further away in a larger file.
+
+**Suggested fix:** give `typeNext` an explicit case for a trailing `?`
+immediately after a type name (`start + 1` becoming `start + 2` when
+the following token is `?`, mirroring how it already special-cases
+`[` and `<`) - the minimum fix, matching item 7's approach, is to keep
+`T?` rejected with a real diagnostic ("`T?` postfix sugar is not yet
+implemented - write `Option<T>` explicitly", SPEC.md's own suggested
+wording) rather than letting `typeNext` under-advance at all. That
+alone would turn both reproductions above into one precise, correctly
+-located error instead of either a silent wrong type or a cascading
+misparse.
 
 ## Resolved
 
