@@ -10,8 +10,77 @@ and the exact compiler output, at commit `e7788cd` (`ai/lume-api.json`
 
 ## Pending
 
-Nothing currently pending - all three items found so far have been
-resolved (see below).
+### 4. `++` (Certo's own concatenation operator, not Lume's) reports a generic `E0101 expected expression` with no hint of the actual mistake
+
+Found live while hand-writing a throwaway demo package to exercise the
+git-based dependency feature (`{name, git, ref}`, shipped in #153) -
+found by an AI (this assistant) making the exact mistake this item
+warns about, not by inspection. At commit `741a7cb` (`ai/lume-api.json`
+`version: 0.1.0-bootstrap`).
+
+**Claim contradicted:** none directly - `SPEC.md` correctly documents
+`+` as Lume's own concatenation operator and never mentions `++`. The
+gap is the one ROADMAP.md's "Now: production scripting foundation"
+section already calls out as a real category: an ergonomic trap for a
+language whose own stated top-level principle is "reliable AI
+generation" - the diagnostic gives no signal toward the actual
+mistake, just a generic parse failure.
+
+**Reproduction:**
+
+```lume
+fn hello(name: str) -> str {
+  return "Hello, " ++ name
+}
+
+fn main(args: [str]) -> int {
+  print(hello("world"))
+  return 0
+}
+```
+
+```
+$ lume check repro.lume --json
+{"code":"E0101","severity":"error","file":"repro.lume","line":0,"message":"expected expression"}
+```
+
+Root cause, confirmed by bisection (dropping to two operands, removing
+the trailing `"!"`, and testing a non-dotted function name all still
+reproduced it - it is neither the string content nor anything specific
+to the dependency/module machinery this was first found through): `++`
+is not a recognized token or operator anywhere in Lume's own grammar,
+so `"Hello, " ++ name` lexes as two adjacent `+` tokens. The parser
+consumes the first `+` as an ordinary binary operator expecting a
+right-hand expression, then hits the second `+` in that position - not
+a valid expression-starting token - and falls through to the same
+generic "expected expression" fallback any other malformed expression
+hits. `line: 0` compounds it, matching backlog item 1's own already-
+noted "secondary diagnostics gap" for this exact code (`E0101`) - there
+is no location to even look at.
+
+**Impact:** `++` is Certo's own concatenation operator (`lume.cto`, the
+compiler implementing Lume, is itself written in Certo), so it is a
+natural, easy mistake for anyone - human or AI - who has just been
+reading or writing Certo source to reach for reflexively in Lume code,
+with the resulting error giving zero indication that's what happened.
+ROADMAP.md's own "Status report" section already documents this exact
+confusion actually occurring once before, while hand-writing the fixed
+AI evaluation suite ("one task's first draft used `++` instead of
+Lume's `+` for string concatenation") - that instance was caught and
+fixed by a human/AI reviewer before being checked in, not by the
+compiler, and no diagnostic follow-up was filed at the time. This is
+the same mistake recurring, now with a reproduction on record.
+
+**Suggested fix:** give the lexer or parser a specific, cheap check for
+this one confusable pattern - a `+` token immediately followed by
+another `+` token where a binary operator was just consumed (the same
+"precise diagnostic for a specific confusable case" pattern already
+used for the `&T.method` gap, `E0740`, in ROADMAP.md's "Now" section) -
+and report something like "`++` is not a Lume operator; use `+` for
+concatenation" instead of falling through to the generic `E0101`.
+Fixing `E0101`'s own missing line number (already flagged by backlog
+item 1 for a different reproduction) would help regardless of whether
+a dedicated message is added.
 
 ## Resolved
 
