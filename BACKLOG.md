@@ -10,6 +10,96 @@ and the exact compiler output, at commit `e7788cd` (`ai/lume-api.json`
 
 ## Pending
 
+### 5. `lume exec` never checks a `.lbc` artifact's own build hash, unlike the `run` cache it was built alongside
+
+Found live while confirming that a `.lbc` produced by `lume build` is
+fully self-contained (splicing every `use`d module - including a
+git-resolved dependency - into one combined source before compiling,
+verified separately by deleting the original source entirely and
+successfully `exec`ing the artifact from an otherwise-empty
+directory). At commit `6f163a1` (`ai/lume-api.json`
+`version: 0.1.0-bootstrap`).
+
+**Claim contradicted:** ROADMAP.md's "Later: ecosystem readiness" >
+"Distribution and interoperability" section marks "a stable bytecode
+version and compatibility policy" as shipped (struck through), citing
+exactly this mechanism: "`compileOrCache` ... keyed a cache hit purely
+on the program's own source hash, with no way to tell 'this source is
+unchanged' apart from 'this source is unchanged *and the compiler that
+produced this bytecode is still the one running*' ... Fixed by
+bumping the format to `LBC5` and embedding a build-time hash of
+`lume.cto`'s own source ... either mismatch is now treated as a cache
+miss." That fix is real, but it only covers `compileOrCache`, the
+transparent same-machine cache behind `lume run`. `lume exec` - the
+command that runs a standalone `.lbc` artifact, the one actually meant
+to travel independently of its source (see the now-verified
+self-containment above) - reads the identical `LBC5` header and
+extracts the identical `buildHash` field, but never compares it
+against anything. The roadmap bullet's own framing ("a stable bytecode
+version and compatibility policy") reads as covering `.lbc` artifacts
+generally, not "only when reached through the `run` cache specifically"
+- the gap is real regardless of how the bullet is read, since `exec`
+against a foreign-build artifact is exactly the scenario a
+"compatibility policy" exists to guard.
+
+**Reproduction:**
+
+```lume
+fn main(args: [str]) -> int {
+  print(6 * 7)
+  return 0
+}
+```
+
+```
+$ lume build app.lume app.lbc
+wrote app.lbc
+```
+
+Hand-corrupting only the artifact's `buildHash` field (bytes
+`[68, 132)` of the file, per `decodeArtifactHeader` - leaving the
+`LBC5` magic, `sourceHash`, instruction count, and every instruction
+byte untouched) and running the corrupted copy:
+
+```
+$ lume exec app_corrupted_buildhash.lbc
+42
+```
+
+No error, no warning - it runs as if the build hash matched, because
+nothing ever reads it back out of the decoded `ArtifactResult` on this
+path. Compare `src/lume.cto`'s `loadArtifact` (`exec`'s own loader):
+it calls `decodeArtifact` and only ever inspects the returned
+`problem` field before executing - `sourceHash`/`buildHash` are
+decoded into the result struct and then simply unused. The comparison
+this claim describes (`Text.eq(header.buildHash, compilerBuildHash())`)
+exists exactly once in the whole file, inside `compileOrCache`, which
+`exec` never calls.
+
+**Impact:** `lume build` producing a portable, source-independent
+artifact is the one workflow where a compiler-version mismatch is
+most likely to actually occur in practice - the artifact is
+specifically meant to be kept or moved somewhere its original source
+and compiler build are no longer both present to compare against.
+`run`'s own cache degrades safely on a mismatch (falls back to a
+transparent recompile from source, silently correct either way,
+because the source is still right there). `exec` has no source to
+fall back to - a real compiler-behavior change between the build that
+produced an artifact and the `lume.exe` now executing it (a fixed
+runtime bug, a changed opcode's semantics, anything `LBC5`'s own
+introduction was written to guard against) would run silently and
+incorrectly instead of being rejected, the opposite of what "a stable
+bytecode version and compatibility policy" implies is guaranteed.
+
+**Suggested fix:** either give `exec`/`loadArtifact` the same
+`compilerBuildHash()` comparison `compileOrCache` already has - failing
+loudly (a new `E0NNN`) on a mismatch, since there's no live source to
+silently fall back to recompiling from - or, if running a foreign-build
+artifact is meant to stay permitted (e.g. deliberately, for a
+long-lived deployed artifact nobody wants invalidated by every compiler
+patch release), narrow ROADMAP.md's own claim to say so explicitly
+rather than reading as covering `exec` too.
+
 ### 4. `++` (Certo's own concatenation operator, not Lume's) reports a generic `E0101 expected expression` with no hint of the actual mistake
 
 Found live while hand-writing a throwaway demo package to exercise the
