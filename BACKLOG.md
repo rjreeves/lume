@@ -10,7 +10,91 @@ and the exact compiler output, at commit `e7788cd` (`ai/lume-api.json`
 
 ## Pending
 
-None currently.
+### 7. String interpolation silently does nothing instead of parse-/type-erroring, contradicting SPEC.md's own "Reconciliation note" guarantee
+
+Found live while hunting for a new backlog item after item 6 shipped -
+checking whether other "not yet implemented" items actually behave the
+way the spec's own opening note promises, not by inspection alone. At
+commit `971e896` (`ai/lume-api.json` `version: 0.1.0-bootstrap`).
+
+**Claim contradicted:** `SPEC.md`'s own opening "Reconciliation note"
+(the document's load-bearing promise about every other claim in it):
+"Anything below marked **not yet implemented** is real, aspirational
+syntax that **will parse-error or type-error today**." §2 marks string
+interpolation exactly this way: "**String interpolation (`\"hello,
+{name}\"`) is not yet implemented**." The note's own guarantee simply
+does not hold for this one item - it neither parse-errors nor
+type-errors; it silently compiles and runs, producing output that
+looks nothing like what the source suggests.
+
+**Reproduction (SPEC.md §2's own literal example):**
+
+```lume
+fn main(args: [str]) -> int {
+  let name = "world"
+  print("hello, {name}")
+  return 0
+}
+```
+
+```
+$ lume check repro.lume --json
+ok
+$ lume run repro.lume
+hello, {name}
+```
+
+No error at either `check` or `run` time. Confirmed this isn't a
+"happens to look plausible" coincidence, not real interpolation: a
+string referencing a name that doesn't exist anywhere in the program
+(`"value: {totallyUndefinedNameXYZ}"`) *also* reports `ok` and runs
+without complaint, and a string with multiple placeholders
+(`"{a} + {b} = {a}"`) prints the braces and names back literally,
+unchanged - nothing ever attempts to resolve or substitute anything
+inside `{...}`.
+
+Root cause, confirmed by reading the lexer directly: `scanString`
+(`src/lume.cto`) only special-cases two byte values while scanning a
+string literal's contents - `"` (34, the closing quote) and `\` (92,
+the start of an escape sequence). Every other byte, `{`/`}` included,
+falls through to the plain `else { index = index + 1 }` branch and
+becomes ordinary literal content in the resulting `string` token. There
+is no code path that recognizes `{...}` as anything special to reject
+- the omission isn't a rejected-but-caught case, interpolation syntax
+is simply never looked for at all, so nothing downstream ever has a
+chance to error on it either.
+
+For contrast, the *sibling* claim on the very same SPEC.md line
+("Raw backtick strings are not yet implemented either") behaves exactly
+as the Reconciliation Note promises - `` `raw string` `` genuinely
+parse-errors (`E0101 expected expression`), because a lone `` ` ``
+isn't a token `scanString`'s caller (the lexer's main dispatch) ever
+enters string-scanning mode for in the first place. Interpolation is
+the one claim on this exact line where the promise doesn't hold, not
+a spec-wide problem.
+
+**Impact:** the most severe class of gap in this backlog so far - items
+4 and 6 at least *fail loudly*, giving a human or AI a compile error to
+react to, however unhelpful the message. This one fails silently: a
+program using `"hello, {name}"` compiles clean, runs, and produces
+output that is superficially string-shaped, giving no signal
+whatsoever that the interpolation never happened. For an AI generating
+code from the language's own stated top-level principle ("reliable AI
+generation"), this is a strictly worse failure mode than a rejected
+program - a rejected program gets fixed before it ships; this one
+ships silently wrong, and would only be caught by a human actually
+reading the *printed output* character-by-character, not by anything
+the compiler or type checker does.
+
+**Suggested fix:** either give `scanString` a real check for `{`/`}`
+inside a string literal and reject it with a specific diagnostic
+("string interpolation is not yet implemented - use `+` concatenation
+instead", mirroring items 4/6's own precise-diagnostic pattern) - the
+minimum needed to make the Reconciliation Note's guarantee actually
+hold for this item - or, if silently treating `{...}` as literal text
+is considered acceptable indefinitely, narrow the Reconciliation Note's
+own wording so it no longer promises something untrue for at least one
+of the items it covers.
 
 ## Resolved
 
