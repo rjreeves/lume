@@ -1253,8 +1253,8 @@ things rather than writing the obvious thing.
   Revisit once packages can come from somewhere other than the local
   filesystem, the same trigger condition already on record for the
   content-hash-caching item.
-- **a git-based package source, with no central index — design sketch,
-  not yet implemented.** The recurring blocker on registry-adjacent work
+- ~~a git-based package source, with no central index — design sketch,
+  not yet implemented.~~ **Shipped.** The recurring blocker on registry-adjacent work
   above (signing, content-hash caching, semver ranges) is the same one
   every time: nothing points outside the local filesystem yet. A full
   npm/crates.io-style registry (hosting, name reservation, an authority
@@ -1275,12 +1275,10 @@ things rather than writing the obvious thing.
     (see "2. Packages and dependency resolution" above's own closing
     constraint) — so a git source only needs to teach `install` a second
     way to produce a local `path` for the lock file, not touch anything
-    downstream of it. Concretely: shell
-    out to a real `git` binary via the already-stable, already-public
-    `process.run` builtin (`git ls-remote`/`clone`/`checkout`) - this is
-    genuinely implementable today, the first package-system item in this
-    file *not* blocked on a new Certo primitive, since Certo's own
-    process-execution support already covers everything this needs;
+    downstream of it. Concretely: shell out to a real `git` binary
+    (clone, checkout, `rev-parse HEAD`) via `Process.run`, the same Certo
+    host primitive that already backs the Lume-language `process.run`
+    builtin - no new Certo primitive needed, exactly as predicted;
   - determinism (this section's own repeated requirement): `ref` is
     resolved to a concrete commit SHA at `install` time and that SHA -
     not the possibly-mutable branch/tag name - is what `lume.lock.json`
@@ -1314,6 +1312,45 @@ things rather than writing the obvious thing.
     source, same as it does for any other file - but this is still a
     real trust boundary, the same one every other language's package
     manager already accepts rather than a gap unique to this design.
+  - shipped as designed: `resolveGitDependency`/`gitCacheRoot`
+    (`src/lume.cto`) implement the clone/checkout/resolve-to-SHA flow and
+    the shared cache exactly as sketched above; the both-or-neither
+    manifest validation is `E0747` (reusing the `E0737`-style "malformed
+    entry" class this sketch called for, as its own dedicated code); a
+    failing `git` subprocess step is `E0748`. One nuance the sketch
+    didn't call out: `Path.join` is pure string concatenation with no
+    special case for an absolute second argument, and a git-resolved
+    dependency's cache path is absolute (unlike a local path's
+    project-relative one) - `packageDirPath` is the one place both
+    `resolveDependencies` and `loadPackageContext` now go through to
+    turn a lock-recorded path back into a real location, so an absolute
+    path is used as-is instead of being silently mis-joined onto the
+    project root. Covered by `test.ps1`'s "git dependency"/"transitive
+    git dependency" cases, exercised against local bare repos built
+    fresh per test run rather than a real network fetch. A multi-angle
+    code review (8 finder agents, 1-vote verification) against the
+    initial implementation confirmed ten further issues, two fixed
+    immediately (the `Path.join`/`normalizePath` interaction above
+    losing an absolute path's leading `/` on POSIX, and `install --check`
+    breaking every pre-existing lock file's exact byte shape on upgrade)
+    and the remaining eight fixed in a follow-up pass: the `git
+    ls-remote`-first fast path this section originally deferred as a
+    follow-up is now implemented (plus a zero-network fast path when
+    `ref` is already a literal commit SHA); the cache key canonicalizes
+    a URL's trailing slash/`.git` suffix before hashing; the
+    activeGitRefs cycle pre-check catches a repeated identical
+    `(git, ref)` pair before a redundant clone, not just after; a failed
+    cache-directory placement now falls back to a recursive copy instead
+    of only `renameFile` (which fails across a volume boundary); every
+    failure branch in `resolveGitDependency` cleans up its temp clone
+    directory; `gitCacheRoot` reports `E0748` instead of silently
+    falling back to a relative, machine-local path when none of
+    `LUME_HOME`/`USERPROFILE`/`HOME` is set; and the temp-directory
+    collision-proofing (`uniqueCloneTmpDir`'s probe-and-increment,
+    replacing a `Math.random()` call whose one-second seed resolution
+    made two same-second processes collide) is now shared by
+    `tempDirPath`/`fixture.temp_dir()` itself, not just this feature's
+    own caller.
   ~~One real, narrower gap exists independently of signing, confirmed
   live: the lock file records each dependency's *declared* metadata
   but never a hash of its actual `.lume` source files, so `lume

@@ -1319,6 +1319,180 @@ $corruptLockRun = & $Lume run (Join-Path $corruptLockAppDir 'corrupt_lock_app.lu
 if ($LASTEXITCODE -ne 1) { throw "corrupt lock file run should exit 1" }
 Assert-Equal 'corrupt lock file reports E0738, not a misleading E0701' "E0738 cannot parse lock file ``$corruptLockAppDir/lume.lock.json``" ($corruptLockRun -join "`n")
 
+# Git-based dependencies ({name, git, ref} manifest entries - ROADMAP.md's
+# "Distribution and interoperability" design sketch). Resolved through a
+# real `git` binary (Process.run; failures surface as E0748), never over
+# the network here: each remote is a throwaway local bare repo this test
+# run builds fresh under the system temp directory, not checked into the
+# repo - a real .git tree doesn't fit as a static fixture the way the
+# plain-file package fixtures above do, and building it fresh keeps the
+# suite hermetic and offline.
+$gitFixtureRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("lume_git_test_" + [System.Guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $gitFixtureRoot -Force | Out-Null
+
+$mathutilsRemote = Join-Path $gitFixtureRoot 'mathutils-remote.git'
+$mathutilsWork = Join-Path $gitFixtureRoot 'mathutils-work'
+git init --bare -q $mathutilsRemote
+git clone -q $mathutilsRemote $mathutilsWork
+Set-Content -LiteralPath (Join-Path $mathutilsWork 'lume.json') -Value '{"name":"mathutils","version":"0.1.0"}' -NoNewline
+Set-Content -LiteralPath (Join-Path $mathutilsWork 'ops.lume') -Value "pub fn ops.square(value: int) -> int {`n  return value * value`n}" -NoNewline
+Push-Location $mathutilsWork
+git add -A
+git -c user.email=test@lume.dev -c user.name=lume-test commit -q -m 'mathutils v0.1.0'
+git branch -M main
+git tag v1.0.0
+git push -q origin main --tags
+Pop-Location
+$mathutilsSha = (git --git-dir="$mathutilsRemote" rev-parse v1.0.0).Trim()
+$mathutilsRemoteUrl = $mathutilsRemote -replace '\\', '/'
+
+function New-GitDepApp([string]$Name, [string]$Ref) {
+  $dir = Join-Path $gitFixtureRoot $Name
+  New-Item -ItemType Directory -Path $dir -Force | Out-Null
+  $manifest = '{"name":"' + $Name + '","version":"0.1.0","dependencies":[{"name":"mathutils","git":"' + $mathutilsRemoteUrl + '","ref":"' + $Ref + '"}]}'
+  Set-Content -LiteralPath (Join-Path $dir 'lume.json') -Value $manifest -NoNewline
+  Set-Content -LiteralPath (Join-Path $dir 'app.lume') -Value "use mathutils.ops`n`nfn main(args: [str]) -> int {`n  print(ops.square(7))`n  return 0`n}" -NoNewline
+  return $dir
+}
+
+# Tag, branch, and raw commit SHA all resolve to the same commit - `ref`
+# can be any of the three (resolveGitDependency's own contract).
+foreach ($case in @(
+  @{ Label = 'tag';    Ref = 'v1.0.0' },
+  @{ Label = 'branch'; Ref = 'main' },
+  @{ Label = 'commit'; Ref = $mathutilsSha }
+)) {
+  $appDir = New-GitDepApp "git-app-$($case.Label)" $case.Ref
+  $installOut = & $Lume install $appDir
+  if ($LASTEXITCODE -ne 0) { throw "git dependency install ($($case.Label)) exited $LASTEXITCODE" }
+  $lock = (Get-Content -LiteralPath (Join-Path $appDir 'lume.lock.json') -Raw) | ConvertFrom-Json
+  Assert-Equal "git dependency ($($case.Label)): resolves to the tagged commit" $mathutilsSha ($lock.resolved[0].path -replace '^.*[\\/]', '')
+  Assert-Equal "git dependency ($($case.Label)): lock records declared ref" $case.Ref $lock.resolved[0].ref
+  Assert-Equal "git dependency ($($case.Label)): lock records declared git URL" $mathutilsRemoteUrl $lock.resolved[0].git
+  if ($lock.resolved[0].sourceHash -notmatch $hashPattern) { throw "git dependency ($($case.Label)) sourceHash is not a 64-char hex string: $($lock.resolved[0].sourceHash)" }
+  $runOut = & $Lume run (Join-Path $appDir 'app.lume')
+  if ($LASTEXITCODE -ne 0) { throw "git dependency app run ($($case.Label)) exited $LASTEXITCODE" }
+  Assert-Equal "git dependency ($($case.Label)): app runs against the cloned package" '49' ($runOut -join "`n")
+}
+
+# Malformed entries: both `path`/`git`, and `git` without `ref`, both
+# collapse onto the same E0747 - see resolveDependencies's own comment on
+# why these share one code rather than a code each.
+$badBothDir = Join-Path $gitFixtureRoot 'bad-both'
+New-Item -ItemType Directory -Path $badBothDir -Force | Out-Null
+Set-Content -LiteralPath (Join-Path $badBothDir 'lume.json') -Value ('{"name":"bad-both","version":"0.1.0","dependencies":[{"name":"x","path":"../x","git":"' + $mathutilsRemoteUrl + '","ref":"v1.0.0"}]}') -NoNewline
+$badBothOutput = & $Lume install $badBothDir 2>&1
+if ($LASTEXITCODE -ne 1) { throw "dependency declaring both path and git should exit 1" }
+Assert-Contains 'git dependency validation: both path and git' 'E0747' ($badBothOutput -join "`n")
+
+$badNoRefDir = Join-Path $gitFixtureRoot 'bad-noref'
+New-Item -ItemType Directory -Path $badNoRefDir -Force | Out-Null
+Set-Content -LiteralPath (Join-Path $badNoRefDir 'lume.json') -Value ('{"name":"bad-noref","version":"0.1.0","dependencies":[{"name":"x","git":"' + $mathutilsRemoteUrl + '"}]}') -NoNewline
+$badNoRefOutput = & $Lume install $badNoRefDir 2>&1
+if ($LASTEXITCODE -ne 1) { throw "git dependency without ref should exit 1" }
+Assert-Contains 'git dependency validation: git without ref' 'E0747' ($badNoRefOutput -join "`n")
+
+# A `git` command failure (here: a ref that doesn't exist) surfaces as
+# E0748 with the underlying git error folded in, not a generic failure.
+$badRefDir = Join-Path $gitFixtureRoot 'bad-ref'
+New-Item -ItemType Directory -Path $badRefDir -Force | Out-Null
+Set-Content -LiteralPath (Join-Path $badRefDir 'lume.json') -Value ('{"name":"bad-ref","version":"0.1.0","dependencies":[{"name":"x","git":"' + $mathutilsRemoteUrl + '","ref":"does-not-exist"}]}') -NoNewline
+$badRefOutput = & $Lume install $badRefDir 2>&1
+if ($LASTEXITCODE -ne 1) { throw "git dependency with a nonexistent ref should exit 1" }
+Assert-Contains 'git dependency validation: nonexistent ref reports E0748' 'E0748' ($badRefOutput -join "`n")
+
+# Transitive git dependency: a git-resolved package that itself declares a
+# `git` dependency is walked the same recursive way a local `path` entry
+# already is (resolveDependencies's own "source-kind-agnostic from that
+# point on" framing).
+$formattingRemote = Join-Path $gitFixtureRoot 'formatting-remote.git'
+$formattingWork = Join-Path $gitFixtureRoot 'formatting-work'
+git init --bare -q $formattingRemote
+git clone -q $formattingRemote $formattingWork
+Set-Content -LiteralPath (Join-Path $formattingWork 'lume.json') -Value '{"name":"formatting","version":"0.1.0"}' -NoNewline
+Set-Content -LiteralPath (Join-Path $formattingWork 'fmt.lume') -Value "pub fn fmt.shout(value: str) -> str {`n  return value`n}" -NoNewline
+Push-Location $formattingWork
+git add -A
+git -c user.email=test@lume.dev -c user.name=lume-test commit -q -m 'formatting v0.1.0'
+git branch -M main
+git tag v1.0.0
+git push -q origin main --tags
+Pop-Location
+$formattingRemoteUrl = $formattingRemote -replace '\\', '/'
+
+$mathutilsWithDepRemote = Join-Path $gitFixtureRoot 'mathutils-with-dep-remote.git'
+$mathutilsWithDepWork = Join-Path $gitFixtureRoot 'mathutils-with-dep-work'
+git init --bare -q $mathutilsWithDepRemote
+git clone -q $mathutilsWithDepRemote $mathutilsWithDepWork
+$mathutilsWithDepManifest = '{"name":"mathutils","version":"0.1.0","dependencies":[{"name":"formatting","git":"' + $formattingRemoteUrl + '","ref":"v1.0.0"}]}'
+Set-Content -LiteralPath (Join-Path $mathutilsWithDepWork 'lume.json') -Value $mathutilsWithDepManifest -NoNewline
+Set-Content -LiteralPath (Join-Path $mathutilsWithDepWork 'ops.lume') -Value "pub fn ops.square(value: int) -> int {`n  return value * value`n}" -NoNewline
+Push-Location $mathutilsWithDepWork
+git add -A
+git -c user.email=test@lume.dev -c user.name=lume-test commit -q -m 'mathutils (with a git dependency) v0.1.0'
+git branch -M main
+git tag v1.0.0
+git push -q origin main --tags
+Pop-Location
+$mathutilsWithDepRemoteUrl = $mathutilsWithDepRemote -replace '\\', '/'
+
+$transitiveAppDir = Join-Path $gitFixtureRoot 'transitive-app'
+New-Item -ItemType Directory -Path $transitiveAppDir -Force | Out-Null
+$transitiveManifest = '{"name":"transitive-app","version":"0.1.0","dependencies":[{"name":"mathutils","git":"' + $mathutilsWithDepRemoteUrl + '","ref":"v1.0.0"}]}'
+Set-Content -LiteralPath (Join-Path $transitiveAppDir 'lume.json') -Value $transitiveManifest -NoNewline
+Set-Content -LiteralPath (Join-Path $transitiveAppDir 'app.lume') -Value "use mathutils.ops`n`nfn main(args: [str]) -> int {`n  print(ops.square(7))`n  return 0`n}" -NoNewline
+
+$transitiveInstall = & $Lume install $transitiveAppDir
+if ($LASTEXITCODE -ne 0) { throw "transitive git dependency install exited $LASTEXITCODE" }
+$transitiveLock = (Get-Content -LiteralPath (Join-Path $transitiveAppDir 'lume.lock.json') -Raw) | ConvertFrom-Json
+Assert-Equal 'transitive git dependency: both packages resolved' 'mathutils,formatting' (($transitiveLock.resolved | ForEach-Object { $_.name }) -join ',')
+Assert-Equal "transitive git dependency: direct dependency list is just the root's own" 'mathutils' ($transitiveLock.direct -join ',')
+$transitiveRun = & $Lume run (Join-Path $transitiveAppDir 'app.lume')
+if ($LASTEXITCODE -ne 0) { throw "transitive git dependency app run exited $LASTEXITCODE" }
+Assert-Equal 'transitive git dependency: app runs against the cloned package tree' '49' ($transitiveRun -join "`n")
+
+# Cache key canonicalization: a trailing slash on an otherwise-identical
+# git URL used to hash to a different cache directory (Crypto.sha256 of
+# the raw manifest string) - canonicalizeGitUrl strips it before hashing,
+# so both apps resolve to the exact same cache path.
+$appSlashDir = New-GitDepApp 'git-app-url-trailing-slash' 'v1.0.0'
+$slashManifest = (Get-Content -LiteralPath (Join-Path $appSlashDir 'lume.json') -Raw) -replace [regex]::Escape($mathutilsRemoteUrl), "$mathutilsRemoteUrl/"
+Set-Content -LiteralPath (Join-Path $appSlashDir 'lume.json') -Value $slashManifest -NoNewline
+$slashInstall = & $Lume install $appSlashDir
+if ($LASTEXITCODE -ne 0) { throw "git dependency install (trailing slash) exited $LASTEXITCODE" }
+$slashLock = (Get-Content -LiteralPath (Join-Path $appSlashDir 'lume.lock.json') -Raw) | ConvertFrom-Json
+$plainAppDir = Join-Path $gitFixtureRoot 'git-app-tag'
+$plainLock = (Get-Content -LiteralPath (Join-Path $plainAppDir 'lume.lock.json') -Raw) | ConvertFrom-Json
+Assert-Equal 'git URL canonicalization: trailing slash reuses the same cache path' $plainLock.resolved[0].path $slashLock.resolved[0].path
+
+# Cycle pre-check: a git-resolved package whose own manifest re-declares
+# the identical git/ref pair (a literal, no-network-needed cycle) is
+# caught by the cheap activeGitRefs check before a second clone is even
+# attempted - not just by the existing resolved-path-based E0709 check,
+# which can't run until after a (redundant) clone would have completed.
+$cyclicRemote = Join-Path $gitFixtureRoot 'cyclic-remote.git'
+$cyclicWork = Join-Path $gitFixtureRoot 'cyclic-work'
+git init --bare -q $cyclicRemote
+git clone -q $cyclicRemote $cyclicWork
+$cyclicRemoteUrl = $cyclicRemote -replace '\\', '/'
+Set-Content -LiteralPath (Join-Path $cyclicWork 'lume.json') -Value ('{"name":"cyclic","version":"0.1.0","dependencies":[{"name":"cyclic","git":"' + $cyclicRemoteUrl + '","ref":"v1.0.0"}]}') -NoNewline
+Set-Content -LiteralPath (Join-Path $cyclicWork 'x.lume') -Value "pub fn x.noop() -> int {`n  return 0`n}" -NoNewline
+Push-Location $cyclicWork
+git add -A
+git -c user.email=test@lume.dev -c user.name=lume-test commit -q -m 'cyclic (self-referential) v0.1.0'
+git branch -M main
+git tag v1.0.0
+git push -q origin main --tags
+Pop-Location
+$cyclicAppDir = Join-Path $gitFixtureRoot 'cyclic-app'
+New-Item -ItemType Directory -Path $cyclicAppDir -Force | Out-Null
+Set-Content -LiteralPath (Join-Path $cyclicAppDir 'lume.json') -Value ('{"name":"app","version":"0.1.0","dependencies":[{"name":"cyclic","git":"' + $cyclicRemoteUrl + '","ref":"v1.0.0"}]}') -NoNewline
+$cyclicOutput = & $Lume install $cyclicAppDir 2>&1
+if ($LASTEXITCODE -ne 1) { throw "self-referential git dependency install should exit 1" }
+Assert-Equal 'git dependency cycle pre-check: self-referential git+ref reports E0709' 'E0709 dependency cycle at `cyclic`' ($cyclicOutput -join "`n")
+
+Remove-Item -LiteralPath $gitFixtureRoot -Recurse -Force
+
 # examples/taskgraph - the "validate representative shell/Python
 # replacement programs" 0.2 milestone criterion (ROADMAP.md). A real,
 # substantial multi-module program (dependency-graph resolution, cycle

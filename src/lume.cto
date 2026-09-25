@@ -203,6 +203,13 @@ type ResolvedDep = {
   path: Text
   version: Text
   dependencyNames: List<Text>
+  // Both "" for an ordinary local-path dependency - only non-empty for one
+  // resolved from a git source, so computeLockContent can record what the
+  // manifest actually declared alongside the resolved `path` (which for a
+  // git dependency points into the shared clone cache, not the project
+  // tree - see resolveGitDependency).
+  git: Text
+  ref: Text
 }
 
 type ResolveOutcome = {
@@ -3916,11 +3923,36 @@ fn httpField(value: Text, field: Text): Text = {
   else { textValue(JsonValue.asText(JsonValue.get(root, field))) }
 }
 
+fn tempBaseDir(): Text = {
+  if let Some(temp) = getEnv("TEMP") { temp }
+  else if let Some(tmp) = getEnv("TMP") { tmp }
+  else { "." }
+}
+
+// A directory guaranteed not to already exist when this returns - probes
+// with isDirectory and bumps a counter instead of trusting a single
+// computed name to be unique. Confirmed live: Math.random() is seeded once
+// per process via srand(time(NULL)) (Certo's own crates/stdlib/src/math.rs),
+// one-second resolution, so two processes started in the same wall-clock
+// second compute the identical "random" value - a single-shot
+// timestamp+random name isn't actually unique across processes. Shared by
+// tempDirPath (and therefore the Lume-language `fixture.temp_dir()`
+// builtin real test programs call directly) and uniqueCloneTmpDir, so
+// every caller gets the same collision-proofing rather than just the one
+// that happened to need it first.
+fn uniqueTempSubdir(prefix: Text): Text = {
+  val stem = Path.join(tempBaseDir(), prefix ++ "_" ++ intToText(DateTime.toUnix(DateTime.now())) ++ "_")
+  var attempt = 0
+  var candidate = stem ++ intToText(attempt)
+  while isDirectory(candidate) {
+    attempt = attempt + 1
+    candidate = stem ++ intToText(attempt)
+  }
+  candidate
+}
+
 fn tempDirPath(): Text = {
-  val base = if let Some(temp) = getEnv("TEMP") { temp }
-             else if let Some(tmp) = getEnv("TMP") { tmp }
-             else { "." }
-  val dir = Path.join(base, "lume_fixture_" ++ intToText(DateTime.toUnix(DateTime.now())) ++ "_" ++ intToText(floatToInt(Math.random() * 1000000.0)))
+  val dir = uniqueTempSubdir("lume_fixture")
   makeDir(dir)
   dir
 }
@@ -5743,7 +5775,7 @@ fn loadPackageContext(dir: Text): PackageContext [io] = {
         val name = JsonValue.asText(JsonValue.get(entry, "name"))
         val relativePath = JsonValue.asText(JsonValue.get(entry, "path"))
         val ownNames = readDependencyNames(JsonValue.get(entry, "dependencies"))
-        allDeps = List.push(allDeps, PackageDep { name: name, path: Path.join(dir, relativePath), dependencyNames: ownNames })
+        allDeps = List.push(allDeps, PackageDep { name: name, path: packageDirPath(dir, relativePath), dependencyNames: ownNames })
         index = index + 1
       }
       val directNames = readDependencyNames(directArray)
@@ -5866,7 +5898,40 @@ fn normalizePath(path: Text): Text = {
       stack = List.push(stack, segment)
     }
   }
-  Text.join(stack, "/")
+  val joined = Text.join(stack, "/")
+  // Splitting a POSIX absolute path ("/a/b") on "/" produces a leading
+  // empty segment, which the loop above discards the same as "." - correct
+  // for an ordinary relative path, but it silently turns an absolute path
+  // into a relative-looking one. Confirmed live: this broke a local `path`
+  // dependency declared inside a git-resolved package (resolveDependencies)
+  // on Linux/macOS, where the git cache root is a POSIX absolute path -
+  // packageDirPath's isAbsolutePath check no longer recognized it as
+  // absolute once normalizePath had eaten its leading "/", so it got
+  // silently re-joined onto the project root instead of used as-is.
+  // Re-prepending here restores the one bit normalizePath must never drop.
+  if Text.startsWith(path, "/") then "/" ++ joined else joined
+}
+
+// A local-path dependency's recorded path is always relative to the
+// project root - every existing call site turns it back into a real
+// location via Path.join(root, storedPath). A git-resolved dependency's
+// path is different in kind: it points into the shared clone cache
+// (resolveGitDependency), entirely outside the project tree, so it's
+// stored absolute. Path.join is pure string concatenation (confirmed
+// against Certo's own certo_path_join - it never special-cases an
+// absolute second argument the way POSIX path.join does), so blindly
+// joining an absolute stored path onto root would silently produce a
+// nonsense combined string instead of erroring loudly. Every site that
+// used to write `Path.join(root, storedPath)` goes through this instead,
+// so a git-resolved entry's absolute path is used as-is.
+fn isAbsolutePath(path: Text): Bool = {
+  Text.startsWith(path, "/") or Text.startsWith(path, "\\") or
+    (Text.len(path) > 1 and Text.eq(charAt(path, 1), ":") and
+      Text.contains("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz", charAt(path, 0)))
+}
+
+fn packageDirPath(root: Text, storedPath: Text): Text = {
+  if isAbsolutePath(storedPath) then storedPath else Path.join(root, storedPath)
 }
 
 fn findResolvedPath(resolved: List<ResolvedDep>, name: Text): Text? = {
@@ -5884,8 +5949,219 @@ fn findResolvedPath(resolved: List<ResolvedDep>, name: Text): Text? = {
   if found then Some(path) else None
 }
 
-fn resolveDependencies(rootDir: Text, rootRelative: Text, active: List<Text>, resolved: List<ResolvedDep>): ResolveOutcome [io] = {
-  val manifestPath = Path.join(Path.join(rootDir, rootRelative), "lume.json")
+// Shells out to a real `git` binary, no timeout - a clone/checkout can
+// legitimately take longer than this project's other subprocess uses ever
+// need to wait for. Returns trimmed stdout on success, trimmed stderr on
+// failure, for resolveGitDependency to fold into an E0748 message.
+fn runGit(args: List<Text>): Result<Text, Text> [io] = {
+  val result = Process.run("git", args, "", 0)
+  if ProcessResult.exitCode(result) == 0 then { Ok(Text.trim(ProcessResult.stdout(result))) }
+  else { Err(Text.trim(ProcessResult.stderr(result))) }
+}
+
+// Where cloned git dependencies are cached, shared across every project on
+// this machine (not per-project) - this is what gives the resolved-commit
+// cache below a real reason to exist: two projects pinned to the same
+// package/commit reuse one clone instead of duplicating it. LUME_HOME lets
+// this be overridden; otherwise falls back to the platform home directory,
+// same lookup order a real shell would use. getEnv-sourced paths on
+// Windows come back backslash-separated - normalized to forward slashes
+// here, once, so every path built under this root stays uniformly
+// forward-slash (normalizePath, used when a local dependency is nested
+// inside a git-resolved one, only ever splits on "/"). A relative fallback
+// (".") used to be silently accepted here when none of LUME_HOME/
+// USERPROFILE/HOME were set (a minimal container, a stripped CI
+// environment) - packageDirPath's whole point is telling an absolute
+// cache path apart from a project-relative one, so a cache root that
+// isn't genuinely absolute defeats it in a way that's worse than erroring
+// loudly: it silently re-roots the "shared" cache under whatever project
+// happens to run first. Reported as a Result instead.
+fn gitCacheRoot(): Result<Text, Text> = {
+  val base = if let Some(lumeHome) = getEnv("LUME_HOME") { lumeHome }
+             else if let Some(userProfile) = getEnv("USERPROFILE") { userProfile }
+             else if let Some(home) = getEnv("HOME") { home }
+             else { "" }
+  if Text.eq(base, "") then {
+    Err("E0748 git dependency cache: none of LUME_HOME, USERPROFILE, or HOME is set, and the shared clone cache requires an absolute, machine-stable location - set LUME_HOME explicitly")
+  } else {
+    Ok(Path.join(Text.replace(base, "\\", "/"), ".lume/cache/git"))
+  }
+}
+
+// Best-effort: strips the two most common cosmetic differences between two
+// URL spellings of the literal same repository (a trailing slash, a
+// trailing ".git" suffix) before the URL is hashed into a cache key, so a
+// diamond dependency reached via two such spellings still shares one
+// cache entry instead of spuriously tripping E0708. Does not unify a
+// genuinely different URL form (ssh vs https, or a different host alias)
+// - that needs real URL parsing, out of scope for this pass.
+fn canonicalizeGitUrl(url: Text): Text = {
+  var result = url
+  while Text.endsWith(result, "/") { result = Text.slice(result, 0, Text.len(result) - 1) }
+  if Text.endsWith(result, ".git") then { result = Text.slice(result, 0, Text.len(result) - 4) }
+  result
+}
+
+fn looksLikeCommitSha(ref: Text): Bool = {
+  if Text.len(ref) != 40 then { false }
+  else {
+    var allHex = true
+    var index = 0
+    while index < 40 and allHex {
+      if not Text.contains("0123456789abcdefABCDEF", charAt(ref, index)) then { allHex = false }
+      index = index + 1
+    }
+    allHex
+  }
+}
+
+// Best-effort fast path: resolves `ref` to a commit SHA via one
+// lightweight network round-trip (no object transfer), so a cache hit can
+// skip a full clone entirely. Deliberately conservative - only trusts the
+// result when `git ls-remote` returns exactly one non-empty line (an
+// unambiguous branch or lightweight-tag match). An annotated tag returns
+// two lines (the tag object and the peeled commit `^{}`) and is left to
+// fall through to the full clone below rather than risk picking the
+// wrong one.
+fn lsRemoteSha(gitUrl: Text, ref: Text): Text? = {
+  val result = runGit(["ls-remote", "--quiet", gitUrl, ref])
+  var sha: Text? = None
+  if let Ok(output) = result {
+    var nonEmpty: List<Text> = []
+    for line in Text.split(output, "\n") {
+      if not Text.eq(Text.trim(line), "") then { nonEmpty = List.push(nonEmpty, line) }
+    }
+    if List.len(nonEmpty) == 1 then {
+      val line = List.getOrPanic(nonEmpty, 0)
+      val tab = Text.indexOf(line, "\t") ?? -1
+      if tab > 0 then { sha = Some(Text.slice(line, 0, tab)) }
+    }
+  }
+  sha
+}
+
+// Recursively copies `from` into `to`, skipping any entry literally named
+// `excludeName` at any depth - the fallback for when renameFile can't
+// place a resolved clone in the cache (see resolveGitDependency: Windows'
+// MoveFileExA, called without MOVEFILE_COPY_ALLOWED, fails across
+// volumes, which a redirected/network-mounted home directory on a
+// different drive than the system temp directory triggers on every
+// single git dependency). `.git` itself is always excluded - nothing
+// past this point ever reads a cached dependency's own history back, only
+// its checked-out files. Byte-based (readFileBytes/writeFileBytes), not
+// text-based: a package's files aren't guaranteed UTF-8-safe-
+// roundtrippable, and silently mangling one on copy would be worse than
+// the rename failure this exists to work around.
+fn copyTreeExcluding(from: Text, to: Text, excludeName: Text): Bool = {
+  var ok = makeDir(to)
+  if ok then {
+    if let Some(entries) = listDir(from) {
+      for entry in entries {
+        if ok and not Text.eq(entry, excludeName) then {
+          val src = Path.join(from, entry)
+          val dst = Path.join(to, entry)
+          if isDirectory(src) then {
+            if not copyTreeExcluding(src, dst, excludeName) then { ok = false }
+          } else if let Some(content) = readFileBytes(src) {
+            if not writeFileBytes(dst, content) then { ok = false }
+          } else { ok = false }
+        }
+      }
+    } else { ok = false }
+  }
+  ok
+}
+
+// A directory `git clone` is guaranteed not to see as already-existing -
+// deliberately not tempDirPath()/fixture.temp_dir() directly, though both
+// now share the same uniqueTempSubdir probing (see tempDirPath's own
+// comment) rather than trusting a single computed name to be unique.
+// Once a candidate path has actually held a real git clone, removeDir
+// can't necessarily clean it back up afterward either - git deliberately
+// writes its loose object files read-only, which Windows' DeleteFileA
+// refuses without an explicit attribute change certo_remove_dir_all_impl
+// doesn't make, so a colliding path could be left non-empty even after
+// "cleanup." Probing with isDirectory and bumping a counter sidesteps
+// both problems the same way: a collision just means try the next
+// candidate, never reuse or force-clean the one that's already there.
+fn uniqueCloneTmpDir(): Text = uniqueTempSubdir("lume_git_clone")
+
+// Resolves a `{git, ref}` manifest entry to a local absolute clone
+// directory - the one thing resolveDependencies needs to fold a git
+// source into the same recursive walk a local `path` entry already goes
+// through (see packageDirPath).
+//
+// Deliberately keyed by (git URL, resolved commit) rather than (URL, ref):
+// `ref` can be a floating branch name, but the cache - and the lock file
+// entry this feeds - both need a stable, immutable identity. Matches
+// ROADMAP.md's own "Distribution and interoperability" design sketch this
+// implements.
+fn resolveGitDependency(gitUrl: Text, ref: Text): Result<Text, Text> [io] = {
+  val cacheRootResult = gitCacheRoot()
+  var problem = ""
+  var resultPath = ""
+  if let Err(message) = cacheRootResult { problem = message }
+  else if let Ok(cacheRoot) = cacheRootResult {
+    val urlCacheDir = Path.join(cacheRoot, Crypto.sha256(canonicalizeGitUrl(gitUrl)))
+    // Fast paths, tried before ever paying for a full clone: a literal
+    // commit SHA needs no network at all (just a cache-directory check);
+    // otherwise a single ls-remote round-trip can confirm the cache
+    // already has the answer. Only ever used to shortcut to an already-
+    // cached directory - if either comes back empty, or the cache
+    // doesn't have that commit yet, this falls through to the full
+    // clone/checkout/rev-parse below, which is always correct regardless
+    // of what `ref` turns out to mean.
+    val fastShaOpt = if looksLikeCommitSha(ref) then Some(ref) else lsRemoteSha(gitUrl, ref)
+    var fastHit = ""
+    if let Some(fastSha) = fastShaOpt {
+      val candidate = Path.join(urlCacheDir, fastSha)
+      if isDirectory(candidate) then { fastHit = candidate }
+    }
+    if not Text.eq(fastHit, "") then {
+      resultPath = fastHit
+    } else {
+      val tmpDir = uniqueCloneTmpDir()
+      val cloneResult = runGit(["clone", "--quiet", gitUrl, tmpDir])
+      if let Err(message) = cloneResult {
+        removeDir(tmpDir)
+        problem = "E0748 git dependency `" ++ gitUrl ++ "` failed: " ++ message
+      } else {
+        val checkoutResult = runGit(["-C", tmpDir, "checkout", "--quiet", ref])
+        if let Err(message) = checkoutResult {
+          removeDir(tmpDir)
+          problem = "E0748 git dependency `" ++ gitUrl ++ "` failed: " ++ message
+        } else {
+          val shaResult = runGit(["-C", tmpDir, "rev-parse", "HEAD"])
+          if let Err(message) = shaResult {
+            removeDir(tmpDir)
+            problem = "E0748 git dependency `" ++ gitUrl ++ "` failed: " ++ message
+          } else if let Ok(sha) = shaResult {
+            val finalDir = Path.join(urlCacheDir, sha)
+            if isDirectory(finalDir) then {
+              // Another install already resolved this exact (url, commit)
+              // pair - reuse it rather than clobbering it with this
+              // redundant clone, matching the point of a shared cache.
+              removeDir(tmpDir)
+              resultPath = finalDir
+            } else if makeDir(urlCacheDir) and renameFile(tmpDir, finalDir) then {
+              resultPath = finalDir
+            } else if makeDir(urlCacheDir) and copyTreeExcluding(tmpDir, finalDir, ".git") then {
+              removeDir(tmpDir)
+              resultPath = finalDir
+            } else {
+              removeDir(tmpDir)
+              problem = "E0748 git dependency `" ++ gitUrl ++ "` failed: could not place resolved clone in cache at `" ++ finalDir ++ "`"
+            }
+          }
+        }
+      }
+    }
+  }
+  if Text.eq(problem, "") then Ok(resultPath) else Err(problem)
+}
+
+fn resolveDependencies(rootDir: Text, rootRelative: Text, active: List<Text>, activeGitRefs: List<Text>, resolved: List<ResolvedDep>): ResolveOutcome [io] = {
+  val manifestPath = Path.join(packageDirPath(rootDir, rootRelative), "lume.json")
   if let Some(source) = readFile(manifestPath) {
     val depsArray = JsonValue.get(Json.parse(source), "dependencies")
     var currentResolved = resolved
@@ -5896,32 +6172,71 @@ fn resolveDependencies(rootDir: Text, rootRelative: Text, active: List<Text>, re
         val entry = Json.parse(JsonValue.atText(depsArray, index))
         val depName = JsonValue.asText(JsonValue.get(entry, "name"))
         val declaredPath = JsonValue.asText(JsonValue.get(entry, "path"))
-        val depRootRelative = normalizePath(if Text.eq(rootRelative, "") then declaredPath else Path.join(rootRelative, declaredPath))
-        if containsName(active, depRootRelative) then {
-          // Checked before `resolved`, not after: an entry is added to
-          // `resolved` (below) before recursing into ITS OWN dependencies,
-          // so by the time a real cycle closes back onto an ancestor,
-          // that ancestor already has a "resolved" entry despite its own
-          // recursive call not having returned yet. Only `active` (the
-          // in-progress stack) reliably distinguishes "still being
-          // resolved higher up" from "genuinely finished" - checking it
-          // first is what makes a true cycle actually surface as E0709
-          // instead of silently matching the premature `resolved` entry.
+        val declaredGit = JsonValue.asText(JsonValue.get(entry, "git"))
+        val declaredRef = JsonValue.asText(JsonValue.get(entry, "ref"))
+        val hasPath = not Text.eq(declaredPath, "")
+        val hasGit = not Text.eq(declaredGit, "")
+        // Exactly one of `path`/`git` - both or neither is the same class
+        // of manifest error as the existing missing-name/version check
+        // (E0737): malformed input, not an empty/absent dependency. `git`
+        // without `ref` is folded into the same code rather than a
+        // dedicated one - both are "this entry doesn't declare a usable
+        // source," and a caller never needs to tell them apart
+        // programmatically, only read the message.
+        val gitRefKey = declaredGit ++ "@" ++ declaredRef
+        if (hasPath and hasGit) or (not hasPath and not hasGit) or (hasGit and Text.eq(declaredRef, "")) then {
+          problem = "E0747 dependency `" ++ depName ++ "` in `" ++ manifestPath ++ "` must declare exactly one of `path`/`git`, and `git` requires `ref`"
+        } else if hasGit and containsName(activeGitRefs, gitRefKey) then {
+          // Cheap, I/O-free pre-check for the common literal-cycle case (the
+          // same git+ref pair already being resolved higher up the active
+          // chain) - catches it before paying for a real clone, which the
+          // resolved-path-based E0709 check below can't do until AFTER
+          // resolveGitDependency returns (it needs the resolved path to
+          // compare against). Not a replacement for that check: a cycle
+          // reached via two differently-spelled (git, ref) pairs that
+          // happen to resolve to the same physical commit still needs the
+          // path-based check after resolution - this only short-circuits
+          // the literal, no-clone-needed case.
           problem = "E0709 dependency cycle at `" ++ depName ++ "`"
-        } else if let Some(existingPath) = findResolvedPath(currentResolved, depName) {
-          if not Text.eq(existingPath, depRootRelative) then {
-            problem = "E0708 dependency `" ++ depName ++ "` resolves to two different paths: `" ++ existingPath ++ "` and `" ++ depRootRelative ++ "`"
-          }
         } else {
-          val depManifestPath = Path.join(Path.join(rootDir, depRootRelative), "lume.json")
-          if let Ok(depVersion) = readManifestVersion(depManifestPath) {
-            val depDependencyNames = readManifestDependencyNames(depManifestPath)
-            currentResolved = List.push(currentResolved, ResolvedDep { name: depName, path: depRootRelative, version: depVersion, dependencyNames: depDependencyNames })
-            val nested = resolveDependencies(rootDir, depRootRelative, List.push(active, depRootRelative), currentResolved)
-            if not Text.eq(nested.problem, "") then { problem = nested.problem }
-            else { currentResolved = nested.resolved }
-          } else if let Err(message) = readManifestVersion(depManifestPath) {
+          val gitResolution = if hasGit then resolveGitDependency(declaredGit, declaredRef) else Ok("")
+          if let Err(message) = gitResolution {
             problem = message
+          } else if let Ok(gitPath) = gitResolution {
+            // A git source's resolved path is already absolute (it lives in
+            // the shared clone cache, outside the project tree) - unlike a
+            // local `path` entry, it's used as-is, never joined against
+            // `rootRelative` or run through normalizePath's `..`-collapsing
+            // (see packageDirPath).
+            val depRootRelative = if hasGit then gitPath else normalizePath(if Text.eq(rootRelative, "") then declaredPath else Path.join(rootRelative, declaredPath))
+            if containsName(active, depRootRelative) then {
+              // Checked before `resolved`, not after: an entry is added to
+              // `resolved` (below) before recursing into ITS OWN dependencies,
+              // so by the time a real cycle closes back onto an ancestor,
+              // that ancestor already has a "resolved" entry despite its own
+              // recursive call not having returned yet. Only `active` (the
+              // in-progress stack) reliably distinguishes "still being
+              // resolved higher up" from "genuinely finished" - checking it
+              // first is what makes a true cycle actually surface as E0709
+              // instead of silently matching the premature `resolved` entry.
+              problem = "E0709 dependency cycle at `" ++ depName ++ "`"
+            } else if let Some(existingPath) = findResolvedPath(currentResolved, depName) {
+              if not Text.eq(existingPath, depRootRelative) then {
+                problem = "E0708 dependency `" ++ depName ++ "` resolves to two different paths: `" ++ existingPath ++ "` and `" ++ depRootRelative ++ "`"
+              }
+            } else {
+              val depManifestPath = Path.join(packageDirPath(rootDir, depRootRelative), "lume.json")
+              if let Ok(depVersion) = readManifestVersion(depManifestPath) {
+                val depDependencyNames = readManifestDependencyNames(depManifestPath)
+                currentResolved = List.push(currentResolved, ResolvedDep { name: depName, path: depRootRelative, version: depVersion, dependencyNames: depDependencyNames, git: if hasGit then declaredGit else "", ref: if hasGit then declaredRef else "" })
+                val nextActiveGitRefs = if hasGit then List.push(activeGitRefs, gitRefKey) else activeGitRefs
+                val nested = resolveDependencies(rootDir, depRootRelative, List.push(active, depRootRelative), nextActiveGitRefs, currentResolved)
+                if not Text.eq(nested.problem, "") then { problem = nested.problem }
+                else { currentResolved = nested.resolved }
+              } else if let Err(message) = readManifestVersion(depManifestPath) {
+                problem = message
+              }
+            }
           }
         }
         index = index + 1
@@ -6015,7 +6330,7 @@ fn hashPackageSource(packageDir: Text): Text [io] = {
 fn computeLockContent(dir: Text, manifestPath: Text): Result<Text, Text> = {
   if let Err(message) = readManifestVersion(manifestPath) { Err(message) }
   else {
-    val outcome = resolveDependencies(dir, "", [], [])
+    val outcome = resolveDependencies(dir, "", [], [], [])
     if not Text.eq(outcome.problem, "") then { Err(outcome.problem) }
     else {
       val lockDeps = Json.array()
@@ -6024,7 +6339,20 @@ fn computeLockContent(dir: Text, manifestPath: Text): Result<Text, Text> = {
         JsonValue.set(lockEntry, "name", Json.string(dep.name))
         JsonValue.set(lockEntry, "path", Json.string(dep.path))
         JsonValue.set(lockEntry, "version", Json.string(dep.version))
-        JsonValue.set(lockEntry, "sourceHash", Json.string(hashPackageSource(Path.join(dir, dep.path))))
+        JsonValue.set(lockEntry, "sourceHash", Json.string(hashPackageSource(packageDirPath(dir, dep.path))))
+        // Only present for a git-sourced entry, not written at all (rather
+        // than written as "") for a local-path one - confirmed live that
+        // writing it unconditionally breaks `install --check` for every
+        // project that predates this feature: their existing lock file has
+        // no "git"/"ref" keys at all, `--check` compares the recomputed
+        // content against it with exact string equality, and a plain-path
+        // project (the overwhelming majority - nothing about git deps)
+        // would otherwise report a spurious E0739 the moment the binary is
+        // upgraded, even though nothing about its own dependencies changed.
+        if not Text.eq(dep.git, "") then {
+          JsonValue.set(lockEntry, "git", Json.string(dep.git))
+          JsonValue.set(lockEntry, "ref", Json.string(dep.ref))
+        }
         val ownNames = Json.array()
         for depName in dep.dependencyNames { JsonValue.push(ownNames, Json.string(depName)) }
         JsonValue.set(lockEntry, "dependencies", ownNames)
