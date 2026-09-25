@@ -84,6 +84,15 @@ $invalidPlusPlus = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_plus
 if ($LASTEXITCODE -ne 1) { throw "'++' concatenation validation should exit 1" }
 Assert-Equal '`++` is not a Lume operator reports a precise hint, not a generic parse error' 'E0749 line 2: `++` is not a Lume operator; use `+` for concatenation' ($invalidPlusPlus -join "`n")
 
+# `??` isn't a Lume token either (Certo's own Option/Result-default
+# operator) - Lume's postfix `?`/`!` is single-use, so the orphaned
+# second `?` used to fall through to a position-dependent, unrelated
+# E0206/E0207 (BACKLOG.md item 6, filed after this assistant made the
+# same class of mistake while hunting for a new backlog item).
+$invalidDoubleQuestionMark = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_double_question_mark.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "'??' validation should exit 1" }
+Assert-Equal '`??` is not a Lume operator reports a precise hint, not a generic parse error' 'E0750 line 2: `??` is not a Lume operator; use `match` to provide a default for `Option`/`Result`' ($invalidDoubleQuestionMark -join "`n")
+
 $functions = & $Lume run (Join-Path $PSScriptRoot 'examples\functions.lume')
 if ($LASTEXITCODE -ne 0) { throw "functions exited $LASTEXITCODE" }
 Assert-Equal 'functions and recursion' "42`n120" ($functions -join "`n")

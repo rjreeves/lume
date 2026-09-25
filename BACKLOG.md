@@ -10,7 +10,29 @@ and the exact compiler output, at commit `e7788cd` (`ai/lume-api.json`
 
 ## Pending
 
+None currently.
+
+## Resolved
+
 ### 6. `??` (Certo's own Option/Result-default operator, not Lume's) reports a generic, position-dependent parse error with no hint of the actual mistake
+
+**Resolved:** `parsePrimary` (`src/lume.cto`) - the one place that
+already consumes a postfix `?`/`!` and knows what token immediately
+follows it - now checks for that following token also being `?` right
+where the first one is consumed, and reports a dedicated `E0750`
+("`` `??` is not a Lume operator; use `match` to provide a default for
+`Option`/`Result` ``", with a line number) instead of leaving the
+second `?` orphaned to fail generically and inconsistently three call
+frames up (`E0206` or `E0207` depending on position - see below).
+Deliberately the diagnostic-only fix, matching item 4's own precedent,
+not the larger "add real unwrap-or-default sugar" question this item's
+own Suggested-fix section raised - left open as a separate, later
+design decision. Verified against this item's own two reproductions
+below (both now report the identical `E0750 line 2`, no longer two
+different codes depending on where `??` sits), plus that a genuine
+single-`?` propagate (inside a `! `-returning function) is unaffected,
+checked in as `examples/invalid_double_question_mark.lume` and
+test.ps1's "`` `??` is not a Lume operator ``" case.
 
 Found live while probing `path.extension`/`path.stem` edge cases for a
 different check (looking for a new backlog item after item 4 shipped)
@@ -77,19 +99,16 @@ every `result.*` builtin) - so this is a likely mistake for anyone
 coming from Certo (or Rust, Kotlin, C#, Swift, JS - `??` means the same
 thing in all of them) to make repeatedly, not a one-off.
 
-**Suggested fix:** at minimum, the same class of fix as item 4 - a
+**Suggested fix:** ~~at minimum, the same class of fix as item 4 - a
 cheap, specific check in `parsePrimary`'s postfix handling (or right
 after it) for a second `?`/`!` immediately following the first, and a
 dedicated diagnostic ("`??` is not a Lume operator; use an explicit
 \`match\` to provide a default", or similar) instead of falling through
-to either generic code. Worth also considering the larger question this
-item's own "Impact" section raises, separate from the diagnostic: since
-there is genuinely no sugar for "unwrap with a default" today, is that
-its own gap worth closing (a builtin like `option.unwrap_or(value,
-fallback)`, or a real `??` operator) rather than only making the
-mistake's error message better?
-
-## Resolved
+to either generic code.~~ Took exactly this fix. The larger question
+this section also raised - whether the deeper gap (no `unwrap_or`-
+shaped sugar at all) is worth closing on its own - is deliberately left
+open, not folded into this fix; a real design decision, not a
+diagnostics-quality bug, and outside this item's own scope.
 
 ### 4. `++` (Certo's own concatenation operator, not Lume's) reports a generic `E0101 expected expression` with no hint of the actual mistake
 

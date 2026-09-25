@@ -1,0 +1,5 @@
+fn main(args: [str]) -> int {
+  let x = path.extension("noext") ?? "default"
+  print(x)
+  return 0
+}
