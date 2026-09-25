@@ -110,6 +110,21 @@ $literalBraces = & $Lume run (Join-Path $PSScriptRoot 'examples\literal_braces_i
 if ($LASTEXITCODE -ne 0) { throw "literal braces in string exited $LASTEXITCODE" }
 Assert-Equal 'a string with literal, non-interpolation-shaped braces is not flagged' "{1, 2, 3}`nconfig: { key: value }`nempty: {}" ($literalBraces -join "`n")
 
+# `T?` (Option<T> postfix sugar) isn't implemented either. In a
+# parameter position this used to actively corrupt parsing of
+# everything after it (a one-parameter function calable normally used
+# to fail with a nonsensical "expects 7 arguments"); in a return-type
+# position it silently dropped the `?` instead (BACKLOG.md item 8,
+# filed after this assistant made essentially the same class of mistake
+# while hunting for a new backlog item).
+$invalidOptionalSugarParam = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_optional_sugar_param.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "'T?' in parameter position validation should exit 1" }
+Assert-Equal '`T?` in a parameter position reports a precise hint, not corrupted parsing' 'E0752 line 1: `T?` postfix sugar for `Option<T>` is not yet implemented - write `Option<T>` explicitly' ($invalidOptionalSugarParam -join "`n")
+
+$invalidOptionalSugarReturn = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_optional_sugar_return.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "'T?' in return-type position validation should exit 1" }
+Assert-Equal '`T?` in a return-type position reports a precise hint, not a silent no-op' 'E0752 line 1: `T?` postfix sugar for `Option<T>` is not yet implemented - write `Option<T>` explicitly' ($invalidOptionalSugarReturn -join "`n")
+
 $functions = & $Lume run (Join-Path $PSScriptRoot 'examples\functions.lume')
 if ($LASTEXITCODE -ne 0) { throw "functions exited $LASTEXITCODE" }
 Assert-Equal 'functions and recursion' "42`n120" ($functions -join "`n")

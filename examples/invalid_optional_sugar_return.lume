@@ -1,0 +1,8 @@
+fn giveOption() -> int? {
+  return Option.Some(value: 5)
+}
+
+fn main(args: [str]) -> int {
+  print(giveOption())
+  return 0
+}

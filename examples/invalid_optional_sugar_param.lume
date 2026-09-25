@@ -1,0 +1,8 @@
+fn identity(x: int?) -> int {
+  return 0
+}
+
+fn main(args: [str]) -> int {
+  print(identity(5))
+  return 0
+}
