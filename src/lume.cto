@@ -1554,18 +1554,32 @@ fn parameterNames(tokens: List<Token>, header: Int): List<Text> = {
 // incomplete signature (the single most common state while a user is
 // actively typing).
 fn typeNext(tokens: List<Token>, start: Int): Int = {
-  if Text.eq(at(tokens, start).kind, "eof") then start
-  else if Text.eq(at(tokens, start).text, "[") then { typeNext(tokens, start + 1) + 1 }
-  else if Text.eq(at(tokens, start + 1).text, "<") then {
-    var index = start + 2
-    var depth = 1
-    while depth > 0 and not Text.eq(at(tokens, index).kind, "eof") {
-      if Text.eq(at(tokens, index).text, "<") then { depth = depth + 1 }
-      else if Text.eq(at(tokens, index).text, ">") then { depth = depth - 1 }
-      index = index + 1
-    }
-    index
-  } else { start + 1 }
+  val base =
+    if Text.eq(at(tokens, start).kind, "eof") then start
+    else if Text.eq(at(tokens, start).text, "[") then { typeNext(tokens, start + 1) + 1 }
+    else if Text.eq(at(tokens, start + 1).text, "<") then {
+      var index = start + 2
+      var depth = 1
+      while depth > 0 and not Text.eq(at(tokens, index).kind, "eof") {
+        if Text.eq(at(tokens, index).text, "<") then { depth = depth + 1 }
+        else if Text.eq(at(tokens, index).text, ">") then { depth = depth - 1 }
+        index = index + 1
+      }
+      index
+    } else { start + 1 }
+  // `T?` (Option<T> postfix sugar, not yet implemented - BACKLOG.md item
+  // 8) used to leave this landed exactly on the `?` token instead of past
+  // it, one token short - harmless where a caller only reads the text
+  // typeAt extracted (a plain type name, `?` simply not included), but
+  // catastrophic in parameterTypes's own comma/close-paren loop: an index
+  // sitting ON `?` matches neither check, so the loop misreads `?` as the
+  // start of a whole new parameter and cascades into misparsing an
+  // unbounded amount of subsequent source (confirmed live - the reported
+  // arity for a one-parameter function drifted to "7 arguments", and
+  // changed again when unrelated downstream content changed). Consuming
+  // the trailing `?` here, the one place every caller already funnels
+  // through, fixes every one of them at once.
+  if Text.eq(at(tokens, base).text, "?") then base + 1 else base
 }
 
 fn typeAt(tokens: List<Token>, start: Int): Text = {
@@ -1673,6 +1687,30 @@ fn functionReturnType(tokens: List<Token>, header: Int): Text = {
       "result<" ++ valueType ++ "," ++ typeAt(tokens, afterValue + 1) ++ ">"
     } else { valueType }
   }
+}
+
+// `T?` postfix sugar for `Option<T>` isn't implemented (SPEC.md §1), but
+// typeAt/typeNext now correctly include a trailing `?` verbatim in the
+// extracted type text rather than under-advancing past it (BACKLOG.md
+// item 8's own corruption fix) - so an unrejected `int?` would otherwise
+// become a literal, bogus type name that simply never matches the real
+// type it was meant to allow, surfacing later as a confusing, unrelated
+// -looking type-mismatch error instead of naming the actual mistake.
+// Checked once per function declaration, in one place, rather than at
+// every one of typeAt's many other call sites (closures, record fields,
+// generic methods) - narrower in scope than item 8's own corruption fix,
+// which does cover all of them.
+fn optionalSugarProblem(parameterTypeList: List<Text>, returnType: Text, line: Int): Text = {
+  var problem = ""
+  for parameterType in parameterTypeList {
+    if Text.eq(problem, "") and Text.contains(parameterType, "?") then {
+      problem = "E0752 line " ++ intToText(line) ++ ": `T?` postfix sugar for `Option<T>` is not yet implemented - write `Option<T>` explicitly"
+    }
+  }
+  if Text.eq(problem, "") and Text.contains(returnType, "?") then {
+    problem = "E0752 line " ++ intToText(line) ++ ": `T?` postfix sugar for `Option<T>` is not yet implemented - write `Option<T>` explicitly"
+  }
+  problem
 }
 
 fn beforePipe(value: Text): Text = {
@@ -2060,10 +2098,23 @@ fn compile(tokens: List<Token>): CompileResult = {
     val parameters = if isTest then [] else parameterNames(tokens, header)
     val parameterTypeList = if isTest then [] else parameterTypes(tokens, header)
     val returnType = if isTest then "bool" else functionReturnType(tokens, header)
+    // `T?` (Option<T> postfix sugar) isn't implemented, but typeAt now
+    // (correctly, after fixing typeNext's own under-advancing - BACKLOG.md
+    // item 8) includes the trailing `?` verbatim in the extracted type
+    // text, so an unrejected `x: int?`/`-> int?` would otherwise slip
+    // through as a literal, bogus type name ("int?", never equal to any
+    // real type) instead of a real diagnostic - confirmed live: a
+    // parameter declared this way then called normally used to fail with
+    // a confusing "expected int?, got int" instead of naming the actual
+    // mistake. Checked once per function, right here where both type
+    // lists are already in hand, before any of that downstream confusion
+    // has a chance to happen.
+    val optionalSugarIssue = if isTest then "" else optionalSugarProblem(parameterTypeList, returnType, at(tokens, header).line)
     val genericText = if isTest then "" else genericParameters(tokens, header + 1)
     val genericNames = if Text.eq(genericText, "") then [] else Text.split(genericText, ",")
     val result = compileBlock(tokens, body, parameters, [], allNames, allCounts, genericNames)
-    if not Text.eq(result.problem, "") then { problem = result.problem }
+    val combinedProblem = if not Text.eq(optionalSugarIssue, "") then optionalSugarIssue else result.problem
+    if not Text.eq(combinedProblem, "") then { problem = combinedProblem }
     else {
       val constraintText = if isTest then "" else genericConstraints(tokens, header + 1)
       val testName = if isTest then Text.replace(at(tokens, header + 1).text, "|", pipeEscape()) else ""

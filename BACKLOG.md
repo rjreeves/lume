@@ -10,7 +10,38 @@ and the exact compiler output, at commit `e7788cd` (`ai/lume-api.json`
 
 ## Pending
 
+None currently.
+
+## Resolved
+
 ### 8. `T?` (`Option<T>` postfix sugar) silently corrupts the parse of everything after it instead of being rejected
+
+**Resolved:** two changes, matching this item's own two-part diagnosis.
+First, `typeNext` (`src/lume.cto`) now correctly advances *past* a
+trailing `?` instead of landing on it - the root fix, applied once,
+that stops the corruption everywhere `typeNext`/`typeAt` are used
+(function parameters and return types, closures, record fields, generic
+methods - roughly a dozen call sites), not just this item's own two
+reproductions. On its own this only converts the corruption into item
+7's quieter silent-no-op shape though: `typeAt` now includes the
+trailing `?` verbatim in the extracted type text, so an unrejected
+`int?` became a literal, never-matching type name ("int?"), still
+surfacing as a confusing, unrelated type-mismatch rather than naming
+the real mistake. Second, a new `optionalSugarProblem` check - run once
+per function declaration, right where both the parameter and return
+type lists are already computed - reports a dedicated `E0752` instead.
+Deliberately scoped to function declarations only (where both this
+item's reproductions live), not every other `typeNext`/`typeAt` call
+site (record fields, closures, generic methods still silently accept
+`T?` as a literal, non-matching type name post-corruption-fix, rather
+than rejecting it) - the corruption itself is gone everywhere either
+way, which was the severe part. Verified against both reproductions
+below (both now report `E0752` with a correctly-located line number),
+plus that ordinary `Option<T>` (the working, documented spelling) is
+unaffected, and the full existing suite passes unchanged. Checked in as
+`examples/invalid_optional_sugar_param.lume`,
+`examples/invalid_optional_sugar_return.lume`, and test.ps1's two
+"`T?` ... reports a precise hint" cases.
 
 Found live while hunting for a new backlog item after item 7 shipped -
 checking whether `T?`, the other bootstrap gap grouped alongside `??`
@@ -107,18 +138,17 @@ the one line containing the mistake - the blast radius depends on
 wherever a `)` next happens to occur in the source, which could be
 the very next function, or much further away in a larger file.
 
-**Suggested fix:** give `typeNext` an explicit case for a trailing `?`
+**Suggested fix:** ~~give `typeNext` an explicit case for a trailing `?`
 immediately after a type name (`start + 1` becoming `start + 2` when
 the following token is `?`, mirroring how it already special-cases
 `[` and `<`) - the minimum fix, matching item 7's approach, is to keep
 `T?` rejected with a real diagnostic ("`T?` postfix sugar is not yet
 implemented - write `Option<T>` explicitly", SPEC.md's own suggested
-wording) rather than letting `typeNext` under-advance at all. That
-alone would turn both reproductions above into one precise, correctly
--located error instead of either a silent wrong type or a cascading
-misparse.
-
-## Resolved
+wording) rather than letting `typeNext` under-advance at all.~~ Took
+exactly this fix, plus the explicit rejection at every function
+declaration - see the `**Resolved**` note above for the exact split
+between the two and why the rejection itself is narrower in scope than
+the underlying `typeNext` correctness fix.
 
 ### 7. String interpolation silently does nothing instead of parse-/type-erroring, contradicting SPEC.md's own "Reconciliation note" guarantee
 
