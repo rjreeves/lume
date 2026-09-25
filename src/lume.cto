@@ -5873,7 +5873,18 @@ fn normalizePath(path: Text): Text = {
       stack = List.push(stack, segment)
     }
   }
-  Text.join(stack, "/")
+  val joined = Text.join(stack, "/")
+  // Splitting a POSIX absolute path ("/a/b") on "/" produces a leading
+  // empty segment, which the loop above discards the same as "." - correct
+  // for an ordinary relative path, but it silently turns an absolute path
+  // into a relative-looking one. Confirmed live: this broke a local `path`
+  // dependency declared inside a git-resolved package (resolveDependencies)
+  // on Linux/macOS, where the git cache root is a POSIX absolute path -
+  // packageDirPath's isAbsolutePath check no longer recognized it as
+  // absolute once normalizePath had eaten its leading "/", so it got
+  // silently re-joined onto the project root instead of used as-is.
+  // Re-prepending here restores the one bit normalizePath must never drop.
+  if Text.startsWith(path, "/") then "/" ++ joined else joined
 }
 
 // A local-path dependency's recorded path is always relative to the
@@ -6189,8 +6200,19 @@ fn computeLockContent(dir: Text, manifestPath: Text): Result<Text, Text> = {
         JsonValue.set(lockEntry, "path", Json.string(dep.path))
         JsonValue.set(lockEntry, "version", Json.string(dep.version))
         JsonValue.set(lockEntry, "sourceHash", Json.string(hashPackageSource(packageDirPath(dir, dep.path))))
-        JsonValue.set(lockEntry, "git", Json.string(dep.git))
-        JsonValue.set(lockEntry, "ref", Json.string(dep.ref))
+        // Only present for a git-sourced entry, not written at all (rather
+        // than written as "") for a local-path one - confirmed live that
+        // writing it unconditionally breaks `install --check` for every
+        // project that predates this feature: their existing lock file has
+        // no "git"/"ref" keys at all, `--check` compares the recomputed
+        // content against it with exact string equality, and a plain-path
+        // project (the overwhelming majority - nothing about git deps)
+        // would otherwise report a spurious E0739 the moment the binary is
+        // upgraded, even though nothing about its own dependencies changed.
+        if not Text.eq(dep.git, "") then {
+          JsonValue.set(lockEntry, "git", Json.string(dep.git))
+          JsonValue.set(lockEntry, "ref", Json.string(dep.ref))
+        }
         val ownNames = Json.array()
         for depName in dep.dependencyNames { JsonValue.push(ownNames, Json.string(depName)) }
         JsonValue.set(lockEntry, "dependencies", ownNames)

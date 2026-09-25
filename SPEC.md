@@ -499,9 +499,15 @@ project tree entirely, so every place that turns a lock-recorded `path`
 back into a real location treats an already-absolute path as-is rather
 than joining it onto the project root (`Path.join` is pure string
 concatenation — it does not special-case an absolute second argument).
-The lock entry also records the manifest's own declared `git`/`ref`
-(empty strings for a `path` entry), so `install --check` can tell the
-two kinds of entry apart; because `--check` re-resolves `ref` to a SHA
+The lock entry also records the manifest's own declared `git`/`ref` —
+present only on a `git`-sourced entry, omitted entirely (not written as
+empty strings) for a `path` entry, both so `install --check` can tell
+the two kinds of entry apart and so an existing lock file predating this
+feature keeps its exact pre-existing shape (`install --check` would
+otherwise spuriously report every such project as out of date the
+moment the binary is upgraded, purely from the new keys appearing,
+regardless of whether the project has a git dependency at all). Because
+`--check` re-resolves `ref` to a SHA
 the same way `install` does, a project with a `git` dependency needs
 network access (or a warm cache) for `--check` too, unlike the fully
 offline check a `path`-only project gets. A `git` subprocess step that
