@@ -5663,8 +5663,25 @@ fn saveArtifact(path: Text, source: Text, code: List<Instruction>): Text [io] = 
   else "E0404 cannot write bytecode artifact `" ++ path ++ "`"
 }
 
+// Unlike decodeArtifact's own caller compileOrCache - which treats a
+// build-hash mismatch as an ordinary cache miss and transparently
+// recompiles from the source it already has - exec has no source to
+// fall back to at all - the artifact IS the program. Running one built
+// by a meaningfully different compiler (a fixed runtime bug, a changed
+// opcode's semantics) would otherwise execute silently and incorrectly
+// instead of being rejected, the exact gap BACKLOG.md item 5 confirmed
+// live (a hand-corrupted buildHash byte range still ran without error).
+// So this, not decodeArtifact, is where the check belongs: it is the
+// one function whose whole purpose is loading a `.lbc` for standalone
+// execution independent of any source.
 fn loadArtifact(path: Text): ArtifactResult [io] = {
-  if let Some(content) = readFileBytes(path) { decodeArtifact(content) }
+  if let Some(content) = readFileBytes(path) {
+    val decoded = decodeArtifact(content)
+    if not Text.eq(decoded.problem, "") then { decoded }
+    else if not Text.eq(decoded.buildHash, compilerBuildHash()) then {
+      ArtifactResult { code: [], sourceHash: decoded.sourceHash, buildHash: decoded.buildHash, problem: "E0406 bytecode artifact `" ++ path ++ "` was built by a different compiler build - rebuild it with `lume build` before running it with `exec`" }
+    } else { decoded }
+  }
   else { ArtifactResult { code: [], sourceHash: "", buildHash: "", problem: "E0405 cannot read bytecode artifact `" ++ path ++ "`" } }
 }
 

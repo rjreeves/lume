@@ -344,13 +344,29 @@ $staleArtifactRun = & $Lume exec $staleArtifactPath 2>&1
 if ($LASTEXITCODE -ne 1) { throw "stale-opcode bytecode should exit 1" }
 Assert-Contains 'unrecognized bytecode operation rejection' 'E0725' ($staleArtifactRun -join "`n")
 
+# A structurally-valid artifact (same real one built above) whose embedded
+# build-hash field doesn't match the running lume.exe's own
+# compilerBuildHash() - simulating exec'ing a .lbc built by a different
+# compiler build, e.g. after upgrading lume.exe with the original source
+# no longer around. Unlike `run`'s cache (see below), `exec` has no source
+# to fall back to recompiling from, so this must be rejected outright
+# (BACKLOG.md item 5, closed by loadArtifact's own build-hash check).
+$execStaleBuildHashBytes = [IO.File]::ReadAllBytes($artifactPath)
+[Text.Encoding]::UTF8.GetBytes(('0' * 64)).CopyTo($execStaleBuildHashBytes, 68)
+$execStaleBuildHashPath = Join-Path $PSScriptRoot 'dist\exec-stale-buildhash.lbc'
+[IO.File]::WriteAllBytes($execStaleBuildHashPath, $execStaleBuildHashBytes)
+$execStaleBuildHashRun = & $Lume exec $execStaleBuildHashPath 2>&1
+if ($LASTEXITCODE -ne 1) { throw "exec against a foreign-build artifact should exit 1" }
+Assert-Contains 'exec rejects a foreign-build-hash artifact' 'E0406' ($execStaleBuildHashRun -join "`n")
+
 # A cache whose source hash still matches the current program, but whose
 # embedded build-hash field (bytes [68:132), see decodeArtifact's own
 # header layout comment) doesn't match the running lume.exe's own
 # compilerBuildHash() - simulating a real .lume file untouched across a
 # lume.exe upgrade - must be treated as a miss and transparently
-# recompiled, not silently reused. `lume run` (not `exec`, which never
-# compares hashes at all) is what actually exercises compileOrCache.
+# recompiled, not silently reused. This is `run`'s cache (compileOrCache)
+# specifically - contrast with the `exec` case just above, which rejects
+# the identical mismatch outright since it has no source to recompile from.
 $buildHashCheckSource = Join-Path $PSScriptRoot 'dist\build-hash-check.lume'
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'examples\functions.lume') -Destination $buildHashCheckSource -Force
 $buildHashCheckLbc = "$buildHashCheckSource.lbc"
