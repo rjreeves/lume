@@ -1,0 +1,6 @@
+fn main(args: [str]) -> int {
+  print("{1, 2, 3}")
+  print("config: { key: value }")
+  print("empty: {}")
+  return 0
+}

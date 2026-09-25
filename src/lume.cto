@@ -263,6 +263,33 @@ fn startsUppercase(value: Text): Bool = Text.len(value) > 0 and Text.contains("A
 fn charAt(source: Text, index: Int): Text =
   Text.byteAtUnchecked(source, index)
 
+// Detects the exact `{name}` shape SPEC.md's own string-interpolation
+// example uses (`"hello, {name}"`) anywhere in a string literal's
+// decoded value - `{` immediately followed by one or more identifier-
+// like bytes immediately followed by `}`. Deliberately narrow: a string
+// legitimately containing literal braces for an unrelated reason
+// (`"{1, 2, 3}"`, `"config: { key: value }"`, `"empty: {}"`) has
+// punctuation, whitespace, or nothing at all inside the braces,
+// breaking this exact shape - left alone, not flagged. This only
+// catches what actually looks like an attempted placeholder, not every
+// `{`/`}` byte pair (confirmed live against all three examples above,
+// none of which trip it).
+fn stringLooksInterpolated(value: Text): Bool = {
+  val bytes = Bytes.fromText(value)
+  val length = Bytes.length(bytes)
+  var index = 0
+  var found = false
+  while index < length and not found {
+    if Bytes.byteAt(bytes, index) == 123 then {
+      var cursor = index + 1
+      while cursor < length and (isAlphaCode(Bytes.byteAt(bytes, cursor)) or isDigitCode(Bytes.byteAt(bytes, cursor))) { cursor = cursor + 1 }
+      if cursor > index + 1 and cursor < length and Bytes.byteAt(bytes, cursor) == 125 then { found = true }
+    }
+    index = index + 1
+  }
+  found
+}
+
 fn newline(): Text = Char.toText(Char.fromInt(10))
 fn tab(): Text = Char.toText(Char.fromInt(9))
 fn carriageReturn(): Text = Char.toText(Char.fromInt(13))
@@ -692,7 +719,22 @@ fn parseAtom(tokens: List<Token>, index: Int): ExprResult = {
     val value = parseInt(current.text) ?? 0
     ExprResult { next: index + 1, code: [makeInstruction("const_int", "", value, current.line)], problem: "" }
   } else if Text.eq(current.kind, "string") then {
-    ExprResult { next: index + 1, code: [makeInstruction("const_str", current.text, 0, current.line)], problem: "" }
+    // Confirmed live (BACKLOG.md item 7): unlike every other "not yet
+    // implemented" item on this same SPEC.md line, an interpolation
+    // placeholder used to compile clean and run, silently printing the
+    // literal braces and name instead of erroring - contradicting this
+    // file's own opening Reconciliation Note guarantee that such syntax
+    // always errors today. Checked here, at the one point every string
+    // literal becomes an expression, rather than in the lexer: a
+    // lexer-level "error" token's own message doesn't actually reach the
+    // final diagnostic (confirmed live - the pre-existing `E0002
+    // unterminated string` case has the identical problem, surfacing as
+    // a generic E0101 instead), while an expressionError here does.
+    if stringLooksInterpolated(current.text) then {
+      expressionError(index, "E0751 line " ++ intToText(current.line) ++ ": string interpolation is not yet implemented - use `+` concatenation instead")
+    } else {
+      ExprResult { next: index + 1, code: [makeInstruction("const_str", current.text, 0, current.line)], problem: "" }
+    }
   } else if Text.eq(current.text, "true") or Text.eq(current.text, "false") then {
     val value = if Text.eq(current.text, "true") then 1 else 0
     ExprResult { next: index + 1, code: [makeInstruction("const_bool", "", value, current.line)], problem: "" }

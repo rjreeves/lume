@@ -93,6 +93,23 @@ $invalidDoubleQuestionMark = & $Lume check (Join-Path $PSScriptRoot 'examples\in
 if ($LASTEXITCODE -ne 1) { throw "'??' validation should exit 1" }
 Assert-Equal '`??` is not a Lume operator reports a precise hint, not a generic parse error' 'E0750 line 2: `??` is not a Lume operator; use `match` to provide a default for `Option`/`Result`' ($invalidDoubleQuestionMark -join "`n")
 
+# String interpolation used to silently compile and run, printing the
+# literal braces and name instead of erroring - contradicting SPEC.md's
+# own opening Reconciliation Note guarantee (BACKLOG.md item 7, filed
+# after this assistant made essentially the same class of mistake while
+# hunting for a new backlog item). Checked against SPEC.md's own literal
+# `"hello, {name}"` example.
+$invalidStringInterpolation = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_string_interpolation.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "string interpolation validation should exit 1" }
+Assert-Equal 'string interpolation reports a precise hint instead of silently doing nothing' 'E0751 line 3: string interpolation is not yet implemented - use `+` concatenation instead' ($invalidStringInterpolation -join "`n")
+
+# The interpolation check is deliberately narrow (an exact `{name}`
+# shape, not every `{`/`}` byte pair) so a string legitimately containing
+# literal braces for an unrelated reason keeps working unchanged.
+$literalBraces = & $Lume run (Join-Path $PSScriptRoot 'examples\literal_braces_in_string.lume')
+if ($LASTEXITCODE -ne 0) { throw "literal braces in string exited $LASTEXITCODE" }
+Assert-Equal 'a string with literal, non-interpolation-shaped braces is not flagged' "{1, 2, 3}`nconfig: { key: value }`nempty: {}" ($literalBraces -join "`n")
+
 $functions = & $Lume run (Join-Path $PSScriptRoot 'examples\functions.lume')
 if ($LASTEXITCODE -ne 0) { throw "functions exited $LASTEXITCODE" }
 Assert-Equal 'functions and recursion' "42`n120" ($functions -join "`n")

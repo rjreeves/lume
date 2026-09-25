@@ -10,7 +10,39 @@ and the exact compiler output, at commit `e7788cd` (`ai/lume-api.json`
 
 ## Pending
 
+None currently.
+
+## Resolved
+
 ### 7. String interpolation silently does nothing instead of parse-/type-erroring, contradicting SPEC.md's own "Reconciliation note" guarantee
+
+**Resolved:** `parseAtom` (`src/lume.cto`) - the one point every string
+literal token becomes an expression - now checks the token's own
+decoded text with a new `stringLooksInterpolated` helper (`{`
+immediately followed by one or more identifier-like bytes immediately
+followed by `}` - the exact `{name}` shape SPEC.md's own example uses)
+and reports a dedicated `E0751` instead of silently accepting it as an
+ordinary string constant. Deliberately *not* fixed in `scanString` (the
+lexer) as originally suggested below: confirmed live that a lexer-level
+`error`-kind token's own message never actually reaches the final
+diagnostic - the *pre-existing* `E0002 unterminated string` case has
+the identical problem, always surfacing as a generic `E0101` instead
+(neither documented nor tested anywhere as the expected code, so not
+its own separate backlog item, but worth recording here since it's
+exactly the trap this fix's first attempt fell into). Moving the check
+to `parseAtom`, where a working precise diagnostic (items 4's `E0749`,
+6's `E0750`) is already proven to reach the user via `expressionError`,
+sidesteps it entirely. Verified against this item's own two
+reproductions below (both now report `E0751` with a correct line
+number), plus that a string with literal, non-interpolation-shaped
+braces (`"{1, 2, 3}"`, `"config: { key: value }"`, `"empty: {}"`) is
+left alone - and that the full existing suite, which uses hundreds of
+ordinary string literals throughout, passes unchanged, confirming the
+narrow `{name}`-shape check doesn't false-positive anywhere in real
+usage. Checked in as `examples/invalid_string_interpolation.lume`,
+`examples/literal_braces_in_string.lume`, and test.ps1's "string
+interpolation reports a precise hint" and "literal ... braces ... not
+flagged" cases.
 
 Found live while hunting for a new backlog item after item 6 shipped -
 checking whether other "not yet implemented" items actually behave the
@@ -86,7 +118,7 @@ ships silently wrong, and would only be caught by a human actually
 reading the *printed output* character-by-character, not by anything
 the compiler or type checker does.
 
-**Suggested fix:** either give `scanString` a real check for `{`/`}`
+**Suggested fix:** ~~either give `scanString` a real check for `{`/`}`
 inside a string literal and reject it with a specific diagnostic
 ("string interpolation is not yet implemented - use `+` concatenation
 instead", mirroring items 4/6's own precise-diagnostic pattern) - the
@@ -94,9 +126,9 @@ minimum needed to make the Reconciliation Note's guarantee actually
 hold for this item - or, if silently treating `{...}` as literal text
 is considered acceptable indefinitely, narrow the Reconciliation Note's
 own wording so it no longer promises something untrue for at least one
-of the items it covers.
-
-## Resolved
+of the items it covers.~~ Took the first option, though not literally
+in `scanString` - see the `**Resolved**` note above for why the check
+ended up in `parseAtom` instead.
 
 ### 6. `??` (Certo's own Option/Result-default operator, not Lume's) reports a generic, position-dependent parse error with no hint of the actual mistake
 
