@@ -487,18 +487,36 @@ physical directory compare equal — without that, a genuine cycle or a
 legitimate diamond dependency (two branches depending on the same
 package) would produce different, incomparable strings for the same
 location. A `git` entry's lock `path` is different in kind: `ref` is
-resolved to a concrete commit SHA by shelling out to a real `git`
-binary (clone, checkout, then `rev-parse HEAD` — a full clone, not a
-shallow one, since `ref` may be an arbitrary commit rather than a
-branch/tag tip), and the result is placed in a shared local clone cache
-under the platform home directory (`$LUME_HOME` if set, else the usual
-per-OS home var), keyed by `(git URL, resolved commit)` — not `(URL,
-ref)`, since `ref` can be a floating branch name but the cache needs a
-stable, immutable identity. That cache path is absolute, outside the
-project tree entirely, so every place that turns a lock-recorded `path`
-back into a real location treats an already-absolute path as-is rather
-than joining it onto the project root (`Path.join` is pure string
-concatenation — it does not special-case an absolute second argument).
+resolved to a concrete commit SHA, and the result is placed in a shared
+local clone cache under the platform home directory (`$LUME_HOME` if
+set, else `USERPROFILE`/`HOME`; none set is `E0748`, not a silent
+relative fallback — the cache's whole point is a stable, absolute,
+machine-shared location), keyed by `(git URL, resolved commit)` — not
+`(URL, ref)`, since `ref` can be a floating branch name but the cache
+needs a stable, immutable identity. The URL itself is lightly
+canonicalized before hashing into that key (a trailing slash and a
+trailing `.git` suffix are stripped), so two differently-spelled URLs
+for the same repository share one cache entry instead of a diamond
+dependency spuriously tripping `E0708`. Resolving `ref` prefers two
+cheap paths before ever paying for a full clone: a `ref` that's already
+a 40-character commit SHA is checked against the cache directly (no
+network at all), and otherwise a single `git ls-remote` round-trip
+(no object transfer) checks whether the commit it currently resolves to
+is already cached — only when both miss does `lume` fall back to a
+full `git clone` + `checkout` + `rev-parse HEAD` (never a shallow
+clone, since `ref` may be an arbitrary commit rather than a branch/tag
+tip), landing the result in the cache via a rename, or, when that
+fails across a volume boundary (the temp directory and the cache root
+on different drives), a recursive copy instead. That cache path is
+absolute, outside the project tree entirely, so every place that turns
+a lock-recorded `path` back into a real location treats an
+already-absolute path as-is rather than joining it onto the project
+root (`Path.join` is pure string concatenation — it does not
+special-case an absolute second argument). A dependency cycle formed
+entirely through repeated identical `(git, ref)` pairs is caught before
+any of this — a cheap, no-I/O check against the pairs already being
+resolved higher up the same chain — rather than only after a redundant
+clone would otherwise have completed.
 The lock entry also records the manifest's own declared `git`/`ref` —
 present only on a `git`-sourced entry, omitted entirely (not written as
 empty strings) for a `path` entry, both so `install --check` can tell
@@ -518,11 +536,9 @@ declared name resolving to two different locations is `E0708`; a
 genuine dependency cycle is `E0709`; a lock file write failure is
 `E0707`.
 
-Explicitly out of scope for this first cut: no shallow-clone/bandwidth
-optimization (a `git ls-remote` fast path that skips a full clone for
-the common branch/tag case is a worthwhile follow-up, not implemented),
-and no credential handling of any kind — whatever the local `git`
-binary's own credential helper already supports is what works.
+Explicitly out of scope for this first cut: no credential handling of
+any kind — whatever the local `git` binary's own credential helper
+already supports is what works.
 
 `use` resolution (`loadModule`) reads `lume.lock.json` once, at the
 very start of loading the root file — never the manifest, and never

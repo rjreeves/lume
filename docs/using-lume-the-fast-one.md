@@ -977,24 +977,32 @@ resolve a dependency by its repository location:
 }
 ```
 
-`ref` can be a tag, a branch, or a raw commit SHA; `lume install` shells
-out to a real `git` binary to clone it, checks out `ref`, and resolves it
-to a concrete commit — that commit, not the possibly-moving `ref`, is
+`ref` can be a tag, a branch, or a raw commit SHA; `lume install` resolves
+it to a concrete commit — that commit, not the possibly-moving `ref`, is
 what `lume.lock.json` records and what `install --check` re-verifies. The
 resolved clone lives in a shared cache outside the project (keyed by the
 git URL and the resolved commit, under `$LUME_HOME` or the platform home
-directory), so two projects pinned to the same package at the same
-commit share one clone instead of duplicating it, and a repeat `install`
-reuses it instead of re-cloning. Because `ref` is re-resolved over the
-network on every `install`/`--check`, a project with a git dependency
-needs network access (or a warm cache) where a purely local-path project
-doesn't. A dependency entry must declare exactly one of `path`/`git` —
-both or neither, or `git` without `ref`, is `E0747`; a `git` command that
-fails (bad URL, a `ref` that doesn't exist) is `E0748`. Everything past
-that — cycle detection, isolation, transitively resolving a git
-dependency's own further dependencies (`path` or `git`, freely mixed) —
-works exactly the same as a local-path dependency, since by the time it
-reaches the lock file a git dependency is just an ordinary resolved
+directory — one of those must be set, or install fails with `E0748`
+rather than silently caching somewhere project-relative), so two
+projects pinned to the same package at the same commit share one clone
+instead of duplicating it. Two textually different URLs for the same
+repo (a trailing slash, a trailing `.git`) still share that one cache
+entry. Resolving `ref` prefers the cheapest option that's still
+correct: a literal commit SHA is checked against the cache with no
+network at all, and a branch or tag tries a single lightweight
+`git ls-remote` round-trip before falling back to a real `git clone` +
+`checkout` — so a repeat `install`/`--check` against an unchanged `ref`
+still needs *some* network access (unlike a purely local-path project's
+fully offline check), but not a full clone every time. A dependency
+entry must declare exactly one of `path`/`git` — both or neither, or
+`git` without `ref`, is `E0747`; a `git` command that fails (bad URL, a
+`ref` that doesn't exist) is `E0748`. Everything past that — cycle
+detection (including a git dependency that repeats the identical
+`(git, ref)` pair further down its own dependency chain), isolation,
+transitively resolving a git dependency's own further dependencies
+(`path` or `git`, freely mixed) — works exactly the same as a
+local-path dependency, since by the time it reaches the lock file a
+git dependency is just an ordinary resolved
 `path` pointing at the clone cache instead of the project tree.
 
 **Dependencies are isolated per package, not shared across the whole

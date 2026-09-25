@@ -1327,7 +1327,30 @@ things rather than writing the obvious thing.
     path is used as-is instead of being silently mis-joined onto the
     project root. Covered by `test.ps1`'s "git dependency"/"transitive
     git dependency" cases, exercised against local bare repos built
-    fresh per test run rather than a real network fetch.
+    fresh per test run rather than a real network fetch. A multi-angle
+    code review (8 finder agents, 1-vote verification) against the
+    initial implementation confirmed ten further issues, two fixed
+    immediately (the `Path.join`/`normalizePath` interaction above
+    losing an absolute path's leading `/` on POSIX, and `install --check`
+    breaking every pre-existing lock file's exact byte shape on upgrade)
+    and the remaining eight fixed in a follow-up pass: the `git
+    ls-remote`-first fast path this section originally deferred as a
+    follow-up is now implemented (plus a zero-network fast path when
+    `ref` is already a literal commit SHA); the cache key canonicalizes
+    a URL's trailing slash/`.git` suffix before hashing; the
+    activeGitRefs cycle pre-check catches a repeated identical
+    `(git, ref)` pair before a redundant clone, not just after; a failed
+    cache-directory placement now falls back to a recursive copy instead
+    of only `renameFile` (which fails across a volume boundary); every
+    failure branch in `resolveGitDependency` cleans up its temp clone
+    directory; `gitCacheRoot` reports `E0748` instead of silently
+    falling back to a relative, machine-local path when none of
+    `LUME_HOME`/`USERPROFILE`/`HOME` is set; and the temp-directory
+    collision-proofing (`uniqueCloneTmpDir`'s probe-and-increment,
+    replacing a `Math.random()` call whose one-second seed resolution
+    made two same-second processes collide) is now shared by
+    `tempDirPath`/`fixture.temp_dir()` itself, not just this feature's
+    own caller.
   ~~One real, narrower gap exists independently of signing, confirmed
   live: the lock file records each dependency's *declared* metadata
   but never a hash of its actual `.lume` source files, so `lume

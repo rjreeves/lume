@@ -1451,6 +1451,46 @@ $transitiveRun = & $Lume run (Join-Path $transitiveAppDir 'app.lume')
 if ($LASTEXITCODE -ne 0) { throw "transitive git dependency app run exited $LASTEXITCODE" }
 Assert-Equal 'transitive git dependency: app runs against the cloned package tree' '49' ($transitiveRun -join "`n")
 
+# Cache key canonicalization: a trailing slash on an otherwise-identical
+# git URL used to hash to a different cache directory (Crypto.sha256 of
+# the raw manifest string) - canonicalizeGitUrl strips it before hashing,
+# so both apps resolve to the exact same cache path.
+$appSlashDir = New-GitDepApp 'git-app-url-trailing-slash' 'v1.0.0'
+$slashManifest = (Get-Content -LiteralPath (Join-Path $appSlashDir 'lume.json') -Raw) -replace [regex]::Escape($mathutilsRemoteUrl), "$mathutilsRemoteUrl/"
+Set-Content -LiteralPath (Join-Path $appSlashDir 'lume.json') -Value $slashManifest -NoNewline
+$slashInstall = & $Lume install $appSlashDir
+if ($LASTEXITCODE -ne 0) { throw "git dependency install (trailing slash) exited $LASTEXITCODE" }
+$slashLock = (Get-Content -LiteralPath (Join-Path $appSlashDir 'lume.lock.json') -Raw) | ConvertFrom-Json
+$plainAppDir = Join-Path $gitFixtureRoot 'git-app-tag'
+$plainLock = (Get-Content -LiteralPath (Join-Path $plainAppDir 'lume.lock.json') -Raw) | ConvertFrom-Json
+Assert-Equal 'git URL canonicalization: trailing slash reuses the same cache path' $plainLock.resolved[0].path $slashLock.resolved[0].path
+
+# Cycle pre-check: a git-resolved package whose own manifest re-declares
+# the identical git/ref pair (a literal, no-network-needed cycle) is
+# caught by the cheap activeGitRefs check before a second clone is even
+# attempted - not just by the existing resolved-path-based E0709 check,
+# which can't run until after a (redundant) clone would have completed.
+$cyclicRemote = Join-Path $gitFixtureRoot 'cyclic-remote.git'
+$cyclicWork = Join-Path $gitFixtureRoot 'cyclic-work'
+git init --bare -q $cyclicRemote
+git clone -q $cyclicRemote $cyclicWork
+$cyclicRemoteUrl = $cyclicRemote -replace '\\', '/'
+Set-Content -LiteralPath (Join-Path $cyclicWork 'lume.json') -Value ('{"name":"cyclic","version":"0.1.0","dependencies":[{"name":"cyclic","git":"' + $cyclicRemoteUrl + '","ref":"v1.0.0"}]}') -NoNewline
+Set-Content -LiteralPath (Join-Path $cyclicWork 'x.lume') -Value "pub fn x.noop() -> int {`n  return 0`n}" -NoNewline
+Push-Location $cyclicWork
+git add -A
+git -c user.email=test@lume.dev -c user.name=lume-test commit -q -m 'cyclic (self-referential) v0.1.0'
+git branch -M main
+git tag v1.0.0
+git push -q origin main --tags
+Pop-Location
+$cyclicAppDir = Join-Path $gitFixtureRoot 'cyclic-app'
+New-Item -ItemType Directory -Path $cyclicAppDir -Force | Out-Null
+Set-Content -LiteralPath (Join-Path $cyclicAppDir 'lume.json') -Value ('{"name":"app","version":"0.1.0","dependencies":[{"name":"cyclic","git":"' + $cyclicRemoteUrl + '","ref":"v1.0.0"}]}') -NoNewline
+$cyclicOutput = & $Lume install $cyclicAppDir 2>&1
+if ($LASTEXITCODE -ne 1) { throw "self-referential git dependency install should exit 1" }
+Assert-Equal 'git dependency cycle pre-check: self-referential git+ref reports E0709' 'E0709 dependency cycle at `cyclic`' ($cyclicOutput -join "`n")
+
 Remove-Item -LiteralPath $gitFixtureRoot -Recurse -Force
 
 # examples/taskgraph - the "validate representative shell/Python
