@@ -168,6 +168,10 @@ short-circuit, so `a and b()` never calls `b()` when `a` is already
 let message = "service=" + service
 ```
 
+Reaching for `++` instead (Certo's own concatenation operator — this
+compiler's own implementation language) is a compile error (`E0749`)
+naming the mistake directly, not a generic parse failure.
+
 **There is no `int`-to-`str` interpolation or formatting operator.** Convert
 a number to text explicitly with `str.from_int(n)`:
 
@@ -188,12 +192,23 @@ if result.is_ok(parsed) {
 }
 ```
 
-There is no string-interpolation syntax (`"{expr}"` is printed completely
-literally, braces and all — it is not a template), and **there is no `??`
-null-coalescing operator** — that is Certo syntax (the separate language
-this bootstrap compiler is itself written in), not Lume. Get a value out of
-an `Option<T>` or a builtin's `Result`-shaped return with `match` or a
-plain `if`/`var`, as shown in sections 6 and 10.
+There is no string-interpolation syntax — `"hello, {name}"` is a compile
+error (`E0751`), not a template that silently prints the braces back
+literally, so the mistake is caught rather than shipped quietly wrong.
+Build a string with `+` concatenation instead:
+
+```lume
+let message = "hello, " + name
+```
+
+There is also no `??` null-coalescing operator — that is Certo syntax
+(the separate language this bootstrap compiler is itself written in),
+not Lume; writing it is a compile error (`E0750`) rather than something
+that quietly does the wrong thing. Get a value out of an `Option<T>` or
+a builtin's `Result`-shaped return with `match` or a plain `if`/`var`,
+as shown in sections 6 and 10. `T?` (`Option<T>` written as a postfix
+`?`, also Certo syntax) is likewise a compile error (`E0752`) — write
+`Option<T>` explicitly.
 
 ## 4. Control flow — and what Lume deliberately leaves out
 
@@ -1334,7 +1349,10 @@ becomes an explicit exit code.
 Real, current limitations — not aspirational roadmap items from other
 documents in this repository:
 
-- **No `??` operator** — that is Certo syntax, not Lume's (section 3).
+- **No `??` operator, no string interpolation, no `T?` postfix sugar for
+  `Option<T>`** — all three are Certo syntax, not Lume's, and each is a
+  precise compile error (`E0750`/`E0751`/`E0752`) naming the mistake and
+  the working alternative, not silently wrong output (section 3).
 - **No `for` loop of any kind** — not a range loop, and not `for x in
   list` either. `while` with a manually managed index is the only loop
   construct (section 4). There is also no `break`/`continue`; use a
