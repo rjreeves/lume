@@ -1263,21 +1263,27 @@ things rather than writing the obvious thing.
   full `test.ps1` suite passing unchanged against the rebuilt binary.
   Windows-only - other platforms use a different linker path entirely
   and weren't measured or touched;
-- package signing and checksum verification — investigated directly
-  (`resolveDependencies`/`computeLockContent`, `:5652`), not just
-  assumed: deferred for the same reason the sibling "cache resolved
-  dependencies by content hash" item above already is. Every
-  dependency today is a local filesystem path declared in `lume.json`
-  and pinned in `lume.lock.json` (name/version/path/dependency names)
-  - there is no registry, no remote fetch, no network transport
-  anywhere in the package system for a signature or checksum to defend
-  against tampering *in*. Signing a file the consumer already has full
-  local read access to, with no distribution channel to attach the
-  signature to and no registry authority to establish signer identity
-  against, would be security theater rather than a real guarantee.
-  Revisit once packages can come from somewhere other than the local
-  filesystem, the same trigger condition already on record for the
-  content-hash-caching item.
+- package signing and checksum verification — not yet implemented,
+  and no longer blocked. Originally deferred for the same reason the
+  sibling "cache resolved dependencies by content hash" item above
+  was: every dependency was a local filesystem path declared in
+  `lume.json` and pinned in `lume.lock.json` - no registry, no remote
+  fetch, no network transport anywhere in the package system for a
+  signature or checksum to defend against tampering *in*, so signing a
+  file the consumer already had full local read access to would have
+  been security theater rather than a real guarantee. That trigger
+  condition ("revisit once packages can come from somewhere other than
+  the local filesystem") is the identical one the content-hash-caching
+  item names, and it's already been satisfied there via the git-based
+  package source below (`resolveGitDependency`/`gitCacheRoot`,
+  `src/lume.cto`) - a real network fetch, over which tampering is a
+  genuine, no-longer-theoretical concern. This item itself was simply
+  never revisited when that shipped. Still genuinely unimplemented
+  (`lume.lock.json` records a git dependency's resolved commit SHA,
+  content-addressed by git itself, but nothing verifies the *cloned
+  bytes* match anything beyond what git's own protocol already
+  checks, and there is still no signing scheme at all) - a real
+  candidate for design work now, not just a deferred placeholder.
 - ~~a git-based package source, with no central index — design sketch,
   not yet implemented.~~ **Shipped.** The recurring blocker on registry-adjacent work
   above (signing, content-hash caching, semver ranges) is the same one
