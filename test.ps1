@@ -1442,6 +1442,61 @@ foreach ($case in @(
   Assert-Equal "git dependency ($($case.Label)): app runs against the cloned package" '49' ($runOut -join "`n")
 }
 
+# Lock-pin enforcement: a plain `install` must trust an existing lock's
+# pinned resolution for an unchanged (name, git, ref) triple rather than
+# silently re-resolving a floating branch ref against the live remote every
+# time - this is what actually gives the lock file protective value for the
+# common "ref is a branch/tag, not a raw commit" case. Reuses the
+# `git-app-branch` app (ref "main") the loop above already installed.
+$pinBranchAppDir = Join-Path $gitFixtureRoot 'git-app-branch'
+$pinLockPath = Join-Path $pinBranchAppDir 'lume.lock.json'
+$pinLockBefore = (Get-Content -LiteralPath $pinLockPath -Raw) | ConvertFrom-Json
+$pinShaBefore = $pinLockBefore.resolved[0].path -replace '^.*[\\/]', ''
+Assert-Equal 'lock pin: branch app is initially pinned to the tagged commit' $mathutilsSha $pinShaBefore
+
+# Move `main` forward on the remote - simulating either a legitimate new
+# release or a compromised/force-pushed remote, either way exactly the
+# scenario a committed lock file exists to guard against.
+Push-Location $mathutilsWork
+Set-Content -LiteralPath (Join-Path $mathutilsWork 'ops.lume') -Value "pub fn ops.square(value: int) -> int {`n  return value * value`n}`n`npub fn ops.cube(value: int) -> int {`n  return value * value * value`n}" -NoNewline
+git add -A
+git -c user.email=test@lume.dev -c user.name=lume-test commit -q -m 'mathutils: add cube'
+git push -q origin main
+Pop-Location
+$mathutilsMovedSha = (git --git-dir="$mathutilsRemote" rev-parse main).Trim()
+
+# A plain install (no flags) must NOT pick up the moved branch tip - the
+# existing pin for this exact (name, git, ref) triple is trusted as-is.
+$pinPlainOut = & $Lume install $pinBranchAppDir
+if ($LASTEXITCODE -ne 0) { throw "lock pin: plain re-install exited $LASTEXITCODE" }
+$pinLockAfterPlain = (Get-Content -LiteralPath $pinLockPath -Raw) | ConvertFrom-Json
+$pinShaAfterPlain = $pinLockAfterPlain.resolved[0].path -replace '^.*[\\/]', ''
+Assert-Equal 'lock pin: plain install keeps the pinned commit despite the branch moving' $mathutilsSha $pinShaAfterPlain
+
+# `--check` is unaffected by pinning - it always fully re-resolves, so it
+# still correctly reports the moved branch as drift.
+$pinCheckOut = & $Lume install $pinBranchAppDir --check 2>&1
+if ($LASTEXITCODE -ne 1) { throw "lock pin: install --check after the branch moved should exit 1" }
+Assert-Contains 'lock pin: --check still reports a moved branch as drift' 'E0739' ($pinCheckOut -join "`n")
+
+# `--update` explicitly forces re-resolution, overriding the pin.
+$pinUpdateOut = & $Lume install $pinBranchAppDir --update
+if ($LASTEXITCODE -ne 0) { throw "lock pin: install --update exited $LASTEXITCODE" }
+$pinLockAfterUpdate = (Get-Content -LiteralPath $pinLockPath -Raw) | ConvertFrom-Json
+$pinShaAfterUpdate = $pinLockAfterUpdate.resolved[0].path -replace '^.*[\\/]', ''
+Assert-Equal 'lock pin: install --update picks up the moved branch tip' $mathutilsMovedSha $pinShaAfterUpdate
+
+# Editing the manifest's own declared `ref` is a deliberate developer
+# action, not drift - it must resolve immediately on a plain install,
+# without needing `--update`.
+$pinRefEditManifest = Join-Path $pinBranchAppDir 'lume.json'
+Set-Content -LiteralPath $pinRefEditManifest -Value ('{"name":"git-app-branch","version":"0.1.0","dependencies":[{"name":"mathutils","git":"' + $mathutilsRemoteUrl + '","ref":"v1.0.0"}]}') -NoNewline
+$pinRefEditOut = & $Lume install $pinBranchAppDir
+if ($LASTEXITCODE -ne 0) { throw "lock pin: install after editing the declared ref exited $LASTEXITCODE" }
+$pinLockAfterRefEdit = (Get-Content -LiteralPath $pinLockPath -Raw) | ConvertFrom-Json
+$pinShaAfterRefEdit = $pinLockAfterRefEdit.resolved[0].path -replace '^.*[\\/]', ''
+Assert-Equal 'lock pin: editing the declared ref re-resolves immediately, no --update needed' $mathutilsSha $pinShaAfterRefEdit
+
 # Malformed entries: both `path`/`git`, and `git` without `ref`, both
 # collapse onto the same E0747 - see resolveDependencies's own comment on
 # why these share one code rather than a code each.

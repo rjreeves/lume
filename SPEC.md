@@ -530,7 +530,29 @@ the same way `install` does, a project with a `git` dependency needs
 network access (or a warm cache) for `--check` too, unlike the fully
 offline check a `path`-only project gets. A `git` subprocess step that
 fails (bad URL, unresolvable `ref`) is `E0748`, carrying the
-underlying git error. Missing/malformed root manifest is `E0705`; a
+underlying git error.
+
+A plain `install` (no flags) is different from `--check` in one
+deliberate way: when `<dir>/lume.lock.json` already has a resolved entry
+for a dependency whose declared `name`/`git`/`ref` match exactly what
+that entry already recorded, `install` reuses the previously-resolved
+commit as-is — no network round-trip, no re-resolving a floating branch
+or tag `ref` against the live remote — rather than silently overwriting
+a committed pin with whatever the remote currently happens to serve.
+This is what gives a committed `lume.lock.json` any actual protective
+value against a compromised or force-pushed remote: without it, a
+`ref` that names a branch would be re-resolved fresh on every install,
+and the lock file would just get silently rewritten to match, the same
+gap the "package signing and checksum verification" item in
+[ROADMAP.md](ROADMAP.md) calls out directly. Any change to the
+dependency's declared `git`/`ref` since the lock was last written is
+treated as a deliberate developer action, not drift, and resolves fresh
+immediately, no flag required. `install --update` explicitly forces a
+fresh resolution of every `git` dependency regardless of any existing
+pin, for a developer who wants to intentionally pick up a moved branch
+tip. `--check` is unaffected by any of this — it always fully
+re-resolves, exactly as before, so it keeps catching a moved floating
+`ref` as drift (`E0739`) the same way it always has. Missing/malformed root manifest is `E0705`; a
 dependency whose own manifest can't be read is `E0706`; the same
 declared name resolving to two different locations is `E0708`; a
 genuine dependency cycle is `E0709`; a lock file write failure is

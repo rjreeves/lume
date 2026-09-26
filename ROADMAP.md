@@ -1263,27 +1263,46 @@ things rather than writing the obvious thing.
   full `test.ps1` suite passing unchanged against the rebuilt binary.
   Windows-only - other platforms use a different linker path entirely
   and weren't measured or touched;
-- package signing and checksum verification — not yet implemented,
-  and no longer blocked. Originally deferred for the same reason the
-  sibling "cache resolved dependencies by content hash" item above
-  was: every dependency was a local filesystem path declared in
-  `lume.json` and pinned in `lume.lock.json` - no registry, no remote
-  fetch, no network transport anywhere in the package system for a
-  signature or checksum to defend against tampering *in*, so signing a
-  file the consumer already had full local read access to would have
-  been security theater rather than a real guarantee. That trigger
-  condition ("revisit once packages can come from somewhere other than
-  the local filesystem") is the identical one the content-hash-caching
-  item names, and it's already been satisfied there via the git-based
-  package source below (`resolveGitDependency`/`gitCacheRoot`,
-  `src/lume.cto`) - a real network fetch, over which tampering is a
-  genuine, no-longer-theoretical concern. This item itself was simply
-  never revisited when that shipped. Still genuinely unimplemented
-  (`lume.lock.json` records a git dependency's resolved commit SHA,
-  content-addressed by git itself, but nothing verifies the *cloned
-  bytes* match anything beyond what git's own protocol already
-  checks, and there is still no signing scheme at all) - a real
-  candidate for design work now, not just a deferred placeholder.
+- package signing and checksum verification — the checksum-verification
+  half is now implemented as **lock-pin enforcement**; the signing half
+  (proving *who* published a commit, not just pinning *which* bytes) is
+  still open. Originally deferred for the same reason the sibling "cache
+  resolved dependencies by content hash" item above was: every dependency
+  was a local filesystem path declared in `lume.json` and pinned in
+  `lume.lock.json` - no registry, no remote fetch, no network transport
+  anywhere in the package system for a signature or checksum to defend
+  against tampering *in*, so signing a file the consumer already had full
+  local read access to would have been security theater rather than a
+  real guarantee. That trigger condition ("revisit once packages can come
+  from somewhere other than the local filesystem") is the identical one
+  the content-hash-caching item names, and it's already been satisfied
+  there via the git-based package source below
+  (`resolveGitDependency`/`gitCacheRoot`, `src/lume.cto`) - a real network
+  fetch, over which tampering is a genuine, no-longer-theoretical concern.
+  Investigating it directly (rather than jumping straight to designing a
+  new signing scheme) surfaced something more concrete and more urgent:
+  a plain `lume install` never compared a freshly git-resolved dependency
+  against what a pre-existing `lume.lock.json` had already pinned - it
+  silently re-resolved a branch/tag `ref` against the live remote and
+  overwrote the lock file with whatever came back, on every install,
+  giving the committed lock file no actual protective value against a
+  compromised or force-pushed remote (every other mainstream package
+  manager - Cargo, npm, Bundler, Go modules - treats a committed lock
+  file as authoritative on a plain install; only an explicit update
+  command re-resolves a floating reference). Fixed: `install` now trusts
+  an unchanged `(name, git, ref)` triple's previously-resolved commit
+  outright (`findExistingPin`/`readExistingResolvedDeps`, `src/lume.cto`),
+  touching the network for that dependency at all only when there's no
+  prior pin, the declared `git`/`ref` changed, or the new `--update` flag
+  forces it; `--check` is unaffected and still fully re-resolves, so it
+  keeps catching a moved floating `ref` as drift exactly as before. Still
+  genuinely open: `lume.lock.json` records a git dependency's resolved
+  commit SHA, content-addressed by git itself, but nothing verifies the
+  *cloned bytes* match anything beyond what git's own protocol already
+  checks against a *new, never-before-pinned* dependency, and there is
+  still no signing scheme (proving authorship, not just pinning content)
+  at all - a real candidate for design work now, not just a deferred
+  placeholder.
 - ~~a git-based package source, with no central index — design sketch,
   not yet implemented.~~ **Shipped.** The recurring blocker on registry-adjacent work
   above (signing, content-hash caching, semver ranges) is the same one
