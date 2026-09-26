@@ -1263,6 +1263,191 @@ fn builtinCounts(): List<Int> = [
   2, 2, 2
 ]
 
+// "type" is a reserved keyword (declares a type), so the field is named
+// `ptype`, not `type`.
+type BuiltinParam = { name: Text, ptype: Text }
+type BuiltinDoc = { name: Text, parameters: List<BuiltinParam>, returnType: Text, description: Text }
+
+fn bp(name: Text, ptype: Text): BuiltinParam = BuiltinParam { name: name, ptype: ptype }
+
+// Per-builtin parameter names/types, return type, and a one-line
+// description - purely additive documentation data, read only by
+// apiManifest()/builtinReferenceMarkdown() (see builtinDocsProblem right
+// below for how this stays in sync with builtinNames()/builtinCounts(),
+// the two lists that actually drive compile-time arg-count enforcement -
+// checkBuiltinTypes/callBuiltin are never touched or read from here).
+// Same order as builtinNames()/builtinCounts() throughout. Generic
+// builtins use readable placeholders (T/U/K/V) rather than a runtime type
+// string, matching how a human-facing signature is normally written.
+fn builtinDocs(): List<BuiltinDoc> = [
+  BuiltinDoc { name: "args.count", parameters: [], returnType: "int", description: "Number of command-line arguments, excluding the program name." },
+  BuiltinDoc { name: "args.get", parameters: [bp("index", "int")], returnType: "str", description: "The argument at `index`; panics if out of bounds." },
+
+  BuiltinDoc { name: "fs.exists", parameters: [bp("path", "str")], returnType: "bool", description: "Whether a file or directory exists at `path`." },
+  BuiltinDoc { name: "fs.read_text", parameters: [bp("path", "str")], returnType: "str", description: "Reads a file's full contents as text; fails at runtime (E0312) if it can't be read." },
+  BuiltinDoc { name: "fs.write_text", parameters: [bp("path", "str"), bp("content", "str")], returnType: "bool", description: "Writes `content` to `path`, creating or overwriting it." },
+  BuiltinDoc { name: "fs.try_read_text", parameters: [bp("path", "str")], returnType: "result<str,str>", description: "Reads a file's full contents as text, returning Err instead of failing on a read error." },
+  BuiltinDoc { name: "fs.try_write_text", parameters: [bp("path", "str"), bp("content", "str")], returnType: "result<bool,str>", description: "Writes `content` to `path`, returning Err instead of failing on a write error." },
+  BuiltinDoc { name: "fs.read_bytes", parameters: [bp("path", "str")], returnType: "result<bytes,str>", description: "Reads a file's full contents as raw bytes." },
+  BuiltinDoc { name: "fs.write_bytes", parameters: [bp("path", "str"), bp("data", "bytes")], returnType: "bool", description: "Writes raw bytes to `path`, creating or overwriting it." },
+
+  BuiltinDoc { name: "env.get", parameters: [bp("name", "str")], returnType: "str", description: "The environment variable's value, or \"\" if it isn't set." },
+  BuiltinDoc { name: "env.has", parameters: [bp("name", "str")], returnType: "bool", description: "Whether an environment variable is set." },
+  BuiltinDoc { name: "env.set", parameters: [bp("name", "str"), bp("value", "str")], returnType: "bool", description: "Sets an environment variable for the current process." },
+  BuiltinDoc { name: "env.unset", parameters: [bp("name", "str")], returnType: "bool", description: "Removes an environment variable from the current process." },
+
+  BuiltinDoc { name: "process.run", parameters: [bp("executable", "str"), bp("arguments", "[str]")], returnType: "process", description: "Runs a process to completion and captures its exit code, stdout, and stderr." },
+  BuiltinDoc { name: "process.run_with_input", parameters: [bp("executable", "str"), bp("arguments", "[str]"), bp("input", "str")], returnType: "process", description: "Like process.run, piping `input` to the child process's stdin." },
+  BuiltinDoc { name: "process.run_with_env", parameters: [bp("executable", "str"), bp("arguments", "[str]"), bp("env", "Map<str,str>")], returnType: "process", description: "Like process.run, with `env` overriding environment variables for the child process only." },
+  BuiltinDoc { name: "process.run_with_options", parameters: [bp("executable", "str"), bp("arguments", "[str]"), bp("workingDir", "str"), bp("timeoutMs", "int")], returnType: "process", description: "Like process.run, with a working directory (\"\" for unchanged) and an optional timeout in milliseconds (<= 0 for none); a timed-out process is killed and reports exit code -1." },
+  BuiltinDoc { name: "process.code", parameters: [bp("result", "process")], returnType: "int", description: "The child process's exit code." },
+  BuiltinDoc { name: "process.stdout", parameters: [bp("result", "process")], returnType: "str", description: "The child process's captured standard output." },
+  BuiltinDoc { name: "process.stderr", parameters: [bp("result", "process")], returnType: "str", description: "The child process's captured standard error." },
+  BuiltinDoc { name: "process.ok", parameters: [bp("result", "process")], returnType: "bool", description: "Whether the process exited with code 0." },
+
+  BuiltinDoc { name: "str.len", parameters: [bp("value", "str")], returnType: "int", description: "Number of bytes in a string." },
+  BuiltinDoc { name: "str.trim", parameters: [bp("value", "str")], returnType: "str", description: "Removes leading and trailing whitespace." },
+  BuiltinDoc { name: "str.upper", parameters: [bp("value", "str")], returnType: "str", description: "Converts to uppercase." },
+  BuiltinDoc { name: "str.lower", parameters: [bp("value", "str")], returnType: "str", description: "Converts to lowercase." },
+  BuiltinDoc { name: "str.from_int", parameters: [bp("value", "int")], returnType: "str", description: "Formats an int as decimal text." },
+  BuiltinDoc { name: "str.to_int", parameters: [bp("value", "str")], returnType: "result<int,str>", description: "Parses decimal text as an int; Err if it isn't a valid integer." },
+
+  BuiltinDoc { name: "str.contains", parameters: [bp("haystack", "str"), bp("needle", "str")], returnType: "bool", description: "Whether `haystack` contains `needle`." },
+  BuiltinDoc { name: "str.starts_with", parameters: [bp("value", "str"), bp("prefix", "str")], returnType: "bool", description: "Whether `value` starts with `prefix`." },
+  BuiltinDoc { name: "str.ends_with", parameters: [bp("value", "str"), bp("suffix", "str")], returnType: "bool", description: "Whether `value` ends with `suffix`." },
+
+  BuiltinDoc { name: "json.valid", parameters: [bp("text", "str")], returnType: "bool", description: "Whether `text` parses as valid JSON." },
+  BuiltinDoc { name: "json.get", parameters: [bp("text", "str"), bp("key", "str")], returnType: "str", description: "A top-level key's value from a JSON object, as text (requires `text` to decode as a JSON object)." },
+  BuiltinDoc { name: "json.encode", parameters: [bp("value", "T")], returnType: "result<str,str>", description: "Encodes a value (int/str/bool/list/record, recursively, plus enums including Option/Result) as a JSON string." },
+
+  BuiltinDoc { name: "path.join", parameters: [bp("a", "str"), bp("b", "str")], returnType: "str", description: "Joins two path segments." },
+  BuiltinDoc { name: "path.basename", parameters: [bp("path", "str")], returnType: "str", description: "The final path component." },
+  BuiltinDoc { name: "path.dirname", parameters: [bp("path", "str")], returnType: "str", description: "The path with its final component removed." },
+  BuiltinDoc { name: "path.extension", parameters: [bp("path", "str")], returnType: "Option<str>", description: "The file extension, without the dot, or None." },
+  BuiltinDoc { name: "path.stem", parameters: [bp("path", "str")], returnType: "str", description: "The final path component without its extension." },
+
+  BuiltinDoc { name: "dir.list", parameters: [bp("path", "str")], returnType: "result<[str],str>", description: "Lists a directory's immediate entries (names only, unsorted)." },
+  BuiltinDoc { name: "dir.walk", parameters: [bp("path", "str"), bp("maxDepth", "int")], returnType: "result<[str],str>", description: "Recursively lists files under `path` as full paths (not directories); `maxDepth` 0 means only `path`'s own files; an unreadable subdirectory is skipped, not a failure." },
+
+  BuiltinDoc { name: "time.now", parameters: [], returnType: "int", description: "Current Unix epoch time in seconds." },
+  BuiltinDoc { name: "time.to_iso", parameters: [bp("seconds", "int")], returnType: "str", description: "Formats epoch seconds as a UTC ISO-8601 string." },
+  BuiltinDoc { name: "time.year", parameters: [bp("seconds", "int")], returnType: "int", description: "The UTC calendar year for epoch seconds." },
+  BuiltinDoc { name: "time.month", parameters: [bp("seconds", "int")], returnType: "int", description: "The UTC calendar month (1-12) for epoch seconds." },
+  BuiltinDoc { name: "time.day", parameters: [bp("seconds", "int")], returnType: "int", description: "The UTC calendar day of month for epoch seconds." },
+  BuiltinDoc { name: "time.hour", parameters: [bp("seconds", "int")], returnType: "int", description: "The UTC hour (0-23) for epoch seconds." },
+  BuiltinDoc { name: "time.minute", parameters: [bp("seconds", "int")], returnType: "int", description: "The UTC minute for epoch seconds." },
+  BuiltinDoc { name: "time.second", parameters: [bp("seconds", "int")], returnType: "int", description: "The UTC second for epoch seconds." },
+  BuiltinDoc { name: "time.format", parameters: [bp("seconds", "int"), bp("pattern", "str")], returnType: "str", description: "Formats epoch seconds with a strftime-style pattern, evaluated in UTC." },
+  BuiltinDoc { name: "time.in_timezone", parameters: [bp("seconds", "int"), bp("zone", "str")], returnType: "result<str,str>", description: "An ISO-8601 string using `zone`'s own numeric UTC offset (an IANA zone name; Err if unrecognized)." },
+  BuiltinDoc { name: "time.format_in_timezone", parameters: [bp("seconds", "int"), bp("pattern", "str"), bp("zone", "str")], returnType: "result<str,str>", description: "Formats epoch seconds with a strftime-style pattern using `zone`'s zone- and DST-adjusted wall-clock time." },
+
+  BuiltinDoc { name: "duration.seconds", parameters: [bp("n", "int")], returnType: "int", description: "`n` seconds as a plain epoch-second count." },
+  BuiltinDoc { name: "duration.minutes", parameters: [bp("n", "int")], returnType: "int", description: "`n` minutes as a plain epoch-second count." },
+  BuiltinDoc { name: "duration.hours", parameters: [bp("n", "int")], returnType: "int", description: "`n` hours as a plain epoch-second count." },
+  BuiltinDoc { name: "duration.days", parameters: [bp("n", "int")], returnType: "int", description: "`n` days as a plain epoch-second count." },
+
+  BuiltinDoc { name: "Duration.of_seconds", parameters: [bp("n", "int")], returnType: "Duration", description: "Builds a Duration of `n` seconds." },
+  BuiltinDoc { name: "Duration.of_minutes", parameters: [bp("n", "int")], returnType: "Duration", description: "Builds a Duration of `n` minutes." },
+  BuiltinDoc { name: "Duration.of_hours", parameters: [bp("n", "int")], returnType: "Duration", description: "Builds a Duration of `n` hours." },
+  BuiltinDoc { name: "Duration.of_days", parameters: [bp("n", "int")], returnType: "Duration", description: "Builds a Duration of `n` days." },
+  BuiltinDoc { name: "Duration.add", parameters: [bp("a", "Duration"), bp("b", "Duration")], returnType: "Duration", description: "Sums two Durations." },
+  BuiltinDoc { name: "Duration.sub", parameters: [bp("a", "Duration"), bp("b", "Duration")], returnType: "Duration", description: "Subtracts one Duration from another." },
+  BuiltinDoc { name: "Duration.scale", parameters: [bp("duration", "Duration"), bp("factor", "int")], returnType: "Duration", description: "Multiplies a Duration by an integer factor." },
+  BuiltinDoc { name: "Duration.to_seconds", parameters: [bp("duration", "Duration")], returnType: "int", description: "A Duration's total length in seconds, for plain epoch-second arithmetic." },
+
+  BuiltinDoc { name: "http.get", parameters: [bp("url", "str")], returnType: "result<http,str>", description: "Sends an HTTP GET request." },
+  BuiltinDoc { name: "http.post", parameters: [bp("url", "str"), bp("body", "str"), bp("contentType", "str")], returnType: "result<http,str>", description: "Sends an HTTP POST request with a text body." },
+  BuiltinDoc { name: "http.put", parameters: [bp("url", "str"), bp("body", "str"), bp("contentType", "str")], returnType: "result<http,str>", description: "Sends an HTTP PUT request with a text body." },
+  BuiltinDoc { name: "http.delete", parameters: [bp("url", "str")], returnType: "result<http,str>", description: "Sends an HTTP DELETE request." },
+  BuiltinDoc { name: "http.request", parameters: [bp("method", "str"), bp("url", "str"), bp("headers", "Map<str,str>"), bp("body", "str")], returnType: "result<http,str>", description: "Sends an HTTP request with a custom method and headers." },
+  BuiltinDoc { name: "http.request_with_limit", parameters: [bp("method", "str"), bp("url", "str"), bp("headers", "Map<str,str>"), bp("body", "str"), bp("maxBytes", "int")], returnType: "result<http,str>", description: "Like http.request, but a response over `maxBytes` returns Ok with a truncated body instead of an error (`maxBytes` <= 0 means unlimited; see http.truncated)." },
+  BuiltinDoc { name: "http.request_bytes", parameters: [bp("method", "str"), bp("url", "str"), bp("headers", "Map<str,str>"), bp("data", "bytes")], returnType: "result<http,str>", description: "Like http.request, with a raw-bytes request body." },
+  BuiltinDoc { name: "http.status", parameters: [bp("response", "http")], returnType: "int", description: "An HTTP response's status code." },
+  BuiltinDoc { name: "http.body", parameters: [bp("response", "http")], returnType: "str", description: "An HTTP response's body as text." },
+  BuiltinDoc { name: "http.content_type", parameters: [bp("response", "http")], returnType: "str", description: "An HTTP response's Content-Type header value." },
+  BuiltinDoc { name: "http.ok", parameters: [bp("response", "http")], returnType: "bool", description: "Whether the response status indicates success (2xx)." },
+  BuiltinDoc { name: "http.body_bytes", parameters: [bp("response", "http")], returnType: "bytes", description: "An HTTP response's body as raw bytes." },
+  BuiltinDoc { name: "http.truncated", parameters: [bp("response", "http")], returnType: "bool", description: "Whether the response body was cut short at a byte limit (always false outside http.request_with_limit)." },
+
+  BuiltinDoc { name: "list.len", parameters: [bp("list", "[T]")], returnType: "int", description: "Number of elements in a list." },
+  BuiltinDoc { name: "list.get", parameters: [bp("list", "[T]"), bp("index", "int")], returnType: "T", description: "The element at `index`; panics if out of bounds." },
+  BuiltinDoc { name: "list.push", parameters: [bp("list", "[T]"), bp("item", "T")], returnType: "[T]", description: "Returns a new list with `item` appended." },
+  BuiltinDoc { name: "list.map", parameters: [bp("list", "[T]"), bp("callback", "(T) -> U")], returnType: "[U]", description: "Returns a new list with `callback` applied to every element." },
+  BuiltinDoc { name: "list.filter", parameters: [bp("list", "[T]"), bp("callback", "(T) -> bool")], returnType: "[T]", description: "Returns a new list containing only the elements for which `callback` returns true." },
+  BuiltinDoc { name: "list.find", parameters: [bp("list", "[T]"), bp("callback", "(T) -> bool")], returnType: "Option<T>", description: "The first element for which `callback` returns true, or None." },
+  BuiltinDoc { name: "list.fold", parameters: [bp("list", "[T]"), bp("initial", "U"), bp("callback", "(U, T) -> U")], returnType: "U", description: "Reduces a list to a single value by applying `callback` left to right, starting from `initial`." },
+
+  BuiltinDoc { name: "map.new", parameters: [], returnType: "Map<any,any>", description: "An empty map; its key/value types are pinned by the first real map.set/map.get used with it." },
+  BuiltinDoc { name: "map.len", parameters: [bp("map", "Map<K,V>")], returnType: "int", description: "Number of entries in a map." },
+  BuiltinDoc { name: "map.get", parameters: [bp("map", "Map<K,V>"), bp("key", "K")], returnType: "Option<V>", description: "The value for `key`, or None if absent." },
+  BuiltinDoc { name: "map.has", parameters: [bp("map", "Map<K,V>"), bp("key", "K")], returnType: "bool", description: "Whether `key` is present." },
+  BuiltinDoc { name: "map.set", parameters: [bp("map", "Map<K,V>"), bp("key", "K"), bp("value", "V")], returnType: "Map<K,V>", description: "Returns a new map with `key` bound to `value`." },
+  BuiltinDoc { name: "map.remove", parameters: [bp("map", "Map<K,V>"), bp("key", "K")], returnType: "Map<K,V>", description: "Returns a new map with `key` removed." },
+  BuiltinDoc { name: "map.keys", parameters: [bp("map", "Map<K,V>")], returnType: "[K]", description: "All keys, in unspecified order." },
+  BuiltinDoc { name: "map.values", parameters: [bp("map", "Map<K,V>")], returnType: "[V]", description: "All values, in unspecified order." },
+  BuiltinDoc { name: "map.map", parameters: [bp("map", "Map<K,V>"), bp("callback", "(V) -> U")], returnType: "Map<K,U>", description: "Returns a new map with `callback` applied to every value; keys pass through unchanged." },
+  BuiltinDoc { name: "map.filter", parameters: [bp("map", "Map<K,V>"), bp("callback", "(V) -> bool")], returnType: "Map<K,V>", description: "Returns a new map containing only the entries whose value `callback` returns true for." },
+  BuiltinDoc { name: "map.fold", parameters: [bp("map", "Map<K,V>"), bp("initial", "U"), bp("callback", "(U, V) -> U")], returnType: "U", description: "Reduces a map's values to a single value by applying `callback`, starting from `initial`." },
+
+  BuiltinDoc { name: "result.ok", parameters: [bp("value", "T")], returnType: "result<T,str>", description: "Wraps a value as a successful result." },
+  BuiltinDoc { name: "result.err", parameters: [bp("message", "str")], returnType: "result<any,str>", description: "Wraps an error message as a failed result." },
+  BuiltinDoc { name: "result.is_ok", parameters: [bp("result", "result<T,str>")], returnType: "bool", description: "Whether a result is Ok." },
+  BuiltinDoc { name: "result.value", parameters: [bp("result", "result<T,str>")], returnType: "T", description: "The success value; panics if the result is Err." },
+  BuiltinDoc { name: "result.error", parameters: [bp("result", "result<T,str>")], returnType: "str", description: "The error message; panics if the result is Ok." },
+  BuiltinDoc { name: "result.to_result", parameters: [bp("result", "result<T,str>")], returnType: "result<T,str>", description: "Normalizes any result-shaped value (lowercase result or the Result enum) to the same runtime representation." },
+
+  BuiltinDoc { name: "fixture.temp_dir", parameters: [], returnType: "str", description: "Creates and returns the path to a fresh, uniquely named temporary directory." },
+  BuiltinDoc { name: "fixture.cleanup", parameters: [bp("path", "str")], returnType: "bool", description: "Recursively removes a directory (typically one created by fixture.temp_dir)." },
+
+  BuiltinDoc { name: "bytes.from_str", parameters: [bp("text", "str")], returnType: "bytes", description: "Converts text to bytes." },
+  BuiltinDoc { name: "bytes.to_str", parameters: [bp("data", "bytes")], returnType: "str", description: "Converts bytes to text." },
+  BuiltinDoc { name: "bytes.length", parameters: [bp("data", "bytes")], returnType: "int", description: "Number of bytes." },
+
+  BuiltinDoc { name: "expect.equal", parameters: [bp("actual", "T"), bp("expected", "T")], returnType: "bool", description: "Asserts two values are equal; fails the current test if not." },
+  BuiltinDoc { name: "expect.true", parameters: [bp("value", "bool")], returnType: "bool", description: "Asserts a value is true; fails the current test if not." },
+  BuiltinDoc { name: "expect.ok", parameters: [bp("result", "result<T,str>")], returnType: "bool", description: "Asserts a result is Ok; fails the current test if not." },
+  BuiltinDoc { name: "expect.err", parameters: [bp("result", "result<T,str>")], returnType: "bool", description: "Asserts a result is Err; fails the current test if not." },
+  BuiltinDoc { name: "expect.some", parameters: [bp("value", "Option<T>")], returnType: "bool", description: "Asserts an Option is Some; fails the current test if not." },
+
+  BuiltinDoc { name: "expect.exit_code", parameters: [bp("result", "process"), bp("code", "int")], returnType: "bool", description: "Asserts a process result's exit code equals `code`; fails the current test if not." },
+  BuiltinDoc { name: "expect.stdout_contains", parameters: [bp("result", "process"), bp("text", "str")], returnType: "bool", description: "Asserts a process result's captured stdout contains `text`; fails the current test if not." },
+  BuiltinDoc { name: "expect.stderr_contains", parameters: [bp("result", "process"), bp("text", "str")], returnType: "bool", description: "Asserts a process result's captured stderr contains `text`; fails the current test if not." }
+]
+
+// Cross-validates builtinDocs() against builtinNames()/builtinCounts() -
+// the two lists that actually drive compile-time arg-count enforcement
+// (see :2055-2056) and so can never be changed to read from this table
+// instead. Returns "" when every entry lines up (same length, same name
+// at the same index, same parameter count as the matching arity), else a
+// message naming the first mismatch. This is what actually prevents
+// builtinDocs() from silently drifting out of sync with a builtin added,
+// removed, or reordered in the two lists it documents - `api`/`api-docs`
+// check this before printing anything (see their dispatch below), and
+// test.ps1 runs both on every test run.
+fn builtinDocsProblem(): Text = {
+  val names = builtinNames()
+  val counts = builtinCounts()
+  val docs = builtinDocs()
+  var problem = ""
+  if List.len(docs) != List.len(names) then {
+    problem = "builtinDocs has " ++ intToText(List.len(docs)) ++ " entries, builtinNames has " ++ intToText(List.len(names))
+  } else {
+    var index = 0
+    while index < List.len(names) and Text.eq(problem, "") {
+      val doc = List.getOrPanic(docs, index)
+      val expectedName = List.getOrPanic(names, index)
+      val expectedCount = List.getOrPanic(counts, index)
+      if not Text.eq(doc.name, expectedName) then {
+        problem = "builtinDocs[" ++ intToText(index) ++ "] is `" ++ doc.name ++ "`, expected `" ++ expectedName ++ "`"
+      } else if List.len(doc.parameters) != expectedCount then {
+        problem = "builtinDocs `" ++ doc.name ++ "` has " ++ intToText(List.len(doc.parameters)) ++ " documented parameter(s), builtinCounts says " ++ intToText(expectedCount)
+      }
+      index = index + 1
+    }
+  }
+  problem
+}
+
 // activeNames used to be a single combined List<Text> that every closure
 // parameter and match-arm binding got pushed onto with List.push (a full
 // copy of the whole thing per push - see BENCHMARKS.md's "two remaining
@@ -8070,13 +8255,23 @@ fn apiManifest(): Text = {
   }
   JsonValue.set(root, "features", features)
   val functions = Json.array()
-  val names = builtinNames()
-  val counts = builtinCounts()
+  val docs = builtinDocs()
   var index = 0
-  while index < List.len(names) {
+  while index < List.len(docs) {
+    val doc = List.getOrPanic(docs, index)
     val item = Json.object()
-    JsonValue.set(item, "name", Json.string(List.getOrPanic(names, index)))
-    JsonValue.set(item, "arity", Json.int(List.getOrPanic(counts, index)))
+    JsonValue.set(item, "name", Json.string(doc.name))
+    JsonValue.set(item, "arity", Json.int(List.len(doc.parameters)))
+    val parameters = Json.array()
+    for parameter in doc.parameters {
+      val parameterItem = Json.object()
+      JsonValue.set(parameterItem, "name", Json.string(parameter.name))
+      JsonValue.set(parameterItem, "type", Json.string(parameter.ptype))
+      JsonValue.push(parameters, parameterItem)
+    }
+    JsonValue.set(item, "parameters", parameters)
+    JsonValue.set(item, "returnType", Json.string(doc.returnType))
+    JsonValue.set(item, "description", Json.string(doc.description))
     JsonValue.push(functions, item)
     index = index + 1
   }
@@ -8084,28 +8279,36 @@ fn apiManifest(): Text = {
   Json.stringify(root)
 }
 
-// Renders the same builtinNames()/builtinCounts() data apiManifest()
-// already turns into JSON as human-readable Markdown instead, grouped
-// into a section per namespace (the text before the first ".") as the
-// already-namespace-ordered list is walked - can never drift from the
-// real compiler since it's the identical source `lume api` reads, not
-// a hand-maintained duplicate.
+// Renders the same builtinDocs() data apiManifest() already turns into
+// JSON as human-readable Markdown instead, grouped into a section per
+// namespace (the text before the first ".") as the already-namespace-
+// ordered list is walked - can never drift from the real compiler's own
+// arg-count enforcement since builtinDocsProblem (checked by both
+// commands' dispatch, not here - these stay plain data-to-text functions)
+// cross-validates it against builtinNames()/builtinCounts() on every run.
 fn builtinReferenceMarkdown(): Text = {
-  val names = builtinNames()
-  val counts = builtinCounts()
+  val docs = builtinDocs()
   var output = "# Lume Builtin Reference\n\n"
-  output = output ++ "Generated from `builtinNames()`/`builtinCounts()` in `src/lume.cto` (the same source `lume api` reads) by `lume api-docs` - do not hand-edit; regenerated on every build. For usage and semantics, see `docs/using-lume-the-fast-one.md`.\n\n"
+  output = output ++ "Generated from `builtinDocs()` in `src/lume.cto` (the same source `lume api` reads) by `lume api-docs` - do not hand-edit; regenerated on every build. For usage and semantics, see `docs/using-lume-the-fast-one.md`.\n\n"
   var currentNamespace = ""
   var index = 0
-  while index < List.len(names) {
-    val name = List.getOrPanic(names, index)
-    val namespace = beforeDot(name)
+  while index < List.len(docs) {
+    val doc = List.getOrPanic(docs, index)
+    val namespace = beforeDot(doc.name)
     if not Text.eq(namespace, currentNamespace) then {
       if not Text.eq(currentNamespace, "") then { output = output ++ "\n" }
       output = output ++ "## " ++ namespace ++ "\n\n"
       currentNamespace = namespace
     }
-    output = output ++ "- `" ++ name ++ "` - " ++ intToText(List.getOrPanic(counts, index)) ++ " argument(s)\n"
+    var parameterText = ""
+    var parameterIndex = 0
+    while parameterIndex < List.len(doc.parameters) {
+      if parameterIndex > 0 then { parameterText = parameterText ++ ", " }
+      val parameter = List.getOrPanic(doc.parameters, parameterIndex)
+      parameterText = parameterText ++ parameter.name ++ ": " ++ parameter.ptype
+      parameterIndex = parameterIndex + 1
+    }
+    output = output ++ "- `" ++ doc.name ++ "(" ++ parameterText ++ ") -> " ++ doc.returnType ++ "` - " ++ doc.description ++ "\n"
     index = index + 1
   }
   output
@@ -8224,9 +8427,17 @@ fn main(): Unit [io] = {
   val jsonDiagnostics = Text.eq(arg(3) ?? "", "--json")
   val testJson = hasFlag("--json")
   if Text.eq(command, "api") then {
-    println(apiManifest())
+    val docsProblem = builtinDocsProblem()
+    if not Text.eq(docsProblem, "") then {
+      eprintln("builtinDocs inconsistent with builtinNames/builtinCounts: " ++ docsProblem)
+      Process.quit(1)
+    } else { println(apiManifest()) }
   } else if Text.eq(command, "api-docs") then {
-    println(builtinReferenceMarkdown())
+    val docsProblem = builtinDocsProblem()
+    if not Text.eq(docsProblem, "") then {
+      eprintln("builtinDocs inconsistent with builtinNames/builtinCounts: " ++ docsProblem)
+      Process.quit(1)
+    } else { println(builtinReferenceMarkdown()) }
   } else if Text.eq(command, "ai-reference") then {
     println(aiReference())
   } else if Text.eq(command, "lsp") then {
