@@ -5925,6 +5925,39 @@ fn loadPackageContext(dir: Text): PackageContext [io] = {
   } else { PackageContext { allDeps: [], visibleDeps: [], problem: "" } }
 }
 
+// Reads a prior `lume.lock.json`'s "resolved" array back into the same
+// `ResolvedDep` shape `computeLockContent` builds fresh - lets a plain
+// `lume install` compare a newly-declared git dependency against what was
+// already pinned last time, instead of blindly re-resolving `ref` against
+// the live remote on every call (see findExistingPin/resolveDependencies's
+// `existingPins` parameter). Absent or malformed lock file is treated as
+// "no prior pins," not an error - matches loadPackageContext's own
+// missing-file handling, and an unparseable lock file is caught elsewhere
+// (loadPackageContext, on the read side) rather than duplicated here.
+fn readExistingResolvedDeps(lockPath: Text): List<ResolvedDep> [io] = {
+  if let Some(source) = readFile(lockPath) {
+    val root = Json.parse(source)
+    val depsArray = JsonValue.get(root, "resolved")
+    var deps: List<ResolvedDep> = []
+    if JsonValue.isObject(root) and JsonValue.isArray(depsArray) then {
+      var index = 0
+      while index < JsonValue.length(depsArray) {
+        val entry = Json.parse(JsonValue.atText(depsArray, index))
+        deps = List.push(deps, ResolvedDep {
+          name: JsonValue.asText(JsonValue.get(entry, "name")),
+          path: JsonValue.asText(JsonValue.get(entry, "path")),
+          version: JsonValue.asText(JsonValue.get(entry, "version")),
+          dependencyNames: readDependencyNames(JsonValue.get(entry, "dependencies")),
+          git: JsonValue.asText(JsonValue.get(entry, "git")),
+          ref: JsonValue.asText(JsonValue.get(entry, "ref"))
+        })
+        index = index + 1
+      }
+    }
+    deps
+  } else { [] }
+}
+
 fn resolveModulePath(path: Text, moduleName: Text, visibleDeps: List<PackageDep>): ModulePathResult = {
   val dot = Text.indexOf(moduleName, ".") ?? -1
   val head = if dot >= 0 then Text.slice(moduleName, 0, dot) else moduleName
@@ -6084,6 +6117,25 @@ fn findResolvedPath(resolved: List<ResolvedDep>, name: Text): Text? = {
     if Text.eq(dep.name, name) then {
       found = true
       path = dep.path
+    }
+    index = index + 1
+  }
+  if found then Some(path) else None
+}
+
+// A prior lock entry is only trusted as a pin when `name`/`git`/`ref` all
+// match exactly what's newly declared - any change to the declared `git`
+// URL or `ref` string is a deliberate developer action, not drift, and
+// must re-resolve rather than reuse a now-unrelated cached path.
+fn findExistingPin(pins: List<ResolvedDep>, name: Text, git: Text, ref: Text): Text? = {
+  var index = 0
+  var found = false
+  var path = ""
+  while index < List.len(pins) and not found {
+    val pin = List.getOrPanic(pins, index)
+    if Text.eq(pin.name, name) and Text.eq(pin.git, git) and Text.eq(pin.ref, ref) then {
+      found = true
+      path = pin.path
     }
     index = index + 1
   }
@@ -6301,7 +6353,7 @@ fn resolveGitDependency(gitUrl: Text, ref: Text): Result<Text, Text> [io] = {
   if Text.eq(problem, "") then Ok(resultPath) else Err(problem)
 }
 
-fn resolveDependencies(rootDir: Text, rootRelative: Text, active: List<Text>, activeGitRefs: List<Text>, resolved: List<ResolvedDep>): ResolveOutcome [io] = {
+fn resolveDependencies(rootDir: Text, rootRelative: Text, active: List<Text>, activeGitRefs: List<Text>, resolved: List<ResolvedDep>, existingPins: List<ResolvedDep>, respectPins: Bool): ResolveOutcome [io] = {
   val manifestPath = Path.join(packageDirPath(rootDir, rootRelative), "lume.json")
   if let Some(source) = readFile(manifestPath) {
     val depsArray = JsonValue.get(Json.parse(source), "dependencies")
@@ -6340,7 +6392,22 @@ fn resolveDependencies(rootDir: Text, rootRelative: Text, active: List<Text>, ac
           // the literal, no-clone-needed case.
           problem = "E0709 dependency cycle at `" ++ depName ++ "`"
         } else {
-          val gitResolution = if hasGit then resolveGitDependency(declaredGit, declaredRef) else Ok("")
+          // A pin from a prior `lume.lock.json` is trusted as-is (no
+          // network touched at all) only when this exact (name, git, ref)
+          // triple was already resolved before AND `respectPins` allows it
+          // (plain `install` without `--update` - see installPackages) AND
+          // the cached directory it points at still actually exists. Any
+          // change to the declared `git`/`ref`, `--update`, `--check`, or a
+          // cache directory that's since been cleared all fall straight
+          // through to the exact same resolveGitDependency call that ran
+          // unconditionally before this - a missing/stale pin is never a
+          // new failure mode, only ever a reason to re-resolve for real.
+          val pinnedPath = if hasGit and respectPins then findExistingPin(existingPins, depName, declaredGit, declaredRef) else None
+          val gitResolution =
+            if let Some(pinned) = pinnedPath {
+              if isDirectory(pinned) then Ok(pinned) else resolveGitDependency(declaredGit, declaredRef)
+            } else if hasGit then resolveGitDependency(declaredGit, declaredRef)
+            else Ok("")
           if let Err(message) = gitResolution {
             problem = message
           } else if let Ok(gitPath) = gitResolution {
@@ -6371,7 +6438,7 @@ fn resolveDependencies(rootDir: Text, rootRelative: Text, active: List<Text>, ac
                 val depDependencyNames = readManifestDependencyNames(depManifestPath)
                 currentResolved = List.push(currentResolved, ResolvedDep { name: depName, path: depRootRelative, version: depVersion, dependencyNames: depDependencyNames, git: if hasGit then declaredGit else "", ref: if hasGit then declaredRef else "" })
                 val nextActiveGitRefs = if hasGit then List.push(activeGitRefs, gitRefKey) else activeGitRefs
-                val nested = resolveDependencies(rootDir, depRootRelative, List.push(active, depRootRelative), nextActiveGitRefs, currentResolved)
+                val nested = resolveDependencies(rootDir, depRootRelative, List.push(active, depRootRelative), nextActiveGitRefs, currentResolved, existingPins, respectPins)
                 if not Text.eq(nested.problem, "") then { problem = nested.problem }
                 else { currentResolved = nested.resolved }
               } else if let Err(message) = readManifestVersion(depManifestPath) {
@@ -6467,11 +6534,15 @@ fn hashPackageSource(packageDir: Text): Text [io] = {
 // actual writing - shared by plain `lume install` (writes this) and
 // `lume install --check` (compares this against what's already on disk
 // instead, to catch a manifest that changed since the lock file was
-// last generated without re-running install).
-fn computeLockContent(dir: Text, manifestPath: Text): Result<Text, Text> = {
+// last generated without re-running install). `respectPins` is only ever
+// true for a plain install without `--update` - `--check` always passes
+// false, so its own re-resolution stays exactly as strict as before this
+// change (still catches a floating ref that moved as drift, on purpose).
+fn computeLockContent(dir: Text, manifestPath: Text, respectPins: Bool): Result<Text, Text> = {
   if let Err(message) = readManifestVersion(manifestPath) { Err(message) }
   else {
-    val outcome = resolveDependencies(dir, "", [], [], [])
+    val existingPins = readExistingResolvedDeps(Path.join(dir, "lume.lock.json"))
+    val outcome = resolveDependencies(dir, "", [], [], [], existingPins, respectPins)
     if not Text.eq(outcome.problem, "") then { Err(outcome.problem) }
     else {
       val lockDeps = Json.array()
@@ -6513,9 +6584,12 @@ fn computeLockContent(dir: Text, manifestPath: Text): Result<Text, Text> = {
   }
 }
 
-fn installPackages(dir: Text, checkOnly: Bool): Unit [io] = {
+fn installPackages(dir: Text, checkOnly: Bool, forceUpdate: Bool): Unit [io] = {
   val manifestPath = Path.join(dir, "lume.json")
-  val computed = computeLockContent(dir, manifestPath)
+  // `--check` always re-resolves fully (unaffected by pinning - it exists
+  // specifically to catch drift, including a floating ref that moved);
+  // a plain install respects an existing pin unless `--update` overrides it.
+  val computed = computeLockContent(dir, manifestPath, not checkOnly and not forceUpdate)
   if let Err(message) = computed {
     eprintln(message)
     Process.quit(1)
@@ -8046,7 +8120,7 @@ fn main(): Unit [io] = {
       Process.quit(1)
     } else { runCode(artifact.code) }
   } else if Text.eq(command, "install") then {
-    installPackages(path, hasFlag("--check"))
+    installPackages(path, hasFlag("--check"), hasFlag("--update"))
   } else if let Some(entries) = listDir(path) {
     if not Text.eq(command, "test") then {
       eprintln("command `" ++ command ++ "` requires a file")

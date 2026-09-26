@@ -1033,9 +1033,25 @@ entry. Resolving `ref` prefers the cheapest option that's still
 correct: a literal commit SHA is checked against the cache with no
 network at all, and a branch or tag tries a single lightweight
 `git ls-remote` round-trip before falling back to a real `git clone` +
-`checkout` — so a repeat `install`/`--check` against an unchanged `ref`
-still needs *some* network access (unlike a purely local-path project's
-fully offline check), but not a full clone every time. A dependency
+`checkout` — so a repeat `--check` against an unchanged `ref` still needs
+*some* network access (unlike a purely local-path project's fully offline
+check), but not a full clone every time.
+
+A plain `install` goes further: if `lume.lock.json` already has an entry
+for this exact `name`/`git`/`ref` triple, `install` trusts that
+previously-resolved commit outright and skips resolving `ref` at all —
+no `ls-remote`, no clone, no network touched for that dependency. This is
+what makes a committed lock file actually mean something for a `git`
+dependency pinned to a branch or tag: without it, every plain `install`
+would silently re-resolve the floating `ref` against whatever the remote
+currently serves and overwrite the lock file to match, which defeats the
+point of committing a lock file in the first place. Editing the
+dependency's declared `git`/`ref` in `lume.json` is a deliberate choice,
+not drift, so it still resolves immediately without any flag. To
+intentionally pick up a moved branch or tag tip, run `lume install --update`,
+which re-resolves every `git` dependency regardless of what's already
+pinned. `--check` is unaffected by any of this — it always fully
+re-resolves and still reports a moved `ref` as an out-of-date lock file. A dependency
 entry must declare exactly one of `path`/`git` — both or neither, or
 `git` without `ref`, is `E0747`; a `git` command that fails (bad URL, a
 `ref` that doesn't exist) is `E0748`. Everything past that — cycle
