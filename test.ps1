@@ -629,7 +629,10 @@ $apiDocs = & $Lume api-docs
 if ($LASTEXITCODE -ne 0) { throw "api-docs exited $LASTEXITCODE" }
 Assert-Equal 'api-docs starts with the reference heading' '# Lume Builtin Reference' ($apiDocs | Select-Object -First 1)
 Assert-Contains 'api-docs groups builtins by namespace' '## str' ($apiDocs -join "`n")
-Assert-Contains 'api-docs lists a known builtin with its real signature and description' '- `str.upper(value: str) -> str` - Converts to uppercase.' ($apiDocs -join "`n")
+Assert-Contains 'api-docs lists a known builtin with its real signature' '- `str.upper(value: str) -> str`' ($apiDocs -join "`n")
+Assert-Contains 'api-docs lists a known builtin with its description' 'Converts to uppercase.' ($apiDocs -join "`n")
+Assert-Contains 'api-docs lists a known builtin with its example' 'Example: `str.upper("hi") // "HI"`' ($apiDocs -join "`n")
+Assert-Contains 'api-docs lists a real error code where one exists' 'Errors: E0316 if `index` is out of bounds.' ($apiDocs -join "`n")
 
 $apiJson = (& $Lume api) -join "`n" | ConvertFrom-Json
 if ($LASTEXITCODE -ne 0) { throw "api exited $LASTEXITCODE" }
@@ -638,9 +641,14 @@ Assert-Equal 'api: list.get has two documented parameters' '2' ($listGet.paramet
 Assert-Equal 'api: list.get parameter names are list, index' 'list,index' ($listGet.parameters.name -join ',')
 Assert-Equal 'api: list.get returns T' 'T' $listGet.returnType
 if ([string]::IsNullOrWhiteSpace($listGet.description)) { throw 'api: list.get has no description' }
+if ([string]::IsNullOrWhiteSpace($listGet.example)) { throw 'api: list.get has no example' }
+Assert-Equal 'api: list.get has a real failure mode (a genuine runtime-only panic)' 'E0316 if `index` is out of bounds.' $listGet.failureMode
+$strUpper = $apiJson.builtins | Where-Object { $_.name -eq 'str.upper' }
+Assert-Equal 'api: str.upper cannot fail once correctly typed (no failure mode)' '' $strUpper.failureMode
 $mapFold = $apiJson.builtins | Where-Object { $_.name -eq 'map.fold' }
 Assert-Equal 'api: map.fold has three documented parameters' '3' ($mapFold.parameters.Count)
 if ([string]::IsNullOrWhiteSpace($mapFold.description)) { throw 'api: map.fold has no description' }
+if ([string]::IsNullOrWhiteSpace($mapFold.example)) { throw 'api: map.fold has no example' }
 
 # Timing output isn't a good fit for exact-match assertions (matches the
 # existing `benchmark` command, which has zero test.ps1 coverage of its own
