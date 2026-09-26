@@ -616,16 +616,31 @@ $check = & $Lume check (Join-Path $PSScriptRoot 'examples\arithmetic.lume')
 if ($LASTEXITCODE -ne 0) { throw "check exited $LASTEXITCODE" }
 Assert-Equal 'check' 'ok' ($check -join "`n")
 
-# api-docs renders builtinNames()/builtinCounts() as Markdown instead of
-# JSON (lume api's own format) - same source data, so it can't drift from
-# the compiler. Anchor on a couple of stable lines rather than the whole
-# multi-hundred-line body, matching this file's light-touch style for
-# build-output commands.
+# api-docs renders builtinDocs() as Markdown instead of JSON (lume api's
+# own format) - same source data, so it can't drift from the compiler.
+# Both commands check builtinDocsProblem() first (a hard-coded exit 1 on
+# any mismatch against builtinNames()/builtinCounts(), the two lists that
+# actually drive arg-count enforcement) - running them here is what
+# actually exercises that consistency check on every test run, not just
+# the specific assertions below. Anchor on a couple of stable lines rather
+# than the whole multi-hundred-line body, matching this file's light-touch
+# style for build-output commands.
 $apiDocs = & $Lume api-docs
 if ($LASTEXITCODE -ne 0) { throw "api-docs exited $LASTEXITCODE" }
 Assert-Equal 'api-docs starts with the reference heading' '# Lume Builtin Reference' ($apiDocs | Select-Object -First 1)
 Assert-Contains 'api-docs groups builtins by namespace' '## str' ($apiDocs -join "`n")
-Assert-Contains 'api-docs lists a known builtin with its arity' '- `str.upper` - 1 argument(s)' ($apiDocs -join "`n")
+Assert-Contains 'api-docs lists a known builtin with its real signature and description' '- `str.upper(value: str) -> str` - Converts to uppercase.' ($apiDocs -join "`n")
+
+$apiJson = (& $Lume api) -join "`n" | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0) { throw "api exited $LASTEXITCODE" }
+$listGet = $apiJson.builtins | Where-Object { $_.name -eq 'list.get' }
+Assert-Equal 'api: list.get has two documented parameters' '2' ($listGet.parameters.Count)
+Assert-Equal 'api: list.get parameter names are list, index' 'list,index' ($listGet.parameters.name -join ',')
+Assert-Equal 'api: list.get returns T' 'T' $listGet.returnType
+if ([string]::IsNullOrWhiteSpace($listGet.description)) { throw 'api: list.get has no description' }
+$mapFold = $apiJson.builtins | Where-Object { $_.name -eq 'map.fold' }
+Assert-Equal 'api: map.fold has three documented parameters' '3' ($mapFold.parameters.Count)
+if ([string]::IsNullOrWhiteSpace($mapFold.description)) { throw 'api: map.fold has no description' }
 
 # Timing output isn't a good fit for exact-match assertions (matches the
 # existing `benchmark` command, which has zero test.ps1 coverage of its own
