@@ -648,6 +648,33 @@ empty typed map:
 let headers = map.remove(map.set(map.new(), "placeholder", "value"), "placeholder")
 ```
 
+That single-expression idiom only fixes the type of an empty map you build once.
+It doesn't help when the entries come from a runtime-determined sequence, and
+the pattern most people reach for there — a `var` seeded with `map.new()`,
+reassigned inside a loop — does not work, because `var`/`let` have no
+type-annotation syntax (section 4) to pin the map's type before the loop
+body's first `map.set` runs:
+
+```lume
+var m = map.new()
+var i = 0
+while i < list.len(pairs) {
+  m = map.set(m, list.get(pairs, i).key, list.get(pairs, i).value)  // E0611: cannot assign Map<str, int> to Map<any, any>
+  i = i + 1
+}
+```
+
+Build it with `list.fold` instead, using a named helper function whose
+signature pins the accumulator's type:
+
+```lume
+fn addPair(acc: Map<str, int>, pair: Pair) -> Map<str, int> {
+  return map.set(acc, pair.key, pair.value)
+}
+
+let m = list.fold(pairs, map.new(), &addPair)
+```
+
 ## 12. JSON: encoding and decoding
 
 Decode JSON directly into a record schema — `Type.from_json(text)` returns
