@@ -1413,10 +1413,13 @@ Pop-Location
 $mathutilsSha = (git --git-dir="$mathutilsRemote" rev-parse v1.0.0).Trim()
 $mathutilsRemoteUrl = $mathutilsRemote -replace '\\', '/'
 
-function New-GitDepApp([string]$Name, [string]$Ref) {
+function New-GitDepApp([string]$Name, [string]$Ref, [string]$SignedBy = '') {
   $dir = Join-Path $gitFixtureRoot $Name
   New-Item -ItemType Directory -Path $dir -Force | Out-Null
-  $manifest = '{"name":"' + $Name + '","version":"0.1.0","dependencies":[{"name":"mathutils","git":"' + $mathutilsRemoteUrl + '","ref":"' + $Ref + '"}]}'
+  $depEntry = '{"name":"mathutils","git":"' + $mathutilsRemoteUrl + '","ref":"' + $Ref + '"'
+  if ($SignedBy -ne '') { $depEntry += ',"signedBy":"' + $SignedBy + '"' }
+  $depEntry += '}'
+  $manifest = '{"name":"' + $Name + '","version":"0.1.0","dependencies":[' + $depEntry + ']}'
   Set-Content -LiteralPath (Join-Path $dir 'lume.json') -Value $manifest -NoNewline
   Set-Content -LiteralPath (Join-Path $dir 'app.lume') -Value "use mathutils.ops`n`nfn main(args: [str]) -> int {`n  print(ops.square(7))`n  return 0`n}" -NoNewline
   return $dir
@@ -1496,6 +1499,107 @@ if ($LASTEXITCODE -ne 0) { throw "lock pin: install after editing the declared r
 $pinLockAfterRefEdit = (Get-Content -LiteralPath $pinLockPath -Raw) | ConvertFrom-Json
 $pinShaAfterRefEdit = $pinLockAfterRefEdit.resolved[0].path -replace '^.*[\\/]', ''
 Assert-Equal 'lock pin: editing the declared ref re-resolves immediately, no --update needed' $mathutilsSha $pinShaAfterRefEdit
+
+# signedBy: GPG commit-signature verification. Needs a hermetic, offline
+# GPG identity - an ephemeral keypair generated into a temp GNUPGHOME with
+# a fully-scripted, no-passphrase parameter file, never touching the test
+# harness's own ambient GPG state. `gpg.exe` (this MSYS2-linked Git-for-
+# Windows build) never recognizes a native Windows-style path as absolute
+# for --homedir/GNUPGHOME - confirmed live it silently treats it as
+# relative and prepends the cwd instead of erroring clearly - so the temp
+# path is converted to MSYS drive form (`C:\x\y` -> `/c/x/y`) before being
+# assigned. No `-c gpg.program=...` override is needed anywhere: `git
+# verify-commit`/`git commit -S` find their own bundled `gpg` automatically
+# even with nothing on PATH (confirmed live on this machine).
+function ConvertTo-MsysPath([string]$WindowsPath) {
+  $drive = $WindowsPath.Substring(0, 1).ToLower()
+  $rest = $WindowsPath.Substring(2) -replace '\\', '/'
+  return "/$drive$rest"
+}
+
+# gpg-agent binds a Unix-domain socket inside GNUPGHOME (`S.gpg-agent`) and
+# refuses to start with "socket name ... is too long" once the full path
+# gets much past ~80 characters (confirmed live, empirically: 81 chars
+# succeeded, 86+ failed) - nesting under `$gitFixtureRoot` (already a
+# 14-char prefix plus a 32-char GUID) blows well past that, so these get
+# their own short, dedicated temp directories instead, not reused from the
+# git fixture root the rest of this block builds under.
+$gpgHome1Win = Join-Path ([System.IO.Path]::GetTempPath()) ('lg1' + [System.Guid]::NewGuid().ToString('N').Substring(0, 8))
+$gpgHome2Win = Join-Path ([System.IO.Path]::GetTempPath()) ('lg2' + [System.Guid]::NewGuid().ToString('N').Substring(0, 8))
+New-Item -ItemType Directory -Path $gpgHome1Win -Force | Out-Null
+New-Item -ItemType Directory -Path $gpgHome2Win -Force | Out-Null
+$gpgHome1 = ConvertTo-MsysPath $gpgHome1Win
+$gpgHome2 = ConvertTo-MsysPath $gpgHome2Win
+
+function New-EphemeralGpgKey([string]$GnupgHome, [string]$Email) {
+  # Bare `gpg` is not resolvable on PATH under plain PowerShell on this kind
+  # of setup (confirmed live: `Get-Command gpg` finds nothing even though
+  # Git for Windows ships it) - unlike `git verify-commit`/`git commit -S`,
+  # which find their own bundled `gpg` internally regardless of PATH, a
+  # direct `gpg` invocation (only needed here, for key generation/listing)
+  # needs its full path resolved explicitly.
+  $gpgExe = Join-Path $env:ProgramFiles 'Git\usr\bin\gpg.exe'
+  $paramFile = Join-Path $gitFixtureRoot ("gpg-keyparams-" + [System.Guid]::NewGuid().ToString('N'))
+  $params = "%no-protection`nKey-Type: eddsa`nKey-Curve: ed25519`nKey-Usage: sign`nName-Real: Lume Test Key`nName-Email: $Email`nExpire-Date: 0`n%commit`n"
+  Set-Content -LiteralPath $paramFile -Value $params -NoNewline
+  $savedHome = $env:GNUPGHOME
+  $env:GNUPGHOME = $GnupgHome
+  & $gpgExe --batch --gen-key $paramFile 2>&1 | Out-Null
+  $fprLine = (& $gpgExe --list-secret-keys --with-colons 2>$null) -split "`n" | Where-Object { $_ -like 'fpr:*' } | Select-Object -First 1
+  $env:GNUPGHOME = $savedHome
+  Remove-Item -LiteralPath $paramFile -Force
+  return ($fprLine -split ':')[9]
+}
+
+$signerFpr = New-EphemeralGpgKey $gpgHome1 'lume-test-signer@example.com'
+$otherFpr = New-EphemeralGpgKey $gpgHome2 'lume-test-other@example.com'
+
+$savedGnupgHome = $env:GNUPGHOME
+$env:GNUPGHOME = $gpgHome1
+Push-Location $mathutilsWork
+Set-Content -LiteralPath (Join-Path $mathutilsWork 'ops.lume') -Value "pub fn ops.square(value: int) -> int {`n  return value * value`n}`n`npub fn ops.cube(value: int) -> int {`n  return value * value * value`n}`n`npub fn ops.quad(value: int) -> int {`n  return value * value * value * value`n}" -NoNewline
+git add -A
+git -c user.email=test@lume.dev -c user.name=lume-test -c user.signingkey=$signerFpr commit -q -S -m 'mathutils: add quad, signed'
+# A second, distinct signed commit - the "wrong signer" case below must not
+# reuse the exact commit `git-app-signed-ok` just resolved: resolveGitDependency's
+# cache is keyed by (url, resolved commit) only, not by which `signedBy` a
+# caller expected, so a raw-SHA `ref` that's already cached from an earlier,
+# correctly-verified install would hit that cache and skip verification
+# entirely, never actually exercising the mismatch path this test exists
+# to check.
+Set-Content -LiteralPath (Join-Path $mathutilsWork 'ops.lume') -Value "pub fn ops.square(value: int) -> int {`n  return value * value`n}`n`npub fn ops.cube(value: int) -> int {`n  return value * value * value`n}`n`npub fn ops.quad(value: int) -> int {`n  return value * value * value * value`n}`n`npub fn ops.pow5(value: int) -> int {`n  return value * value * value * value * value`n}" -NoNewline
+git add -A
+git -c user.email=test@lume.dev -c user.name=lume-test -c user.signingkey=$signerFpr commit -q -S -m 'mathutils: add pow5, signed'
+git push -q origin main
+Pop-Location
+$remoteHistory = (git --git-dir="$mathutilsRemote" rev-list main -n 2) -split "`n"
+$mathutilsSignedSha = $remoteHistory[1]
+$mathutilsSignedSha2 = $remoteHistory[0]
+
+$signedOkAppDir = New-GitDepApp 'git-app-signed-ok' $mathutilsSignedSha $signerFpr
+$signedOkOut = & $Lume install $signedOkAppDir
+if ($LASTEXITCODE -ne 0) { throw "signedBy: install with the correct signer exited $LASTEXITCODE : $signedOkOut" }
+$signedOkLock = (Get-Content -LiteralPath (Join-Path $signedOkAppDir 'lume.lock.json') -Raw) | ConvertFrom-Json
+Assert-Equal 'signedBy: install succeeds and resolves correctly when the commit is signed by the declared key' $mathutilsSignedSha ($signedOkLock.resolved[0].path -replace '^.*[\\/]', '')
+Assert-Equal 'signedBy: lock records the declared signedBy fingerprint' $signerFpr $signedOkLock.resolved[0].signedBy
+
+$signedWrongAppDir = New-GitDepApp 'git-app-signed-wrong' $mathutilsSignedSha2 $otherFpr
+$signedWrongOut = & $Lume install $signedWrongAppDir 2>&1
+if ($LASTEXITCODE -ne 1) { throw "signedBy: install with a mismatched signer should exit 1" }
+Assert-Contains 'signedBy: a commit signed by an unexpected key reports E0754' 'E0754' ($signedWrongOut -join "`n")
+
+$signedMissingAppDir = New-GitDepApp 'git-app-signed-missing' 'v1.0.0' $signerFpr
+$signedMissingOut = & $Lume install $signedMissingAppDir 2>&1
+if ($LASTEXITCODE -ne 1) { throw "signedBy: install against an unsigned commit should exit 1" }
+Assert-Contains 'signedBy: an unsigned commit reports E0753' 'E0753' ($signedMissingOut -join "`n")
+
+$env:GNUPGHOME = $savedGnupgHome
+
+$noSignedByAppDir = New-GitDepApp 'git-app-signed-not-required' $mathutilsSignedSha
+$noSignedByOut = & $Lume install $noSignedByAppDir
+if ($LASTEXITCODE -ne 0) { throw "signedBy: install against a signed commit with no signedBy declared exited $LASTEXITCODE" }
+$noSignedByLock = (Get-Content -LiteralPath (Join-Path $noSignedByAppDir 'lume.lock.json') -Raw) | ConvertFrom-Json
+Assert-Equal 'signedBy: no signedBy declared means no verification attempted, regardless of the commit actually being signed' $mathutilsSignedSha ($noSignedByLock.resolved[0].path -replace '^.*[\\/]', '')
 
 # Malformed entries: both `path`/`git`, and `git` without `ref`, both
 # collapse onto the same E0747 - see resolveDependencies's own comment on

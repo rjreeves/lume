@@ -1263,10 +1263,8 @@ things rather than writing the obvious thing.
   full `test.ps1` suite passing unchanged against the rebuilt binary.
   Windows-only - other platforms use a different linker path entirely
   and weren't measured or touched;
-- package signing and checksum verification — the checksum-verification
-  half is now implemented as **lock-pin enforcement**; the signing half
-  (proving *who* published a commit, not just pinning *which* bytes) is
-  still open. Originally deferred for the same reason the sibling "cache
+- ~~package signing and checksum verification~~ **Shipped**, in two
+  phases. Originally deferred for the same reason the sibling "cache
   resolved dependencies by content hash" item above was: every dependency
   was a local filesystem path declared in `lume.json` and pinned in
   `lume.lock.json` - no registry, no remote fetch, no network transport
@@ -1293,16 +1291,30 @@ things rather than writing the obvious thing.
   an unchanged `(name, git, ref)` triple's previously-resolved commit
   outright (`findExistingPin`/`readExistingResolvedDeps`, `src/lume.cto`),
   touching the network for that dependency at all only when there's no
-  prior pin, the declared `git`/`ref` changed, or the new `--update` flag
-  forces it; `--check` is unaffected and still fully re-resolves, so it
-  keeps catching a moved floating `ref` as drift exactly as before. Still
-  genuinely open: `lume.lock.json` records a git dependency's resolved
-  commit SHA, content-addressed by git itself, but nothing verifies the
-  *cloned bytes* match anything beyond what git's own protocol already
-  checks against a *new, never-before-pinned* dependency, and there is
-  still no signing scheme (proving authorship, not just pinning content)
-  at all - a real candidate for design work now, not just a deferred
-  placeholder.
+  prior pin, the declared `git`/`ref`/`signedBy` changed, or the new
+  `--update` flag forces it; `--check` is unaffected and still fully
+  re-resolves, so it keeps catching a moved floating `ref` as drift exactly
+  as before. Signing half, shipped next: an optional `signedBy` manifest
+  field (a GPG primary-key fingerprint) verified via `git verify-commit`
+  (`verifyCommitSignature`, `src/lume.cto`) - git's own native GPG
+  integration, needing no new Certo-level crypto primitive (Certo's entire
+  native crypto surface remains `Crypto.sha256`/`sha256Bytes`/`md5`/
+  `base64Encode`/`base64Decode`, confirmed directly against
+  `Certo/crates/stdlib/src/crypto.rs`, a separate sibling repo). Verification
+  runs against a fresh clone before the commit ever enters the shared
+  cache, deliberately never against an already-cached directory: caught
+  live, by this feature's own test suite, that the clone cache being keyed
+  by `(git URL, resolved commit)` alone - not also by `signedBy` - would
+  otherwise let a commit already cached by an earlier, unrelated
+  resolution silently bypass verification for a later dependency declaring
+  a different expectation; fixed by always re-cloning and re-verifying
+  whenever `signedBy` is declared, rather than trusting either cache-hit
+  shortcut. No unsigned commit or a signature from an unexpected key ever
+  gets cached or accepted (`E0753`/`E0754`). `signedBy` is only as
+  trustworthy as whatever GPG keys the machine running `install` already
+  has imported - same as any git-signed-commit workflow; it checks a
+  signature against a key you already trust, it doesn't manage keys or
+  trust for you.
 - ~~a git-based package source, with no central index — design sketch,
   not yet implemented.~~ **Shipped.** The recurring blocker on registry-adjacent work
   above (signing, content-hash caching, semver ranges) is the same one
