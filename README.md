@@ -261,6 +261,33 @@ still no real version-range resolution or registry yet — `version` is
 recorded for forward compatibility but not yet checked against
 anything.
 
+A dependency can also resolve straight from a git repository instead of
+a local path — no registry, just a direct URL, resolved to a concrete
+commit at install time:
+
+```json
+{ "name": "mathutils", "git": "https://example.com/org/mathutils.git", "ref": "v1.2.0" }
+```
+
+A plain `lume install` trusts an already-pinned `name`/`git`/`ref`
+combination in `lume.lock.json` outright, touching the network only when
+there's no prior pin, the declared `git`/`ref` changed, or `lume install
+--update` explicitly forces re-resolution — this is what makes a
+committed lock file actually protect against a compromised or
+force-pushed remote, instead of silently re-resolving a floating branch
+every time. `lume install --check` (mirroring `npm ci`/`cargo build
+--locked`) re-resolves fully and fails instead of writing if the result
+doesn't match the existing lock file — an offline-friendly CI gate for
+local-path-only projects, and one that needs network access when a git
+dependency's `ref` might have moved.
+
+A git dependency can optionally pin *who* published it, not just *which*
+commit, via `signedBy` (a GPG primary-key fingerprint): `install` then
+runs `git verify-commit` against the resolved commit and rejects it if
+it's unsigned or signed by a different key. See
+[docs/using-lume-the-fast-one.md](docs/using-lume-the-fast-one.md) §19
+for the full walkthrough of both features.
+
 ```powershell
 .\dist\lume.exe check .\examples\arithmetic.lume
 .\dist\lume.exe bytecode .\examples\arithmetic.lume
