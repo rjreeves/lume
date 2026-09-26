@@ -1266,7 +1266,19 @@ fn builtinCounts(): List<Int> = [
 // "type" is a reserved keyword (declares a type), so the field is named
 // `ptype`, not `type`.
 type BuiltinParam = { name: Text, ptype: Text }
-type BuiltinDoc = { name: Text, parameters: List<BuiltinParam>, returnType: Text, description: Text }
+// `failureMode` covers three shapes, deliberately not padded with a
+// code for every entry: reading checkBuiltinTypes/callBuiltin in full
+// found that almost none of the 113 builtins can fail once correctly
+// typed - a `problem = "E0..."` inside callBuiltin that only re-checks
+// something checkBuiltinTypes already guaranteed at compile time isn't
+// a real, reachable failure mode, so it's left out rather than listed
+// for noise. "" means "cannot fail once called with correct argument
+// types" (the vast majority); "Returns Err on failure; never panics."
+// means the builtin already reports failure through the Result it
+// returns; anything else is one of the five genuine runtime-only panics
+// (fs.read_text E0312, json.get E0313, list.get E0316, result.value
+// E0319, result.error E0320), confirmed live against callBuiltin.
+type BuiltinDoc = { name: Text, parameters: List<BuiltinParam>, returnType: Text, description: Text, failureMode: Text, example: Text }
 
 fn bp(name: Text, ptype: Text): BuiltinParam = BuiltinParam { name: name, ptype: ptype }
 
@@ -1280,138 +1292,138 @@ fn bp(name: Text, ptype: Text): BuiltinParam = BuiltinParam { name: name, ptype:
 // builtins use readable placeholders (T/U/K/V) rather than a runtime type
 // string, matching how a human-facing signature is normally written.
 fn builtinDocs(): List<BuiltinDoc> = [
-  BuiltinDoc { name: "args.count", parameters: [], returnType: "int", description: "Number of command-line arguments, excluding the program name." },
-  BuiltinDoc { name: "args.get", parameters: [bp("index", "int")], returnType: "str", description: "The argument at `index`; panics if out of bounds." },
+  BuiltinDoc { name: "args.count", parameters: [], returnType: "int", description: "Number of command-line arguments, excluding the program name.", failureMode: "", example: "args.count() // e.g. 2, if the program was run with two arguments" },
+  BuiltinDoc { name: "args.get", parameters: [bp("index", "int")], returnType: "str", description: "The argument at `index`. Does not panic on an out-of-range index - it returns \"\" instead, the same way a missing environment variable does.", failureMode: "", example: "args.get(0) // the first CLI argument, or \"\" if none was passed" },
 
-  BuiltinDoc { name: "fs.exists", parameters: [bp("path", "str")], returnType: "bool", description: "Whether a file or directory exists at `path`." },
-  BuiltinDoc { name: "fs.read_text", parameters: [bp("path", "str")], returnType: "str", description: "Reads a file's full contents as text; fails at runtime (E0312) if it can't be read." },
-  BuiltinDoc { name: "fs.write_text", parameters: [bp("path", "str"), bp("content", "str")], returnType: "bool", description: "Writes `content` to `path`, creating or overwriting it." },
-  BuiltinDoc { name: "fs.try_read_text", parameters: [bp("path", "str")], returnType: "result<str,str>", description: "Reads a file's full contents as text, returning Err instead of failing on a read error." },
-  BuiltinDoc { name: "fs.try_write_text", parameters: [bp("path", "str"), bp("content", "str")], returnType: "result<bool,str>", description: "Writes `content` to `path`, returning Err instead of failing on a write error." },
-  BuiltinDoc { name: "fs.read_bytes", parameters: [bp("path", "str")], returnType: "result<bytes,str>", description: "Reads a file's full contents as raw bytes." },
-  BuiltinDoc { name: "fs.write_bytes", parameters: [bp("path", "str"), bp("data", "bytes")], returnType: "bool", description: "Writes raw bytes to `path`, creating or overwriting it." },
+  BuiltinDoc { name: "fs.exists", parameters: [bp("path", "str")], returnType: "bool", description: "Whether a *file* exists at `path`. Confirmed live: this is file-only, not file-or-directory - it returns false for a path that is genuinely an existing directory (fixture.temp_dir's own result, for example). There is no builtin that checks directory existence.", failureMode: "", example: "fs.exists(\"config.json\") // true if it exists as a file" },
+  BuiltinDoc { name: "fs.read_text", parameters: [bp("path", "str")], returnType: "str", description: "Reads a file's full contents as text.", failureMode: "E0312 if the file can't be read.", example: "fs.read_text(\"notes.txt\") // the file's contents" },
+  BuiltinDoc { name: "fs.write_text", parameters: [bp("path", "str"), bp("content", "str")], returnType: "bool", description: "Writes `content` to `path`, creating or overwriting it; the bool reports whether the write succeeded, so a failed write is reported, not panicked on.", failureMode: "", example: "fs.write_text(\"out.txt\", \"hello\") // true" },
+  BuiltinDoc { name: "fs.try_read_text", parameters: [bp("path", "str")], returnType: "result<str,str>", description: "Reads a file's full contents as text, returning Err instead of failing on a read error.", failureMode: "Returns Err on failure; never panics.", example: "fs.try_read_text(\"notes.txt\") // Ok(\"...\") or Err(\"...\")" },
+  BuiltinDoc { name: "fs.try_write_text", parameters: [bp("path", "str"), bp("content", "str")], returnType: "result<bool,str>", description: "Writes `content` to `path`, returning Err instead of failing on a write error.", failureMode: "Returns Err on failure; never panics.", example: "fs.try_write_text(\"out.txt\", \"hello\") // Ok(true) or Err(\"...\")" },
+  BuiltinDoc { name: "fs.read_bytes", parameters: [bp("path", "str")], returnType: "result<bytes,str>", description: "Reads a file's full contents as raw bytes.", failureMode: "Returns Err on failure; never panics.", example: "fs.read_bytes(\"data.bin\") // Ok(bytes) or Err(\"...\")" },
+  BuiltinDoc { name: "fs.write_bytes", parameters: [bp("path", "str"), bp("data", "bytes")], returnType: "bool", description: "Writes raw bytes to `path`, creating or overwriting it; the bool reports whether the write succeeded.", failureMode: "", example: "fs.write_bytes(\"data.bin\", data) // true" },
 
-  BuiltinDoc { name: "env.get", parameters: [bp("name", "str")], returnType: "str", description: "The environment variable's value, or \"\" if it isn't set." },
-  BuiltinDoc { name: "env.has", parameters: [bp("name", "str")], returnType: "bool", description: "Whether an environment variable is set." },
-  BuiltinDoc { name: "env.set", parameters: [bp("name", "str"), bp("value", "str")], returnType: "bool", description: "Sets an environment variable for the current process." },
-  BuiltinDoc { name: "env.unset", parameters: [bp("name", "str")], returnType: "bool", description: "Removes an environment variable from the current process." },
+  BuiltinDoc { name: "env.get", parameters: [bp("name", "str")], returnType: "str", description: "The environment variable's value, or \"\" if it isn't set - there is no way to tell \"unset\" apart from \"set to the empty string\" from this alone; use env.has first if that distinction matters.", failureMode: "", example: "env.get(\"HOME\") // e.g. \"/home/ada\", or \"\" if unset" },
+  BuiltinDoc { name: "env.has", parameters: [bp("name", "str")], returnType: "bool", description: "Whether an environment variable is set, even to an empty value.", failureMode: "", example: "env.has(\"CI\") // true inside most CI environments" },
+  BuiltinDoc { name: "env.set", parameters: [bp("name", "str"), bp("value", "str")], returnType: "bool", description: "Sets an environment variable for the current process (and anything it later spawns via process.run, unless overridden by process.run_with_env).", failureMode: "", example: "env.set(\"DEBUG\", \"1\") // true" },
+  BuiltinDoc { name: "env.unset", parameters: [bp("name", "str")], returnType: "bool", description: "Removes an environment variable from the current process.", failureMode: "", example: "env.unset(\"DEBUG\") // true" },
 
-  BuiltinDoc { name: "process.run", parameters: [bp("executable", "str"), bp("arguments", "[str]")], returnType: "process", description: "Runs a process to completion and captures its exit code, stdout, and stderr." },
-  BuiltinDoc { name: "process.run_with_input", parameters: [bp("executable", "str"), bp("arguments", "[str]"), bp("input", "str")], returnType: "process", description: "Like process.run, piping `input` to the child process's stdin." },
-  BuiltinDoc { name: "process.run_with_env", parameters: [bp("executable", "str"), bp("arguments", "[str]"), bp("env", "Map<str,str>")], returnType: "process", description: "Like process.run, with `env` overriding environment variables for the child process only." },
-  BuiltinDoc { name: "process.run_with_options", parameters: [bp("executable", "str"), bp("arguments", "[str]"), bp("workingDir", "str"), bp("timeoutMs", "int")], returnType: "process", description: "Like process.run, with a working directory (\"\" for unchanged) and an optional timeout in milliseconds (<= 0 for none); a timed-out process is killed and reports exit code -1." },
-  BuiltinDoc { name: "process.code", parameters: [bp("result", "process")], returnType: "int", description: "The child process's exit code." },
-  BuiltinDoc { name: "process.stdout", parameters: [bp("result", "process")], returnType: "str", description: "The child process's captured standard output." },
-  BuiltinDoc { name: "process.stderr", parameters: [bp("result", "process")], returnType: "str", description: "The child process's captured standard error." },
-  BuiltinDoc { name: "process.ok", parameters: [bp("result", "process")], returnType: "bool", description: "Whether the process exited with code 0." },
+  BuiltinDoc { name: "process.run", parameters: [bp("executable", "str"), bp("arguments", "[str]")], returnType: "process", description: "Runs a process to completion and captures its exit code, stdout, and stderr. A failure to spawn the executable at all (e.g. it doesn't exist) is not distinguished from a timeout - both report exit code -1 through process.code.", failureMode: "", example: "process.run(\"git\", [\"status\"]) // a process result" },
+  BuiltinDoc { name: "process.run_with_input", parameters: [bp("executable", "str"), bp("arguments", "[str]"), bp("input", "str")], returnType: "process", description: "Like process.run, piping `input` to the child process's stdin.", failureMode: "", example: "process.run_with_input(\"cat\", [], \"hi\") // a process result with stdout \"hi\"" },
+  BuiltinDoc { name: "process.run_with_env", parameters: [bp("executable", "str"), bp("arguments", "[str]"), bp("env", "Map<str,str>")], returnType: "process", description: "Like process.run, with `env` overriding environment variables for the child process only - the current process's own environment is restored once the call returns.", failureMode: "", example: "process.run_with_env(\"printenv\", [\"KEY\"], map.set(map.new(), \"KEY\", \"value\")) // a process result with stdout \"value\"" },
+  BuiltinDoc { name: "process.run_with_options", parameters: [bp("executable", "str"), bp("arguments", "[str]"), bp("workingDir", "str"), bp("timeoutMs", "int")], returnType: "process", description: "Like process.run, with a working directory (\"\" for unchanged) and an optional timeout in milliseconds (<= 0 for none); a timed-out process is killed and reports exit code -1, the same code a failed-to-spawn process reports.", failureMode: "", example: "process.run_with_options(\"sleep\", [\"5\"], \"\", 500) // killed at 500ms, exit code -1" },
+  BuiltinDoc { name: "process.code", parameters: [bp("result", "process")], returnType: "int", description: "The child process's exit code (-1 for a timeout or a failed spawn).", failureMode: "", example: "process.code(result) // 0 on success" },
+  BuiltinDoc { name: "process.stdout", parameters: [bp("result", "process")], returnType: "str", description: "The child process's captured standard output.", failureMode: "", example: "process.stdout(result) // the captured stdout text" },
+  BuiltinDoc { name: "process.stderr", parameters: [bp("result", "process")], returnType: "str", description: "The child process's captured standard error.", failureMode: "", example: "process.stderr(result) // the captured stderr text" },
+  BuiltinDoc { name: "process.ok", parameters: [bp("result", "process")], returnType: "bool", description: "Whether the process exited with code 0.", failureMode: "", example: "process.ok(result) // true if exit code was 0" },
 
-  BuiltinDoc { name: "str.len", parameters: [bp("value", "str")], returnType: "int", description: "Number of bytes in a string." },
-  BuiltinDoc { name: "str.trim", parameters: [bp("value", "str")], returnType: "str", description: "Removes leading and trailing whitespace." },
-  BuiltinDoc { name: "str.upper", parameters: [bp("value", "str")], returnType: "str", description: "Converts to uppercase." },
-  BuiltinDoc { name: "str.lower", parameters: [bp("value", "str")], returnType: "str", description: "Converts to lowercase." },
-  BuiltinDoc { name: "str.from_int", parameters: [bp("value", "int")], returnType: "str", description: "Formats an int as decimal text." },
-  BuiltinDoc { name: "str.to_int", parameters: [bp("value", "str")], returnType: "result<int,str>", description: "Parses decimal text as an int; Err if it isn't a valid integer." },
+  BuiltinDoc { name: "str.len", parameters: [bp("value", "str")], returnType: "int", description: "Number of bytes in a string (not necessarily the number of visible characters, for non-ASCII text).", failureMode: "", example: "str.len(\"hello\") // 5" },
+  BuiltinDoc { name: "str.trim", parameters: [bp("value", "str")], returnType: "str", description: "Removes leading and trailing whitespace.", failureMode: "", example: "str.trim(\"  hi  \") // \"hi\"" },
+  BuiltinDoc { name: "str.upper", parameters: [bp("value", "str")], returnType: "str", description: "Converts to uppercase.", failureMode: "", example: "str.upper(\"hi\") // \"HI\"" },
+  BuiltinDoc { name: "str.lower", parameters: [bp("value", "str")], returnType: "str", description: "Converts to lowercase.", failureMode: "", example: "str.lower(\"HI\") // \"hi\"" },
+  BuiltinDoc { name: "str.from_int", parameters: [bp("value", "int")], returnType: "str", description: "Formats an int as decimal text.", failureMode: "", example: "str.from_int(42) // \"42\"" },
+  BuiltinDoc { name: "str.to_int", parameters: [bp("value", "str")], returnType: "result<int,str>", description: "Parses decimal text as an int; Err if it isn't a valid integer.", failureMode: "Returns Err on failure; never panics.", example: "str.to_int(\"42\") // Ok(42)" },
 
-  BuiltinDoc { name: "str.contains", parameters: [bp("haystack", "str"), bp("needle", "str")], returnType: "bool", description: "Whether `haystack` contains `needle`." },
-  BuiltinDoc { name: "str.starts_with", parameters: [bp("value", "str"), bp("prefix", "str")], returnType: "bool", description: "Whether `value` starts with `prefix`." },
-  BuiltinDoc { name: "str.ends_with", parameters: [bp("value", "str"), bp("suffix", "str")], returnType: "bool", description: "Whether `value` ends with `suffix`." },
+  BuiltinDoc { name: "str.contains", parameters: [bp("haystack", "str"), bp("needle", "str")], returnType: "bool", description: "Whether `haystack` contains `needle`.", failureMode: "", example: "str.contains(\"hello\", \"ell\") // true" },
+  BuiltinDoc { name: "str.starts_with", parameters: [bp("value", "str"), bp("prefix", "str")], returnType: "bool", description: "Whether `value` starts with `prefix`.", failureMode: "", example: "str.starts_with(\"hello\", \"he\") // true" },
+  BuiltinDoc { name: "str.ends_with", parameters: [bp("value", "str"), bp("suffix", "str")], returnType: "bool", description: "Whether `value` ends with `suffix`.", failureMode: "", example: "str.ends_with(\"hello\", \"lo\") // true" },
 
-  BuiltinDoc { name: "json.valid", parameters: [bp("text", "str")], returnType: "bool", description: "Whether `text` parses as valid JSON." },
-  BuiltinDoc { name: "json.get", parameters: [bp("text", "str"), bp("key", "str")], returnType: "str", description: "A top-level key's value from a JSON object, as text (requires `text` to decode as a JSON object)." },
-  BuiltinDoc { name: "json.encode", parameters: [bp("value", "T")], returnType: "result<str,str>", description: "Encodes a value (int/str/bool/list/record, recursively, plus enums including Option/Result) as a JSON string." },
+  BuiltinDoc { name: "json.valid", parameters: [bp("text", "str")], returnType: "bool", description: "Whether `text` parses as valid JSON of any shape (object, array, or scalar) - does not require it to be an object the way json.get does.", failureMode: "", example: "json.valid(\"{}\") // true" },
+  BuiltinDoc { name: "json.get", parameters: [bp("text", "str"), bp("key", "str")], returnType: "str", description: "A top-level key's value from a JSON object, as text. There is no dotted/nested path support - only one flat, top-level key lookup.", failureMode: "E0313 if `text` doesn't decode as a JSON object.", example: "json.get(\"{\\\"a\\\":1}\", \"a\") // \"1\"" },
+  BuiltinDoc { name: "json.encode", parameters: [bp("value", "T")], returnType: "result<str,str>", description: "Encodes a value (int/str/bool/list/record, recursively, plus enums including Option/Result) as a JSON string. Map is not supported and returns Err.", failureMode: "Returns Err on failure; never panics.", example: "json.encode(42) // Ok(\"42\")" },
 
-  BuiltinDoc { name: "path.join", parameters: [bp("a", "str"), bp("b", "str")], returnType: "str", description: "Joins two path segments." },
-  BuiltinDoc { name: "path.basename", parameters: [bp("path", "str")], returnType: "str", description: "The final path component." },
-  BuiltinDoc { name: "path.dirname", parameters: [bp("path", "str")], returnType: "str", description: "The path with its final component removed." },
-  BuiltinDoc { name: "path.extension", parameters: [bp("path", "str")], returnType: "Option<str>", description: "The file extension, without the dot, or None." },
-  BuiltinDoc { name: "path.stem", parameters: [bp("path", "str")], returnType: "str", description: "The final path component without its extension." },
+  BuiltinDoc { name: "path.join", parameters: [bp("a", "str"), bp("b", "str")], returnType: "str", description: "Joins two path segments. Pure string concatenation with a separator - it does not special-case an absolute `b`, unlike some other languages' path-join.", failureMode: "", example: "path.join(\"a\", \"b\") // \"a/b\"" },
+  BuiltinDoc { name: "path.basename", parameters: [bp("path", "str")], returnType: "str", description: "The final path component.", failureMode: "", example: "path.basename(\"a/b.txt\") // \"b.txt\"" },
+  BuiltinDoc { name: "path.dirname", parameters: [bp("path", "str")], returnType: "str", description: "The path with its final component removed.", failureMode: "", example: "path.dirname(\"a/b.txt\") // \"a\"" },
+  BuiltinDoc { name: "path.extension", parameters: [bp("path", "str")], returnType: "Option<str>", description: "The file extension, without the dot, or None if there isn't one.", failureMode: "", example: "path.extension(\"a/b.txt\") // Some(\"txt\")" },
+  BuiltinDoc { name: "path.stem", parameters: [bp("path", "str")], returnType: "str", description: "The final path component without its extension.", failureMode: "", example: "path.stem(\"a/b.txt\") // \"b\"" },
 
-  BuiltinDoc { name: "dir.list", parameters: [bp("path", "str")], returnType: "result<[str],str>", description: "Lists a directory's immediate entries (names only, unsorted)." },
-  BuiltinDoc { name: "dir.walk", parameters: [bp("path", "str"), bp("maxDepth", "int")], returnType: "result<[str],str>", description: "Recursively lists files under `path` as full paths (not directories); `maxDepth` 0 means only `path`'s own files; an unreadable subdirectory is skipped, not a failure." },
+  BuiltinDoc { name: "dir.list", parameters: [bp("path", "str")], returnType: "result<[str],str>", description: "Lists a directory's immediate entries. Names only (not full paths), unsorted, and not recursive - see dir.walk for that.", failureMode: "Returns Err on failure; never panics.", example: "dir.list(\".\") // Ok([\"a.lume\", \"b.lume\"])" },
+  BuiltinDoc { name: "dir.walk", parameters: [bp("path", "str"), bp("maxDepth", "int")], returnType: "result<[str],str>", description: "Recursively lists files under `path` as full paths, files only (a subdirectory is recursed into, never included in the result itself). `maxDepth` 0 means only `path`'s own files; an unreadable subdirectory partway through the walk is silently skipped, not a failure.", failureMode: "Returns Err on failure; never panics.", example: "dir.walk(\".\", 32) // Ok([\"src/a.lume\", \"src/sub/b.lume\"])" },
 
-  BuiltinDoc { name: "time.now", parameters: [], returnType: "int", description: "Current Unix epoch time in seconds." },
-  BuiltinDoc { name: "time.to_iso", parameters: [bp("seconds", "int")], returnType: "str", description: "Formats epoch seconds as a UTC ISO-8601 string." },
-  BuiltinDoc { name: "time.year", parameters: [bp("seconds", "int")], returnType: "int", description: "The UTC calendar year for epoch seconds." },
-  BuiltinDoc { name: "time.month", parameters: [bp("seconds", "int")], returnType: "int", description: "The UTC calendar month (1-12) for epoch seconds." },
-  BuiltinDoc { name: "time.day", parameters: [bp("seconds", "int")], returnType: "int", description: "The UTC calendar day of month for epoch seconds." },
-  BuiltinDoc { name: "time.hour", parameters: [bp("seconds", "int")], returnType: "int", description: "The UTC hour (0-23) for epoch seconds." },
-  BuiltinDoc { name: "time.minute", parameters: [bp("seconds", "int")], returnType: "int", description: "The UTC minute for epoch seconds." },
-  BuiltinDoc { name: "time.second", parameters: [bp("seconds", "int")], returnType: "int", description: "The UTC second for epoch seconds." },
-  BuiltinDoc { name: "time.format", parameters: [bp("seconds", "int"), bp("pattern", "str")], returnType: "str", description: "Formats epoch seconds with a strftime-style pattern, evaluated in UTC." },
-  BuiltinDoc { name: "time.in_timezone", parameters: [bp("seconds", "int"), bp("zone", "str")], returnType: "result<str,str>", description: "An ISO-8601 string using `zone`'s own numeric UTC offset (an IANA zone name; Err if unrecognized)." },
-  BuiltinDoc { name: "time.format_in_timezone", parameters: [bp("seconds", "int"), bp("pattern", "str"), bp("zone", "str")], returnType: "result<str,str>", description: "Formats epoch seconds with a strftime-style pattern using `zone`'s zone- and DST-adjusted wall-clock time." },
+  BuiltinDoc { name: "time.now", parameters: [], returnType: "int", description: "Current Unix epoch time in seconds.", failureMode: "", example: "time.now() // e.g. 1735000000" },
+  BuiltinDoc { name: "time.to_iso", parameters: [bp("seconds", "int")], returnType: "str", description: "Formats epoch seconds as a UTC ISO-8601 string.", failureMode: "", example: "time.to_iso(0) // \"1970-01-01T00:00:00Z\"" },
+  BuiltinDoc { name: "time.year", parameters: [bp("seconds", "int")], returnType: "int", description: "The UTC calendar year for epoch seconds.", failureMode: "", example: "time.year(0) // 1970" },
+  BuiltinDoc { name: "time.month", parameters: [bp("seconds", "int")], returnType: "int", description: "The UTC calendar month (1-12) for epoch seconds.", failureMode: "", example: "time.month(0) // 1" },
+  BuiltinDoc { name: "time.day", parameters: [bp("seconds", "int")], returnType: "int", description: "The UTC calendar day of month for epoch seconds.", failureMode: "", example: "time.day(0) // 1" },
+  BuiltinDoc { name: "time.hour", parameters: [bp("seconds", "int")], returnType: "int", description: "The UTC hour (0-23) for epoch seconds.", failureMode: "", example: "time.hour(0) // 0" },
+  BuiltinDoc { name: "time.minute", parameters: [bp("seconds", "int")], returnType: "int", description: "The UTC minute for epoch seconds.", failureMode: "", example: "time.minute(0) // 0" },
+  BuiltinDoc { name: "time.second", parameters: [bp("seconds", "int")], returnType: "int", description: "The UTC second for epoch seconds.", failureMode: "", example: "time.second(0) // 0" },
+  BuiltinDoc { name: "time.format", parameters: [bp("seconds", "int"), bp("pattern", "str")], returnType: "str", description: "Formats epoch seconds with a strftime-style pattern, evaluated in UTC.", failureMode: "", example: "time.format(0, \"%Y-%m-%d\") // \"1970-01-01\"" },
+  BuiltinDoc { name: "time.in_timezone", parameters: [bp("seconds", "int"), bp("zone", "str")], returnType: "result<str,str>", description: "An ISO-8601 string using `zone`'s own numeric UTC offset. `zone` is an IANA name like \"America/New_York\". Avoid relying on %Z/%z in a separate time.format call instead of this - those cannot reflect an arbitrary zone.", failureMode: "Returns Err on failure; never panics.", example: "time.in_timezone(0, \"America/New_York\") // Ok(\"1969-12-31T19:00:00-05:00\")" },
+  BuiltinDoc { name: "time.format_in_timezone", parameters: [bp("seconds", "int"), bp("pattern", "str"), bp("zone", "str")], returnType: "result<str,str>", description: "Formats epoch seconds with a strftime-style pattern using `zone`'s zone- and DST-adjusted wall-clock time (year/month/day/hour/etc. are all zone-adjusted, unlike time.format's UTC-only fields).", failureMode: "Returns Err on failure; never panics.", example: "time.format_in_timezone(0, \"%H:%M\", \"America/New_York\") // Ok(\"19:00\")" },
 
-  BuiltinDoc { name: "duration.seconds", parameters: [bp("n", "int")], returnType: "int", description: "`n` seconds as a plain epoch-second count." },
-  BuiltinDoc { name: "duration.minutes", parameters: [bp("n", "int")], returnType: "int", description: "`n` minutes as a plain epoch-second count." },
-  BuiltinDoc { name: "duration.hours", parameters: [bp("n", "int")], returnType: "int", description: "`n` hours as a plain epoch-second count." },
-  BuiltinDoc { name: "duration.days", parameters: [bp("n", "int")], returnType: "int", description: "`n` days as a plain epoch-second count." },
+  BuiltinDoc { name: "duration.seconds", parameters: [bp("n", "int")], returnType: "int", description: "`n` seconds as a plain epoch-second count, for arithmetic like time.now() + duration.minutes(5).", failureMode: "", example: "duration.seconds(5) // 5" },
+  BuiltinDoc { name: "duration.minutes", parameters: [bp("n", "int")], returnType: "int", description: "`n` minutes as a plain epoch-second count.", failureMode: "", example: "duration.minutes(5) // 300" },
+  BuiltinDoc { name: "duration.hours", parameters: [bp("n", "int")], returnType: "int", description: "`n` hours as a plain epoch-second count.", failureMode: "", example: "duration.hours(2) // 7200" },
+  BuiltinDoc { name: "duration.days", parameters: [bp("n", "int")], returnType: "int", description: "`n` days as a plain epoch-second count.", failureMode: "", example: "duration.days(1) // 86400" },
 
-  BuiltinDoc { name: "Duration.of_seconds", parameters: [bp("n", "int")], returnType: "Duration", description: "Builds a Duration of `n` seconds." },
-  BuiltinDoc { name: "Duration.of_minutes", parameters: [bp("n", "int")], returnType: "Duration", description: "Builds a Duration of `n` minutes." },
-  BuiltinDoc { name: "Duration.of_hours", parameters: [bp("n", "int")], returnType: "Duration", description: "Builds a Duration of `n` hours." },
-  BuiltinDoc { name: "Duration.of_days", parameters: [bp("n", "int")], returnType: "Duration", description: "Builds a Duration of `n` days." },
-  BuiltinDoc { name: "Duration.add", parameters: [bp("a", "Duration"), bp("b", "Duration")], returnType: "Duration", description: "Sums two Durations." },
-  BuiltinDoc { name: "Duration.sub", parameters: [bp("a", "Duration"), bp("b", "Duration")], returnType: "Duration", description: "Subtracts one Duration from another." },
-  BuiltinDoc { name: "Duration.scale", parameters: [bp("duration", "Duration"), bp("factor", "int")], returnType: "Duration", description: "Multiplies a Duration by an integer factor." },
-  BuiltinDoc { name: "Duration.to_seconds", parameters: [bp("duration", "Duration")], returnType: "int", description: "A Duration's total length in seconds, for plain epoch-second arithmetic." },
+  BuiltinDoc { name: "Duration.of_seconds", parameters: [bp("n", "int")], returnType: "Duration", description: "Builds a Duration of `n` seconds. Duration is a distinct record type, not a plain int, so it can't be mistaken for an unrelated int at compile time the way the duration.* plain-int helpers can be.", failureMode: "", example: "Duration.of_seconds(30) // a 30-second Duration" },
+  BuiltinDoc { name: "Duration.of_minutes", parameters: [bp("n", "int")], returnType: "Duration", description: "Builds a Duration of `n` minutes.", failureMode: "", example: "Duration.of_minutes(5) // a 5-minute Duration" },
+  BuiltinDoc { name: "Duration.of_hours", parameters: [bp("n", "int")], returnType: "Duration", description: "Builds a Duration of `n` hours.", failureMode: "", example: "Duration.of_hours(2) // a 2-hour Duration" },
+  BuiltinDoc { name: "Duration.of_days", parameters: [bp("n", "int")], returnType: "Duration", description: "Builds a Duration of `n` days.", failureMode: "", example: "Duration.of_days(1) // a 1-day Duration" },
+  BuiltinDoc { name: "Duration.add", parameters: [bp("a", "Duration"), bp("b", "Duration")], returnType: "Duration", description: "Sums two Durations.", failureMode: "", example: "Duration.add(Duration.of_minutes(5), Duration.of_seconds(30)) // 5m30s" },
+  BuiltinDoc { name: "Duration.sub", parameters: [bp("a", "Duration"), bp("b", "Duration")], returnType: "Duration", description: "Subtracts one Duration from another.", failureMode: "", example: "Duration.sub(Duration.of_minutes(5), Duration.of_seconds(30)) // 4m30s" },
+  BuiltinDoc { name: "Duration.scale", parameters: [bp("duration", "Duration"), bp("factor", "int")], returnType: "Duration", description: "Multiplies a Duration by an integer factor.", failureMode: "", example: "Duration.scale(Duration.of_seconds(10), 3) // 30 seconds" },
+  BuiltinDoc { name: "Duration.to_seconds", parameters: [bp("duration", "Duration")], returnType: "int", description: "A Duration's total length in seconds, for bridging back to plain epoch-second arithmetic. A Duration's own `seconds` field is also readable directly, since it's an ordinary record.", failureMode: "", example: "Duration.to_seconds(Duration.of_minutes(2)) // 120" },
 
-  BuiltinDoc { name: "http.get", parameters: [bp("url", "str")], returnType: "result<http,str>", description: "Sends an HTTP GET request." },
-  BuiltinDoc { name: "http.post", parameters: [bp("url", "str"), bp("body", "str"), bp("contentType", "str")], returnType: "result<http,str>", description: "Sends an HTTP POST request with a text body." },
-  BuiltinDoc { name: "http.put", parameters: [bp("url", "str"), bp("body", "str"), bp("contentType", "str")], returnType: "result<http,str>", description: "Sends an HTTP PUT request with a text body." },
-  BuiltinDoc { name: "http.delete", parameters: [bp("url", "str")], returnType: "result<http,str>", description: "Sends an HTTP DELETE request." },
-  BuiltinDoc { name: "http.request", parameters: [bp("method", "str"), bp("url", "str"), bp("headers", "Map<str,str>"), bp("body", "str")], returnType: "result<http,str>", description: "Sends an HTTP request with a custom method and headers." },
-  BuiltinDoc { name: "http.request_with_limit", parameters: [bp("method", "str"), bp("url", "str"), bp("headers", "Map<str,str>"), bp("body", "str"), bp("maxBytes", "int")], returnType: "result<http,str>", description: "Like http.request, but a response over `maxBytes` returns Ok with a truncated body instead of an error (`maxBytes` <= 0 means unlimited; see http.truncated)." },
-  BuiltinDoc { name: "http.request_bytes", parameters: [bp("method", "str"), bp("url", "str"), bp("headers", "Map<str,str>"), bp("data", "bytes")], returnType: "result<http,str>", description: "Like http.request, with a raw-bytes request body." },
-  BuiltinDoc { name: "http.status", parameters: [bp("response", "http")], returnType: "int", description: "An HTTP response's status code." },
-  BuiltinDoc { name: "http.body", parameters: [bp("response", "http")], returnType: "str", description: "An HTTP response's body as text." },
-  BuiltinDoc { name: "http.content_type", parameters: [bp("response", "http")], returnType: "str", description: "An HTTP response's Content-Type header value." },
-  BuiltinDoc { name: "http.ok", parameters: [bp("response", "http")], returnType: "bool", description: "Whether the response status indicates success (2xx)." },
-  BuiltinDoc { name: "http.body_bytes", parameters: [bp("response", "http")], returnType: "bytes", description: "An HTTP response's body as raw bytes." },
-  BuiltinDoc { name: "http.truncated", parameters: [bp("response", "http")], returnType: "bool", description: "Whether the response body was cut short at a byte limit (always false outside http.request_with_limit)." },
+  BuiltinDoc { name: "http.get", parameters: [bp("url", "str")], returnType: "result<http,str>", description: "Sends an HTTP GET request. Windows only. The response body is bounded at a fixed 10 MiB limit; exceeding it is an Err, not a truncated body - see http.request_with_limit for a caller-chosen limit that truncates instead.", failureMode: "Returns Err on failure; never panics.", example: "http.get(\"https://example.com\") // Ok(response)" },
+  BuiltinDoc { name: "http.post", parameters: [bp("url", "str"), bp("body", "str"), bp("contentType", "str")], returnType: "result<http,str>", description: "Sends an HTTP POST request with a text body.", failureMode: "Returns Err on failure; never panics.", example: "http.post(url, \"{}\", \"application/json\") // Ok(response)" },
+  BuiltinDoc { name: "http.put", parameters: [bp("url", "str"), bp("body", "str"), bp("contentType", "str")], returnType: "result<http,str>", description: "Sends an HTTP PUT request with a text body.", failureMode: "Returns Err on failure; never panics.", example: "http.put(url, \"{}\", \"application/json\") // Ok(response)" },
+  BuiltinDoc { name: "http.delete", parameters: [bp("url", "str")], returnType: "result<http,str>", description: "Sends an HTTP DELETE request.", failureMode: "Returns Err on failure; never panics.", example: "http.delete(url) // Ok(response)" },
+  BuiltinDoc { name: "http.request", parameters: [bp("method", "str"), bp("url", "str"), bp("headers", "Map<str,str>"), bp("body", "str")], returnType: "result<http,str>", description: "Sends an HTTP request with a custom method and headers, for anything http.get/post/put/delete don't cover.", failureMode: "Returns Err on failure; never panics.", example: "http.request(\"PATCH\", url, headers, body) // Ok(response)" },
+  BuiltinDoc { name: "http.request_with_limit", parameters: [bp("method", "str"), bp("url", "str"), bp("headers", "Map<str,str>"), bp("body", "str"), bp("maxBytes", "int")], returnType: "result<http,str>", description: "Like http.request, but a response over `maxBytes` returns Ok with a truncated body instead of an error - the one http.* call that doesn't error on hitting its size limit. `maxBytes` <= 0 means unlimited; see http.truncated to detect whether truncation happened.", failureMode: "Returns Err on failure; never panics.", example: "http.request_with_limit(\"GET\", url, headers, \"\", 1024) // Ok(response), possibly truncated" },
+  BuiltinDoc { name: "http.request_bytes", parameters: [bp("method", "str"), bp("url", "str"), bp("headers", "Map<str,str>"), bp("data", "bytes")], returnType: "result<http,str>", description: "Like http.request, with a raw-bytes request body - for a body that isn't guaranteed valid text.", failureMode: "Returns Err on failure; never panics.", example: "http.request_bytes(\"POST\", url, headers, data) // Ok(response)" },
+  BuiltinDoc { name: "http.status", parameters: [bp("response", "http")], returnType: "int", description: "An HTTP response's status code.", failureMode: "", example: "http.status(response) // 200" },
+  BuiltinDoc { name: "http.body", parameters: [bp("response", "http")], returnType: "str", description: "An HTTP response's body as text.", failureMode: "", example: "http.body(response) // the response text" },
+  BuiltinDoc { name: "http.content_type", parameters: [bp("response", "http")], returnType: "str", description: "An HTTP response's Content-Type header value.", failureMode: "", example: "http.content_type(response) // \"application/json\"" },
+  BuiltinDoc { name: "http.ok", parameters: [bp("response", "http")], returnType: "bool", description: "Whether the response status indicates success (2xx).", failureMode: "", example: "http.ok(response) // true for a 2xx status" },
+  BuiltinDoc { name: "http.body_bytes", parameters: [bp("response", "http")], returnType: "bytes", description: "An HTTP response's body as raw bytes, for a response that isn't guaranteed valid text.", failureMode: "", example: "http.body_bytes(response) // the response body as bytes" },
+  BuiltinDoc { name: "http.truncated", parameters: [bp("response", "http")], returnType: "bool", description: "Whether the response body was cut short at a byte limit. Always false for a response from any call other than http.request_with_limit.", failureMode: "", example: "http.truncated(response) // false unless fetched via http.request_with_limit and cut short" },
 
-  BuiltinDoc { name: "list.len", parameters: [bp("list", "[T]")], returnType: "int", description: "Number of elements in a list." },
-  BuiltinDoc { name: "list.get", parameters: [bp("list", "[T]"), bp("index", "int")], returnType: "T", description: "The element at `index`; panics if out of bounds." },
-  BuiltinDoc { name: "list.push", parameters: [bp("list", "[T]"), bp("item", "T")], returnType: "[T]", description: "Returns a new list with `item` appended." },
-  BuiltinDoc { name: "list.map", parameters: [bp("list", "[T]"), bp("callback", "(T) -> U")], returnType: "[U]", description: "Returns a new list with `callback` applied to every element." },
-  BuiltinDoc { name: "list.filter", parameters: [bp("list", "[T]"), bp("callback", "(T) -> bool")], returnType: "[T]", description: "Returns a new list containing only the elements for which `callback` returns true." },
-  BuiltinDoc { name: "list.find", parameters: [bp("list", "[T]"), bp("callback", "(T) -> bool")], returnType: "Option<T>", description: "The first element for which `callback` returns true, or None." },
-  BuiltinDoc { name: "list.fold", parameters: [bp("list", "[T]"), bp("initial", "U"), bp("callback", "(U, T) -> U")], returnType: "U", description: "Reduces a list to a single value by applying `callback` left to right, starting from `initial`." },
+  BuiltinDoc { name: "list.len", parameters: [bp("list", "[T]")], returnType: "int", description: "Number of elements in a list.", failureMode: "", example: "list.len([1, 2, 3]) // 3" },
+  BuiltinDoc { name: "list.get", parameters: [bp("list", "[T]"), bp("index", "int")], returnType: "T", description: "The element at `index`. Bounds-check with list.len first when the index isn't already known-valid - there is no non-panicking variant.", failureMode: "E0316 if `index` is out of bounds.", example: "list.get([10, 20, 30], 1) // 20" },
+  BuiltinDoc { name: "list.push", parameters: [bp("list", "[T]"), bp("item", "T")], returnType: "[T]", description: "Returns a new list with `item` appended; `list` itself is unchanged, matching this language's immutable-by-default collection style.", failureMode: "", example: "list.push([1, 2], 3) // [1, 2, 3]" },
+  BuiltinDoc { name: "list.map", parameters: [bp("list", "[T]"), bp("callback", "(T) -> U")], returnType: "[U]", description: "Returns a new list with `callback` applied to every element. `callback` can be a named function reference (`&double`) or an immutable-capture closure.", failureMode: "", example: "list.map([1, 2, 3], &double) // [2, 4, 6]" },
+  BuiltinDoc { name: "list.filter", parameters: [bp("list", "[T]"), bp("callback", "(T) -> bool")], returnType: "[T]", description: "Returns a new list containing only the elements for which `callback` returns true, in their original order.", failureMode: "", example: "list.filter([1, 2, 3, 4], &is_even) // [2, 4]" },
+  BuiltinDoc { name: "list.find", parameters: [bp("list", "[T]"), bp("callback", "(T) -> bool")], returnType: "Option<T>", description: "The first element for which `callback` returns true, or None if none matches.", failureMode: "", example: "list.find([1, 2, 3], &is_even) // Some(2)" },
+  BuiltinDoc { name: "list.fold", parameters: [bp("list", "[T]"), bp("initial", "U"), bp("callback", "(U, T) -> U")], returnType: "U", description: "Reduces a list to a single value by applying `callback(accumulator, item)` left to right, starting from `initial`. An empty list returns `initial` unchanged.", failureMode: "", example: "list.fold([1, 2, 3], 0, &add) // 6" },
 
-  BuiltinDoc { name: "map.new", parameters: [], returnType: "Map<any,any>", description: "An empty map; its key/value types are pinned by the first real map.set/map.get used with it." },
-  BuiltinDoc { name: "map.len", parameters: [bp("map", "Map<K,V>")], returnType: "int", description: "Number of entries in a map." },
-  BuiltinDoc { name: "map.get", parameters: [bp("map", "Map<K,V>"), bp("key", "K")], returnType: "Option<V>", description: "The value for `key`, or None if absent." },
-  BuiltinDoc { name: "map.has", parameters: [bp("map", "Map<K,V>"), bp("key", "K")], returnType: "bool", description: "Whether `key` is present." },
-  BuiltinDoc { name: "map.set", parameters: [bp("map", "Map<K,V>"), bp("key", "K"), bp("value", "V")], returnType: "Map<K,V>", description: "Returns a new map with `key` bound to `value`." },
-  BuiltinDoc { name: "map.remove", parameters: [bp("map", "Map<K,V>"), bp("key", "K")], returnType: "Map<K,V>", description: "Returns a new map with `key` removed." },
-  BuiltinDoc { name: "map.keys", parameters: [bp("map", "Map<K,V>")], returnType: "[K]", description: "All keys, in unspecified order." },
-  BuiltinDoc { name: "map.values", parameters: [bp("map", "Map<K,V>")], returnType: "[V]", description: "All values, in unspecified order." },
-  BuiltinDoc { name: "map.map", parameters: [bp("map", "Map<K,V>"), bp("callback", "(V) -> U")], returnType: "Map<K,U>", description: "Returns a new map with `callback` applied to every value; keys pass through unchanged." },
-  BuiltinDoc { name: "map.filter", parameters: [bp("map", "Map<K,V>"), bp("callback", "(V) -> bool")], returnType: "Map<K,V>", description: "Returns a new map containing only the entries whose value `callback` returns true for." },
-  BuiltinDoc { name: "map.fold", parameters: [bp("map", "Map<K,V>"), bp("initial", "U"), bp("callback", "(U, V) -> U")], returnType: "U", description: "Reduces a map's values to a single value by applying `callback`, starting from `initial`." },
+  BuiltinDoc { name: "map.new", parameters: [], returnType: "Map<any,any>", description: "An empty map. Its key/value types are pinned by the first real map.set/map.get used with it in the same expression - passing a bare map.new() into something requiring a concrete Map<K,V> before that happens can fail to type-check; chain a real map.set first, or see map.remove for building a genuinely empty typed map.", failureMode: "", example: "map.new() // an empty, not-yet-typed map" },
+  BuiltinDoc { name: "map.len", parameters: [bp("map", "Map<K,V>")], returnType: "int", description: "Number of entries in a map.", failureMode: "", example: "map.len(scores) // number of entries" },
+  BuiltinDoc { name: "map.get", parameters: [bp("map", "Map<K,V>"), bp("key", "K")], returnType: "Option<V>", description: "The value for `key`, or None if absent. Keys must be int, str, or bool (or a record/enum with an explicit `impl Eq`).", failureMode: "", example: "map.get(scores, \"Ada\") // Some(92)" },
+  BuiltinDoc { name: "map.has", parameters: [bp("map", "Map<K,V>"), bp("key", "K")], returnType: "bool", description: "Whether `key` is present.", failureMode: "", example: "map.has(scores, \"Ada\") // true" },
+  BuiltinDoc { name: "map.set", parameters: [bp("map", "Map<K,V>"), bp("key", "K"), bp("value", "V")], returnType: "Map<K,V>", description: "Returns a new map with `key` bound to `value`, inserted or overwritten; `map` itself is unchanged.", failureMode: "", example: "map.set(scores, \"Ada\", 92) // scores with Ada added or updated" },
+  BuiltinDoc { name: "map.remove", parameters: [bp("map", "Map<K,V>"), bp("key", "K")], returnType: "Map<K,V>", description: "Returns a new map with `key` removed; a no-op (returns an equivalent map) if `key` was already absent.", failureMode: "", example: "map.remove(scores, \"Ada\") // scores without Ada" },
+  BuiltinDoc { name: "map.keys", parameters: [bp("map", "Map<K,V>")], returnType: "[K]", description: "All keys, in unspecified order - don't rely on it matching insertion order.", failureMode: "", example: "map.keys(scores) // [\"Ada\", \"Grace\"], order unspecified" },
+  BuiltinDoc { name: "map.values", parameters: [bp("map", "Map<K,V>")], returnType: "[V]", description: "All values, in unspecified order, aligned with map.keys' own order for the same map.", failureMode: "", example: "map.values(scores) // [92, 98], order unspecified" },
+  BuiltinDoc { name: "map.map", parameters: [bp("map", "Map<K,V>"), bp("callback", "(V) -> U")], returnType: "Map<K,U>", description: "Returns a new map with `callback` applied to every value; keys pass through unchanged. `callback` takes the value only, never a (key, value) pair.", failureMode: "", example: "map.map(scores, &double) // every value doubled" },
+  BuiltinDoc { name: "map.filter", parameters: [bp("map", "Map<K,V>"), bp("callback", "(V) -> bool")], returnType: "Map<K,V>", description: "Returns a new map containing only the entries whose value `callback` returns true for.", failureMode: "", example: "map.filter(scores, &is_passing) // only passing entries" },
+  BuiltinDoc { name: "map.fold", parameters: [bp("map", "Map<K,V>"), bp("initial", "U"), bp("callback", "(U, V) -> U")], returnType: "U", description: "Reduces a map's values to a single value by applying `callback(accumulator, value)`, starting from `initial` - same callback convention as list.fold, over values only.", failureMode: "", example: "map.fold(scores, 0, &sum) // total of all values" },
 
-  BuiltinDoc { name: "result.ok", parameters: [bp("value", "T")], returnType: "result<T,str>", description: "Wraps a value as a successful result." },
-  BuiltinDoc { name: "result.err", parameters: [bp("message", "str")], returnType: "result<any,str>", description: "Wraps an error message as a failed result." },
-  BuiltinDoc { name: "result.is_ok", parameters: [bp("result", "result<T,str>")], returnType: "bool", description: "Whether a result is Ok." },
-  BuiltinDoc { name: "result.value", parameters: [bp("result", "result<T,str>")], returnType: "T", description: "The success value; panics if the result is Err." },
-  BuiltinDoc { name: "result.error", parameters: [bp("result", "result<T,str>")], returnType: "str", description: "The error message; panics if the result is Ok." },
-  BuiltinDoc { name: "result.to_result", parameters: [bp("result", "result<T,str>")], returnType: "result<T,str>", description: "Normalizes any result-shaped value (lowercase result or the Result enum) to the same runtime representation." },
+  BuiltinDoc { name: "result.ok", parameters: [bp("value", "T")], returnType: "result<T,str>", description: "Wraps a value as a successful result, using this language's lowercase result<T,E> builtin convention (distinct from the capitalized Result enum - the two don't mix without result.to_result).", failureMode: "", example: "result.ok(5) // Ok(5)" },
+  BuiltinDoc { name: "result.err", parameters: [bp("message", "str")], returnType: "result<any,str>", description: "Wraps an error message as a failed result.", failureMode: "", example: "result.err(\"not found\") // Err(\"not found\")" },
+  BuiltinDoc { name: "result.is_ok", parameters: [bp("result", "result<T,str>")], returnType: "bool", description: "Whether a result is Ok.", failureMode: "", example: "result.is_ok(result.ok(5)) // true" },
+  BuiltinDoc { name: "result.value", parameters: [bp("result", "result<T,str>")], returnType: "T", description: "The success value. Check result.is_ok first (or handle both cases) rather than assuming Ok - there is no non-panicking variant.", failureMode: "E0319 if the result is actually Err.", example: "result.value(result.ok(5)) // 5" },
+  BuiltinDoc { name: "result.error", parameters: [bp("result", "result<T,str>")], returnType: "str", description: "The error message. Check result.is_ok first (or handle both cases) rather than assuming Err.", failureMode: "E0320 if the result is actually Ok.", example: "result.error(result.err(\"bad\")) // \"bad\"" },
+  BuiltinDoc { name: "result.to_result", parameters: [bp("result", "result<T,str>")], returnType: "result<T,str>", description: "Normalizes any result-shaped value - whichever of the two conventions produced it - to the same runtime representation, so existing callers typed against one don't need to change.", failureMode: "", example: "result.to_result(result.ok(5)) // Ok(5), same value either way" },
 
-  BuiltinDoc { name: "fixture.temp_dir", parameters: [], returnType: "str", description: "Creates and returns the path to a fresh, uniquely named temporary directory." },
-  BuiltinDoc { name: "fixture.cleanup", parameters: [bp("path", "str")], returnType: "bool", description: "Recursively removes a directory (typically one created by fixture.temp_dir)." },
+  BuiltinDoc { name: "fixture.temp_dir", parameters: [], returnType: "str", description: "Creates and returns the path to a fresh, uniquely named temporary directory. No automatic cleanup - call fixture.cleanup when done.", failureMode: "", example: "fixture.temp_dir() // e.g. \"/tmp/lume_abc123\"" },
+  BuiltinDoc { name: "fixture.cleanup", parameters: [bp("path", "str")], returnType: "bool", description: "Recursively removes a directory, typically one created by fixture.temp_dir.", failureMode: "", example: "fixture.cleanup(dir) // true" },
 
-  BuiltinDoc { name: "bytes.from_str", parameters: [bp("text", "str")], returnType: "bytes", description: "Converts text to bytes." },
-  BuiltinDoc { name: "bytes.to_str", parameters: [bp("data", "bytes")], returnType: "str", description: "Converts bytes to text." },
-  BuiltinDoc { name: "bytes.length", parameters: [bp("data", "bytes")], returnType: "int", description: "Number of bytes." },
+  BuiltinDoc { name: "bytes.from_str", parameters: [bp("text", "str")], returnType: "bytes", description: "Converts text to bytes. bytes is represented identically to str at runtime (a deliberate scope reduction, not a NUL-safe binary type) - content with an embedded NUL byte truncates at the NUL on round-trip.", failureMode: "", example: "bytes.from_str(\"hi\") // the bytes for \"hi\"" },
+  BuiltinDoc { name: "bytes.to_str", parameters: [bp("data", "bytes")], returnType: "str", description: "Converts bytes to text.", failureMode: "", example: "bytes.to_str(data) // \"hi\"" },
+  BuiltinDoc { name: "bytes.length", parameters: [bp("data", "bytes")], returnType: "int", description: "Number of bytes.", failureMode: "", example: "bytes.length(data) // 2" },
 
-  BuiltinDoc { name: "expect.equal", parameters: [bp("actual", "T"), bp("expected", "T")], returnType: "bool", description: "Asserts two values are equal; fails the current test if not." },
-  BuiltinDoc { name: "expect.true", parameters: [bp("value", "bool")], returnType: "bool", description: "Asserts a value is true; fails the current test if not." },
-  BuiltinDoc { name: "expect.ok", parameters: [bp("result", "result<T,str>")], returnType: "bool", description: "Asserts a result is Ok; fails the current test if not." },
-  BuiltinDoc { name: "expect.err", parameters: [bp("result", "result<T,str>")], returnType: "bool", description: "Asserts a result is Err; fails the current test if not." },
-  BuiltinDoc { name: "expect.some", parameters: [bp("value", "Option<T>")], returnType: "bool", description: "Asserts an Option is Some; fails the current test if not." },
+  BuiltinDoc { name: "expect.equal", parameters: [bp("actual", "T"), bp("expected", "T")], returnType: "bool", description: "Asserts two values are equal; fails the current test (not the whole run) if not. Only usable inside a native `test \"name\" { ... }` block.", failureMode: "", example: "expect.equal(2 + 2, 4) // true" },
+  BuiltinDoc { name: "expect.true", parameters: [bp("value", "bool")], returnType: "bool", description: "Asserts a value is true; fails the current test if not.", failureMode: "", example: "expect.true(1 < 2) // true" },
+  BuiltinDoc { name: "expect.ok", parameters: [bp("result", "result<T,str>")], returnType: "bool", description: "Asserts a result is Ok; fails the current test if not.", failureMode: "", example: "expect.ok(result.ok(5)) // true" },
+  BuiltinDoc { name: "expect.err", parameters: [bp("result", "result<T,str>")], returnType: "bool", description: "Asserts a result is Err; fails the current test if not.", failureMode: "", example: "expect.err(result.err(\"bad\")) // true" },
+  BuiltinDoc { name: "expect.some", parameters: [bp("value", "Option<T>")], returnType: "bool", description: "Asserts an Option is Some; fails the current test if not.", failureMode: "", example: "expect.some(Some(5)) // true" },
 
-  BuiltinDoc { name: "expect.exit_code", parameters: [bp("result", "process"), bp("code", "int")], returnType: "bool", description: "Asserts a process result's exit code equals `code`; fails the current test if not." },
-  BuiltinDoc { name: "expect.stdout_contains", parameters: [bp("result", "process"), bp("text", "str")], returnType: "bool", description: "Asserts a process result's captured stdout contains `text`; fails the current test if not." },
-  BuiltinDoc { name: "expect.stderr_contains", parameters: [bp("result", "process"), bp("text", "str")], returnType: "bool", description: "Asserts a process result's captured stderr contains `text`; fails the current test if not." }
+  BuiltinDoc { name: "expect.exit_code", parameters: [bp("result", "process"), bp("code", "int")], returnType: "bool", description: "Asserts a process result's exit code equals `code`; fails the current test if not.", failureMode: "", example: "expect.exit_code(result, 0) // true" },
+  BuiltinDoc { name: "expect.stdout_contains", parameters: [bp("result", "process"), bp("text", "str")], returnType: "bool", description: "Asserts a process result's captured stdout contains `text`; fails the current test if not.", failureMode: "", example: "expect.stdout_contains(result, \"ok\") // true" },
+  BuiltinDoc { name: "expect.stderr_contains", parameters: [bp("result", "process"), bp("text", "str")], returnType: "bool", description: "Asserts a process result's captured stderr contains `text`; fails the current test if not.", failureMode: "", example: "expect.stderr_contains(result, \"error\") // true" }
 ]
 
 // Cross-validates builtinDocs() against builtinNames()/builtinCounts() -
@@ -1441,6 +1453,8 @@ fn builtinDocsProblem(): Text = {
         problem = "builtinDocs[" ++ intToText(index) ++ "] is `" ++ doc.name ++ "`, expected `" ++ expectedName ++ "`"
       } else if List.len(doc.parameters) != expectedCount then {
         problem = "builtinDocs `" ++ doc.name ++ "` has " ++ intToText(List.len(doc.parameters)) ++ " documented parameter(s), builtinCounts says " ++ intToText(expectedCount)
+      } else if Text.eq(doc.example, "") then {
+        problem = "builtinDocs `" ++ doc.name ++ "` has no example"
       }
       index = index + 1
     }
@@ -8272,6 +8286,8 @@ fn apiManifest(): Text = {
     JsonValue.set(item, "parameters", parameters)
     JsonValue.set(item, "returnType", Json.string(doc.returnType))
     JsonValue.set(item, "description", Json.string(doc.description))
+    JsonValue.set(item, "failureMode", Json.string(doc.failureMode))
+    JsonValue.set(item, "example", Json.string(doc.example))
     JsonValue.push(functions, item)
     index = index + 1
   }
@@ -8308,7 +8324,12 @@ fn builtinReferenceMarkdown(): Text = {
       parameterText = parameterText ++ parameter.name ++ ": " ++ parameter.ptype
       parameterIndex = parameterIndex + 1
     }
-    output = output ++ "- `" ++ doc.name ++ "(" ++ parameterText ++ ") -> " ++ doc.returnType ++ "` - " ++ doc.description ++ "\n"
+    output = output ++ "- `" ++ doc.name ++ "(" ++ parameterText ++ ") -> " ++ doc.returnType ++ "`\n"
+    output = output ++ "  " ++ doc.description ++ "\n"
+    output = output ++ "  Example: `" ++ doc.example ++ "`\n"
+    if not Text.eq(doc.failureMode, "") then {
+      output = output ++ "  Errors: " ++ doc.failureMode ++ "\n"
+    }
     index = index + 1
   }
   output
