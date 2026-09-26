@@ -534,25 +534,54 @@ underlying git error.
 
 A plain `install` (no flags) is different from `--check` in one
 deliberate way: when `<dir>/lume.lock.json` already has a resolved entry
-for a dependency whose declared `name`/`git`/`ref` match exactly what
-that entry already recorded, `install` reuses the previously-resolved
-commit as-is — no network round-trip, no re-resolving a floating branch
-or tag `ref` against the live remote — rather than silently overwriting
-a committed pin with whatever the remote currently happens to serve.
-This is what gives a committed `lume.lock.json` any actual protective
-value against a compromised or force-pushed remote: without it, a
-`ref` that names a branch would be re-resolved fresh on every install,
-and the lock file would just get silently rewritten to match, the same
-gap the "package signing and checksum verification" item in
-[ROADMAP.md](ROADMAP.md) calls out directly. Any change to the
-dependency's declared `git`/`ref` since the lock was last written is
-treated as a deliberate developer action, not drift, and resolves fresh
-immediately, no flag required. `install --update` explicitly forces a
-fresh resolution of every `git` dependency regardless of any existing
-pin, for a developer who wants to intentionally pick up a moved branch
-tip. `--check` is unaffected by any of this — it always fully
-re-resolves, exactly as before, so it keeps catching a moved floating
-`ref` as drift (`E0739`) the same way it always has. Missing/malformed root manifest is `E0705`; a
+for a dependency whose declared `name`/`git`/`ref`/`signedBy` match
+exactly what that entry already recorded, `install` reuses the
+previously-resolved commit as-is — no network round-trip, no re-resolving
+a floating branch or tag `ref` against the live remote — rather than
+silently overwriting a committed pin with whatever the remote currently
+happens to serve. This is what gives a committed `lume.lock.json` any
+actual protective value against a compromised or force-pushed remote:
+without it, a `ref` that names a branch would be re-resolved fresh on
+every install, and the lock file would just get silently rewritten to
+match, the same gap the "package signing and checksum verification" item
+in [ROADMAP.md](ROADMAP.md) calls out directly. Any change to the
+dependency's declared `git`/`ref`/`signedBy` since the lock was last
+written is treated as a deliberate developer action, not drift, and
+resolves fresh immediately, no flag required (this includes adding or
+changing `signedBy` on an already-pinned dependency — that must actually
+re-verify, not silently keep trusting a pin that predates the new
+expectation). `install --update` explicitly forces a fresh resolution of
+every `git` dependency regardless of any existing pin, for a developer who
+wants to intentionally pick up a moved branch tip. `--check` is unaffected
+by any of this — it always fully re-resolves, exactly as before, so it
+keeps catching a moved floating `ref` as drift (`E0739`) the same way it
+always has.
+
+A git dependency entry can also declare `signedBy`, a GPG primary-key
+fingerprint (40 hex characters): `{"name": str, "git": str, "ref": str,
+"signedBy": str}`. Absent by default — every existing git dependency is
+unaffected. When declared, `install` verifies the resolved commit's GPG
+signature via `git verify-commit --raw` (git's own native GPG integration;
+no new host-language crypto primitive was added or is needed — Certo's own
+native crypto surface is limited to `Crypto.sha256`/`sha256Bytes`/`md5`/
+`base64Encode`/`base64Decode`) before the commit's bytes ever enter the
+shared clone cache, and rejects it if the signature doesn't check out
+against the expected fingerprint. No valid signature at all is `E0753`;
+a valid signature from a *different* key than declared is `E0754`. This
+verification always runs against a fresh clone, never against an
+already-cached directory — deliberately: the shared clone cache is keyed
+by `(git URL, resolved commit)` only, not also by `signedBy`, so trusting
+a cache hit without re-verifying would let a commit already cached by an
+earlier, unrelated resolution (one that never declared `signedBy` at all,
+or declared it once) bypass verification entirely for a later dependency
+declaring a different expectation. `signedBy` is therefore only as
+trustworthy as whatever GPG keys the machine running `install` already has
+imported — same as any git-signed-commit workflow, and no different from
+how git's own `verify-commit` behaves outside Lume. The lock entry records
+the manifest's declared `signedBy` the same conditional way it records
+`git`/`ref` (present only when actually declared), so `--check` can catch
+it being silently removed from `lume.json` without a corresponding
+install. Missing/malformed root manifest is `E0705`; a
 dependency whose own manifest can't be read is `E0706`; the same
 declared name resolving to two different locations is `E0708`; a
 genuine dependency cycle is `E0709`; a lock file write failure is

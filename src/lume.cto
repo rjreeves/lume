@@ -210,6 +210,11 @@ type ResolvedDep = {
   // tree - see resolveGitDependency).
   git: Text
   ref: Text
+  // "" unless the manifest declared `signedBy` on this git entry - records
+  // the manifest's own declared expectation (not anything derived from
+  // verification), same reasoning as git/ref, so `--check` can catch it
+  // being silently removed from lume.json without a corresponding install.
+  signedBy: Text
 }
 
 type ResolveOutcome = {
@@ -5949,7 +5954,8 @@ fn readExistingResolvedDeps(lockPath: Text): List<ResolvedDep> [io] = {
           version: JsonValue.asText(JsonValue.get(entry, "version")),
           dependencyNames: readDependencyNames(JsonValue.get(entry, "dependencies")),
           git: JsonValue.asText(JsonValue.get(entry, "git")),
-          ref: JsonValue.asText(JsonValue.get(entry, "ref"))
+          ref: JsonValue.asText(JsonValue.get(entry, "ref")),
+          signedBy: JsonValue.asText(JsonValue.get(entry, "signedBy"))
         })
         index = index + 1
       }
@@ -6123,17 +6129,20 @@ fn findResolvedPath(resolved: List<ResolvedDep>, name: Text): Text? = {
   if found then Some(path) else None
 }
 
-// A prior lock entry is only trusted as a pin when `name`/`git`/`ref` all
-// match exactly what's newly declared - any change to the declared `git`
-// URL or `ref` string is a deliberate developer action, not drift, and
-// must re-resolve rather than reuse a now-unrelated cached path.
-fn findExistingPin(pins: List<ResolvedDep>, name: Text, git: Text, ref: Text): Text? = {
+// A prior lock entry is only trusted as a pin when `name`/`git`/`ref`/
+// `signedBy` all match exactly what's newly declared - any change to any
+// of them is a deliberate developer action, not drift, and must re-resolve
+// rather than reuse a now-unrelated (or now-differently-guarded) cached
+// path. `signedBy` is included so that adding/changing it on an
+// already-pinned dependency actually re-verifies, instead of silently
+// keeping a pin that predates the new expectation.
+fn findExistingPin(pins: List<ResolvedDep>, name: Text, git: Text, ref: Text, signedBy: Text): Text? = {
   var index = 0
   var found = false
   var path = ""
   while index < List.len(pins) and not found {
     val pin = List.getOrPanic(pins, index)
-    if Text.eq(pin.name, name) and Text.eq(pin.git, git) and Text.eq(pin.ref, ref) then {
+    if Text.eq(pin.name, name) and Text.eq(pin.git, git) and Text.eq(pin.ref, ref) and Text.eq(pin.signedBy, signedBy) then {
       found = true
       path = pin.path
     }
@@ -6150,6 +6159,77 @@ fn runGit(args: List<Text>): Result<Text, Text> [io] = {
   val result = Process.run("git", args, "", 0)
   if ProcessResult.exitCode(result) == 0 then { Ok(Text.trim(ProcessResult.stdout(result))) }
   else { Err(Text.trim(ProcessResult.stderr(result))) }
+}
+
+// GPG fingerprints in a commit's own `VALIDSIG` status line are always
+// uppercase hex; a `signedBy` value hand-copied from `gpg --fingerprint`
+// output is too, but tolerate lowercase input the same way
+// `looksLikeCommitSha` already tolerates lowercase hex elsewhere in this
+// file. Only `a`-`f` ever need mapping - no general case-folding primitive
+// exists in this language (confirmed: no `Text.upper`/`toUppercase`
+// anywhere), and a 40-char hex string doesn't need one.
+fn uppercaseHexChar(c: Text): Text = {
+  if Text.eq(c, "a") then "A"
+  else if Text.eq(c, "b") then "B"
+  else if Text.eq(c, "c") then "C"
+  else if Text.eq(c, "d") then "D"
+  else if Text.eq(c, "e") then "E"
+  else if Text.eq(c, "f") then "F"
+  else c
+}
+
+fn uppercaseHex(value: Text): Text = {
+  var result = ""
+  var index = 0
+  while index < Text.len(value) {
+    result = result ++ uppercaseHexChar(charAt(value, index))
+    index = index + 1
+  }
+  result
+}
+
+// `git verify-commit`'s `--raw` output is GPG's own status-protocol text,
+// always written to stderr - including the `VALIDSIG` line on a
+// *successful* check (confirmed live: a clean run's interesting content is
+// on stderr, stdout is empty), so this calls `Process.run` directly rather
+// than `runGit` (whose `Ok` branch only ever captures stdout). Deliberately
+// never passes `-c gpg.program=...`: `git verify-commit` finds its own
+// bundled `gpg` automatically even when nothing is on `PATH` (confirmed
+// live), and hardcoding a path would only make this less portable.
+fn verifyCommitSignature(tmpDir: Text, sha: Text, expectedFingerprint: Text): Result<Text, Text> [io] = {
+  val result = Process.run("git", ["-C", tmpDir, "verify-commit", "--raw", sha], "", 0)
+  val stderrText = Text.trim(ProcessResult.stderr(result))
+  if ProcessResult.exitCode(result) != 0 then {
+    // Empty stderr is the common case (a plain unsigned commit emits no
+    // GPG status lines at all, confirmed live) - avoid a message with a
+    // dangling ": " and nothing after it.
+    if Text.eq(stderrText, "") then {
+      Err("E0753 git dependency commit `" ++ sha ++ "` has no valid signature (not GPG-signed)")
+    } else {
+      Err("E0753 git dependency commit `" ++ sha ++ "` has no valid signature: " ++ stderrText)
+    }
+  } else {
+    var fingerprint = ""
+    for line in Text.split(stderrText, "\n") {
+      if Text.eq(fingerprint, "") and Text.startsWith(Text.trim(line), "[GNUPG:] VALIDSIG ") then {
+        // Fields: ["[GNUPG:]", "VALIDSIG", "<fingerprint>", "<date>", ...] -
+        // the fingerprint is the THIRD field (index 2), not the second;
+        // confirmed live against real `git verify-commit --raw` output.
+        val fields = Text.split(Text.trim(line), " ")
+        if List.len(fields) > 2 then { fingerprint = List.getOrPanic(fields, 2) }
+      }
+    }
+    if Text.eq(fingerprint, "") then {
+      // Exit code 0 with no parseable VALIDSIG line "shouldn't happen," but
+      // never treat an unparsed result as a verified one just because git
+      // itself exited cleanly.
+      Err("E0753 git dependency commit `" ++ sha ++ "` has no valid signature: could not parse a VALIDSIG line from `git verify-commit`'s output")
+    } else if Text.eq(uppercaseHex(fingerprint), uppercaseHex(expectedFingerprint)) then {
+      Ok(fingerprint)
+    } else {
+      Err("E0754 git dependency commit `" ++ sha ++ "` is signed by `" ++ fingerprint ++ "`, expected `" ++ expectedFingerprint ++ "`")
+    }
+  }
 }
 
 // Where cloned git dependencies are cached, shared across every project on
@@ -6289,7 +6369,7 @@ fn uniqueCloneTmpDir(): Text = uniqueTempSubdir("lume_git_clone")
 // entry this feeds - both need a stable, immutable identity. Matches
 // ROADMAP.md's own "Distribution and interoperability" design sketch this
 // implements.
-fn resolveGitDependency(gitUrl: Text, ref: Text): Result<Text, Text> [io] = {
+fn resolveGitDependency(gitUrl: Text, ref: Text, expectedFingerprint: Text): Result<Text, Text> [io] = {
   val cacheRootResult = gitCacheRoot()
   var problem = ""
   var resultPath = ""
@@ -6304,7 +6384,21 @@ fn resolveGitDependency(gitUrl: Text, ref: Text): Result<Text, Text> [io] = {
     // doesn't have that commit yet, this falls through to the full
     // clone/checkout/rev-parse below, which is always correct regardless
     // of what `ref` turns out to mean.
-    val fastShaOpt = if looksLikeCommitSha(ref) then Some(ref) else lsRemoteSha(gitUrl, ref)
+    //
+    // Never taken at all when `expectedFingerprint` is declared - confirmed
+    // live that this genuinely matters, not just a theoretical concern: the
+    // cache is keyed by (url, resolved commit) only, so a commit already
+    // cached from an earlier, entirely unrelated resolution (one that never
+    // declared `signedBy` at all) would otherwise let a `signedBy`-declaring
+    // install reuse it without `verifyCommitSignature` ever running - this
+    // was caught by this feature's own test suite reusing a `ref` an
+    // earlier, unrelated test case had already resolved. Skipping the fast
+    // path whenever verification is required means every `signedBy`-
+    // declaring resolution always re-clones and always re-verifies against
+    // a fresh checkout that still has its own `.git` directory - see the
+    // matching `isDirectory(finalDir)` handling below for the same reasoning
+    // applied to the post-clone cache-hit case.
+    val fastShaOpt = if not Text.eq(expectedFingerprint, "") then None else if looksLikeCommitSha(ref) then Some(ref) else lsRemoteSha(gitUrl, ref)
     var fastHit = ""
     if let Some(fastSha) = fastShaOpt {
       val candidate = Path.join(urlCacheDir, fastSha)
@@ -6330,10 +6424,23 @@ fn resolveGitDependency(gitUrl: Text, ref: Text): Result<Text, Text> [io] = {
             problem = "E0748 git dependency `" ++ gitUrl ++ "` failed: " ++ message
           } else if let Ok(sha) = shaResult {
             val finalDir = Path.join(urlCacheDir, sha)
-            if isDirectory(finalDir) then {
+            val alreadyCached = isDirectory(finalDir)
+            // Verification (when `expectedFingerprint` is declared) always
+            // runs against this fresh `tmpDir` clone - which is guaranteed
+            // to still have its own `.git` directory - regardless of
+            // whether `finalDir` turns out to already be cached, exactly so
+            // an already-cached commit (from this project's own earlier
+            // install, or an unrelated one on the same machine) can never
+            // bypass verification the way the fast paths above would.
+            val signatureResult = if Text.eq(expectedFingerprint, "") then Ok("") else verifyCommitSignature(tmpDir, sha, expectedFingerprint)
+            if let Err(message) = signatureResult {
+              removeDir(tmpDir)
+              problem = message
+            } else if alreadyCached then {
               // Another install already resolved this exact (url, commit)
-              // pair - reuse it rather than clobbering it with this
-              // redundant clone, matching the point of a shared cache.
+              // pair - now freshly verified too, if that was required -
+              // reuse it rather than clobbering it with this redundant
+              // clone, matching the point of a shared cache.
               removeDir(tmpDir)
               resultPath = finalDir
             } else if makeDir(urlCacheDir) and renameFile(tmpDir, finalDir) then {
@@ -6367,6 +6474,7 @@ fn resolveDependencies(rootDir: Text, rootRelative: Text, active: List<Text>, ac
         val declaredPath = JsonValue.asText(JsonValue.get(entry, "path"))
         val declaredGit = JsonValue.asText(JsonValue.get(entry, "git"))
         val declaredRef = JsonValue.asText(JsonValue.get(entry, "ref"))
+        val declaredSignedBy = JsonValue.asText(JsonValue.get(entry, "signedBy"))
         val hasPath = not Text.eq(declaredPath, "")
         val hasGit = not Text.eq(declaredGit, "")
         // Exactly one of `path`/`git` - both or neither is the same class
@@ -6402,11 +6510,16 @@ fn resolveDependencies(rootDir: Text, rootRelative: Text, active: List<Text>, ac
           // through to the exact same resolveGitDependency call that ran
           // unconditionally before this - a missing/stale pin is never a
           // new failure mode, only ever a reason to re-resolve for real.
-          val pinnedPath = if hasGit and respectPins then findExistingPin(existingPins, depName, declaredGit, declaredRef) else None
+          // `signedBy` is part of the pin's own identity, not just `git`/
+          // `ref` - a manifest edit that only adds/changes `signedBy` on an
+          // already-pinned dependency must re-resolve (and so actually run
+          // verifyCommitSignature) rather than silently keeping the old,
+          // never-checked-against-this-key pin.
+          val pinnedPath = if hasGit and respectPins then findExistingPin(existingPins, depName, declaredGit, declaredRef, declaredSignedBy) else None
           val gitResolution =
             if let Some(pinned) = pinnedPath {
-              if isDirectory(pinned) then Ok(pinned) else resolveGitDependency(declaredGit, declaredRef)
-            } else if hasGit then resolveGitDependency(declaredGit, declaredRef)
+              if isDirectory(pinned) then Ok(pinned) else resolveGitDependency(declaredGit, declaredRef, declaredSignedBy)
+            } else if hasGit then resolveGitDependency(declaredGit, declaredRef, declaredSignedBy)
             else Ok("")
           if let Err(message) = gitResolution {
             problem = message
@@ -6436,7 +6549,7 @@ fn resolveDependencies(rootDir: Text, rootRelative: Text, active: List<Text>, ac
               val depManifestPath = Path.join(packageDirPath(rootDir, depRootRelative), "lume.json")
               if let Ok(depVersion) = readManifestVersion(depManifestPath) {
                 val depDependencyNames = readManifestDependencyNames(depManifestPath)
-                currentResolved = List.push(currentResolved, ResolvedDep { name: depName, path: depRootRelative, version: depVersion, dependencyNames: depDependencyNames, git: if hasGit then declaredGit else "", ref: if hasGit then declaredRef else "" })
+                currentResolved = List.push(currentResolved, ResolvedDep { name: depName, path: depRootRelative, version: depVersion, dependencyNames: depDependencyNames, git: if hasGit then declaredGit else "", ref: if hasGit then declaredRef else "", signedBy: if hasGit then declaredSignedBy else "" })
                 val nextActiveGitRefs = if hasGit then List.push(activeGitRefs, gitRefKey) else activeGitRefs
                 val nested = resolveDependencies(rootDir, depRootRelative, List.push(active, depRootRelative), nextActiveGitRefs, currentResolved, existingPins, respectPins)
                 if not Text.eq(nested.problem, "") then { problem = nested.problem }
@@ -6564,6 +6677,13 @@ fn computeLockContent(dir: Text, manifestPath: Text, respectPins: Bool): Result<
         if not Text.eq(dep.git, "") then {
           JsonValue.set(lockEntry, "git", Json.string(dep.git))
           JsonValue.set(lockEntry, "ref", Json.string(dep.ref))
+          // Same "only present when actually declared" convention as
+          // `git`/`ref` above - most git dependencies have no `signedBy`
+          // at all, and writing it as "" unconditionally would spuriously
+          // break `--check` for every one of them the moment this ships.
+          if not Text.eq(dep.signedBy, "") then {
+            JsonValue.set(lockEntry, "signedBy", Json.string(dep.signedBy))
+          }
         }
         val ownNames = Json.array()
         for depName in dep.dependencyNames { JsonValue.push(ownNames, Json.string(depName)) }

@@ -1038,23 +1038,46 @@ network at all, and a branch or tag tries a single lightweight
 check), but not a full clone every time.
 
 A plain `install` goes further: if `lume.lock.json` already has an entry
-for this exact `name`/`git`/`ref` triple, `install` trusts that
-previously-resolved commit outright and skips resolving `ref` at all —
-no `ls-remote`, no clone, no network touched for that dependency. This is
-what makes a committed lock file actually mean something for a `git`
-dependency pinned to a branch or tag: without it, every plain `install`
-would silently re-resolve the floating `ref` against whatever the remote
-currently serves and overwrite the lock file to match, which defeats the
-point of committing a lock file in the first place. Editing the
-dependency's declared `git`/`ref` in `lume.json` is a deliberate choice,
-not drift, so it still resolves immediately without any flag. To
-intentionally pick up a moved branch or tag tip, run `lume install --update`,
-which re-resolves every `git` dependency regardless of what's already
-pinned. `--check` is unaffected by any of this — it always fully
-re-resolves and still reports a moved `ref` as an out-of-date lock file. A dependency
+for this exact `name`/`git`/`ref`/`signedBy` combination, `install` trusts
+that previously-resolved commit outright and skips resolving `ref` at
+all — no `ls-remote`, no clone, no network touched for that dependency.
+This is what makes a committed lock file actually mean something for a
+`git` dependency pinned to a branch or tag: without it, every plain
+`install` would silently re-resolve the floating `ref` against whatever
+the remote currently serves and overwrite the lock file to match, which
+defeats the point of committing a lock file in the first place. Editing
+the dependency's declared `git`/`ref`/`signedBy` in `lume.json` is a
+deliberate choice, not drift, so it still resolves immediately without
+any flag. To intentionally pick up a moved branch or tag tip, run
+`lume install --update`, which re-resolves every `git` dependency
+regardless of what's already pinned. `--check` is unaffected by any of
+this — it always fully re-resolves and still reports a moved `ref` as an
+out-of-date lock file. A dependency
 entry must declare exactly one of `path`/`git` — both or neither, or
 `git` without `ref`, is `E0747`; a `git` command that fails (bad URL, a
-`ref` that doesn't exist) is `E0748`. Everything past that — cycle
+`ref` that doesn't exist) is `E0748`.
+
+A git dependency can optionally pin *who* published it, not just *what*
+commit: add `"signedBy": "<40-hex-character GPG fingerprint>"` alongside
+`git`/`ref`:
+
+```json
+{ "name": "mathutils", "git": "https://example.com/org/mathutils.git", "ref": "v1.2.0", "signedBy": "AA08D58368024C010A6294956A27544CD3C77FB2" }
+```
+
+`install` runs `git verify-commit` against the resolved commit before it
+ever enters the shared clone cache, and fails the install if the commit
+isn't signed at all (`E0753`) or is signed by a *different* key than the
+one declared (`E0754`). This is a real, offline, no-new-primitive check —
+it shells out to `git verify-commit`, which uses `git`'s own bundled GPG
+support, the same way `install` already shells out to `git clone`/
+`checkout`/`rev-parse` for ordinary resolution. It depends entirely on the
+machine running `install` already having the signer's public key in its
+own GPG keyring (`gpg --import`/`--recv-keys` it yourself first, same as
+you would to verify any GPG-signed commit) — `signedBy` doesn't manage
+keys or trust for you, it only checks a signature against a key you
+already trust. Leave `signedBy` off and nothing changes; every existing
+git dependency is unaffected. Everything past that — cycle
 detection (including a git dependency that repeats the identical
 `(git, ref)` pair further down its own dependency chain), isolation,
 transitively resolving a git dependency's own further dependencies
