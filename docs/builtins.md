@@ -14,7 +14,7 @@ Generated from `builtinDocs()` in `src/lume.cto` (the same source `lume api` rea
 ## fs
 
 - `fs.exists(path: str) -> bool`
-  Whether a *file* exists at `path`. Confirmed live: this is file-only, not file-or-directory - it returns false for a path that is genuinely an existing directory (fixture.temp_dir's own result, for example). There is no builtin that checks directory existence.
+  Whether a *file* exists at `path` - file-only, not file-or-directory; returns false for a path that is genuinely an existing directory. Use dir.exists to check a directory instead.
   Example: `fs.exists("config.json") // true if it exists as a file`
 - `fs.read_text(path: str) -> str`
   Reads a file's full contents as text.
@@ -154,6 +154,9 @@ Generated from `builtinDocs()` in `src/lume.cto` (the same source `lume api` rea
   Recursively lists files under `path` as full paths, files only (a subdirectory is recursed into, never included in the result itself). `maxDepth` 0 means only `path`'s own files; an unreadable subdirectory partway through the walk is silently skipped, not a failure.
   Example: `dir.walk(".", 32) // Ok(["src/a.lume", "src/sub/b.lume"])`
   Errors: Returns Err on failure; never panics.
+- `dir.exists(path: str) -> bool`
+  Whether a directory exists at `path`. Complements fs.exists, which is file-only and returns false for a directory.
+  Example: `dir.exists("src") // true if it exists as a directory`
 
 ## time
 

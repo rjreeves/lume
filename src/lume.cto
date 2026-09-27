@@ -1226,7 +1226,7 @@ fn builtinNames(): List<Text> = [
   "str.contains", "str.starts_with", "str.ends_with",
   "json.valid", "json.get", "json.encode",
   "path.join", "path.basename", "path.dirname", "path.extension", "path.stem",
-  "dir.list", "dir.walk",
+  "dir.list", "dir.walk", "dir.exists",
   "time.now", "time.to_iso", "time.year", "time.month", "time.day", "time.hour", "time.minute", "time.second", "time.format", "time.in_timezone", "time.format_in_timezone",
   "duration.seconds", "duration.minutes", "duration.hours", "duration.days",
   "Duration.of_seconds", "Duration.of_minutes", "Duration.of_hours", "Duration.of_days", "Duration.add", "Duration.sub", "Duration.scale", "Duration.to_seconds",
@@ -1249,7 +1249,7 @@ fn builtinCounts(): List<Int> = [
   2, 2, 2,
   1, 2, 1,
   2, 1, 1, 1, 1,
-  1, 2,
+  1, 2, 1,
   0, 1, 1, 1, 1, 1, 1, 1, 2, 2, 3,
   1, 1, 1, 1,
   1, 1, 1, 1, 2, 2, 2, 1,
@@ -1295,7 +1295,7 @@ fn builtinDocs(): List<BuiltinDoc> = [
   BuiltinDoc { name: "args.count", parameters: [], returnType: "int", description: "Number of command-line arguments, excluding the program name.", failureMode: "", example: "args.count() // e.g. 2, if the program was run with two arguments" },
   BuiltinDoc { name: "args.get", parameters: [bp("index", "int")], returnType: "str", description: "The argument at `index`. Does not panic on an out-of-range index - it returns \"\" instead, the same way a missing environment variable does.", failureMode: "", example: "args.get(0) // the first CLI argument, or \"\" if none was passed" },
 
-  BuiltinDoc { name: "fs.exists", parameters: [bp("path", "str")], returnType: "bool", description: "Whether a *file* exists at `path`. Confirmed live: this is file-only, not file-or-directory - it returns false for a path that is genuinely an existing directory (fixture.temp_dir's own result, for example). There is no builtin that checks directory existence.", failureMode: "", example: "fs.exists(\"config.json\") // true if it exists as a file" },
+  BuiltinDoc { name: "fs.exists", parameters: [bp("path", "str")], returnType: "bool", description: "Whether a *file* exists at `path` - file-only, not file-or-directory; returns false for a path that is genuinely an existing directory. Use dir.exists to check a directory instead.", failureMode: "", example: "fs.exists(\"config.json\") // true if it exists as a file" },
   BuiltinDoc { name: "fs.read_text", parameters: [bp("path", "str")], returnType: "str", description: "Reads a file's full contents as text.", failureMode: "E0312 if the file can't be read.", example: "fs.read_text(\"notes.txt\") // the file's contents" },
   BuiltinDoc { name: "fs.write_text", parameters: [bp("path", "str"), bp("content", "str")], returnType: "bool", description: "Writes `content` to `path`, creating or overwriting it; the bool reports whether the write succeeded, so a failed write is reported, not panicked on.", failureMode: "", example: "fs.write_text(\"out.txt\", \"hello\") // true" },
   BuiltinDoc { name: "fs.try_read_text", parameters: [bp("path", "str")], returnType: "result<str,str>", description: "Reads a file's full contents as text, returning Err instead of failing on a read error.", failureMode: "Returns Err on failure; never panics.", example: "fs.try_read_text(\"notes.txt\") // Ok(\"...\") or Err(\"...\")" },
@@ -1340,6 +1340,7 @@ fn builtinDocs(): List<BuiltinDoc> = [
 
   BuiltinDoc { name: "dir.list", parameters: [bp("path", "str")], returnType: "result<[str],str>", description: "Lists a directory's immediate entries. Names only (not full paths), unsorted, and not recursive - see dir.walk for that.", failureMode: "Returns Err on failure; never panics.", example: "dir.list(\".\") // Ok([\"a.lume\", \"b.lume\"])" },
   BuiltinDoc { name: "dir.walk", parameters: [bp("path", "str"), bp("maxDepth", "int")], returnType: "result<[str],str>", description: "Recursively lists files under `path` as full paths, files only (a subdirectory is recursed into, never included in the result itself). `maxDepth` 0 means only `path`'s own files; an unreadable subdirectory partway through the walk is silently skipped, not a failure.", failureMode: "Returns Err on failure; never panics.", example: "dir.walk(\".\", 32) // Ok([\"src/a.lume\", \"src/sub/b.lume\"])" },
+  BuiltinDoc { name: "dir.exists", parameters: [bp("path", "str")], returnType: "bool", description: "Whether a directory exists at `path`. Complements fs.exists, which is file-only and returns false for a directory.", failureMode: "", example: "dir.exists(\"src\") // true if it exists as a directory" },
 
   BuiltinDoc { name: "time.now", parameters: [], returnType: "int", description: "Current Unix epoch time in seconds.", failureMode: "", example: "time.now() // e.g. 1735000000" },
   BuiltinDoc { name: "time.to_iso", parameters: [bp("seconds", "int")], returnType: "str", description: "Formats epoch seconds as a UTC ISO-8601 string.", failureMode: "", example: "time.to_iso(0) // \"1970-01-01T00:00:00Z\"" },
@@ -3267,6 +3268,11 @@ fn checkBuiltinTypes(code: List<Instruction>, name: Text, stackInput: List<Text>
     stack = pathType.stack
     if not Text.eq(pathType.value, "str") or not Text.eq(maxDepthType.value, "int") then { problem = "E0728 line " ++ intToText(line) ++ ": builtin `dir.walk` requires (str, int)" }
     resultType = "result<list<str>,str>"
+  } else if Text.eq(name, "dir.exists") then {
+    val valueType = pop(stack)
+    stack = valueType.stack
+    if not Text.eq(valueType.value, "str") then { problem = "E0608 builtin `dir.exists` requires str" }
+    resultType = "bool"
   } else if Text.eq(name, "time.now") then { resultType = "int" }
   else if Text.eq(name, "fixture.temp_dir") then { resultType = "str" }
   else if Text.eq(name, "time.to_iso") then {
@@ -5398,6 +5404,11 @@ fn callBuiltin(code: List<Instruction>, name: Text, input: List<Text>, deadlineM
         result = resultOk(encodeList(tagged))
       } else { result = resultErr("cannot list directory `" ++ path ++ "`") }
     }
+  } else if Text.eq(name, "dir.exists") then {
+    val one = pop(stack)
+    stack = one.stack
+    if let Ok(value) = requireText(one.value, name) { result = boolValue(isDirectory(value)) }
+    else if let Err(message) = requireText(one.value, name) { problem = message }
   } else if Text.eq(name, "time.now") then {
     result = intValue(DateTime.toUnix(DateTime.now()))
   } else if Text.eq(name, "fixture.temp_dir") then {
