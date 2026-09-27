@@ -1648,6 +1648,93 @@ if ($LASTEXITCODE -ne 0) { throw "signedBy: install against a signed commit with
 $noSignedByLock = (Get-Content -LiteralPath (Join-Path $noSignedByAppDir 'lume.lock.json') -Raw) | ConvertFrom-Json
 Assert-Equal 'signedBy: no signedBy declared means no verification attempted, regardless of the commit actually being signed' $mathutilsSignedSha ($noSignedByLock.resolved[0].path -replace '^.*[\\/]', '')
 
+# versionRange: semver-range resolution. `v1.0.0` already exists (tagged
+# at the very start of this fixture block); add three more tagged commits
+# so a range has real, distinct candidates to pick between.
+function New-GitDepAppWithVersionRange([string]$Name, [string]$VersionRange) {
+  $dir = Join-Path $gitFixtureRoot $Name
+  New-Item -ItemType Directory -Path $dir -Force | Out-Null
+  $manifest = '{"name":"' + $Name + '","version":"0.1.0","dependencies":[{"name":"mathutils","git":"' + $mathutilsRemoteUrl + '","versionRange":"' + $VersionRange + '"}]}'
+  Set-Content -LiteralPath (Join-Path $dir 'lume.json') -Value $manifest -NoNewline
+  Set-Content -LiteralPath (Join-Path $dir 'app.lume') -Value "use mathutils.ops`n`nfn main(args: [str]) -> int {`n  print(ops.square(7))`n  return 0`n}" -NoNewline
+  return $dir
+}
+
+Push-Location $mathutilsWork
+git tag v1.1.0
+Set-Content -LiteralPath (Join-Path $mathutilsWork 'ops.lume') -Value "pub fn ops.square(value: int) -> int {`n  return value * value`n}`n`npub fn ops.v142(value: int) -> int {`n  return value`n}" -NoNewline
+git add -A
+git -c user.email=test@lume.dev -c user.name=lume-test commit -q -m 'mathutils v1.4.2'
+git tag v1.4.2
+Set-Content -LiteralPath (Join-Path $mathutilsWork 'ops.lume') -Value "pub fn ops.square(value: int) -> int {`n  return value * value`n}`n`npub fn ops.v200(value: int) -> int {`n  return value`n}" -NoNewline
+git add -A
+git -c user.email=test@lume.dev -c user.name=lume-test commit -q -m 'mathutils v2.0.0'
+git tag v2.0.0
+git push -q origin main --tags
+Pop-Location
+$mathutilsV142Sha = (git --git-dir="$mathutilsRemote" rev-parse v1.4.2).Trim()
+$mathutilsV110Sha = (git --git-dir="$mathutilsRemote" rev-parse v1.1.0).Trim()
+$mathutilsV100Sha = (git --git-dir="$mathutilsRemote" rev-parse v1.0.0).Trim()
+
+$caretAppDir = New-GitDepAppWithVersionRange 'git-app-caret' '^1.0.0'
+$caretOut = & $Lume install $caretAppDir
+if ($LASTEXITCODE -ne 0) { throw "versionRange: install with ^1.0.0 exited $LASTEXITCODE" }
+$caretLock = (Get-Content -LiteralPath (Join-Path $caretAppDir 'lume.lock.json') -Raw) | ConvertFrom-Json
+Assert-Equal 'versionRange: ^1.0.0 resolves to the highest matching 1.x tag (v1.4.2), excluding v2.0.0' $mathutilsV142Sha ($caretLock.resolved[0].path -replace '^.*[\\/]', '')
+Assert-Equal 'versionRange: lock records the resolved tag name, not the constraint' 'v1.4.2' $caretLock.resolved[0].ref
+Assert-Equal 'versionRange: lock records the declared constraint separately' '^1.0.0' $caretLock.resolved[0].versionRange
+
+$tildeAppDir = New-GitDepAppWithVersionRange 'git-app-tilde' '~1.1.0'
+$tildeOut = & $Lume install $tildeAppDir
+if ($LASTEXITCODE -ne 0) { throw "versionRange: install with ~1.1.0 exited $LASTEXITCODE" }
+$tildeLock = (Get-Content -LiteralPath (Join-Path $tildeAppDir 'lume.lock.json') -Raw) | ConvertFrom-Json
+Assert-Equal 'versionRange: ~1.1.0 resolves to v1.1.0 only, excluding v1.4.2' $mathutilsV110Sha ($tildeLock.resolved[0].path -replace '^.*[\\/]', '')
+
+$exactAppDir = New-GitDepAppWithVersionRange 'git-app-exact-version' '1.0.0'
+$exactOut = & $Lume install $exactAppDir
+if ($LASTEXITCODE -ne 0) { throw "versionRange: install with exact 1.0.0 exited $LASTEXITCODE" }
+$exactLock = (Get-Content -LiteralPath (Join-Path $exactAppDir 'lume.lock.json') -Raw) | ConvertFrom-Json
+Assert-Equal 'versionRange: exact 1.0.0 resolves to exactly that tagged commit' $mathutilsV100Sha ($exactLock.resolved[0].path -replace '^.*[\\/]', '')
+
+$noMatchAppDir = New-GitDepAppWithVersionRange 'git-app-no-match' '^3.0.0'
+$noMatchOut = & $Lume install $noMatchAppDir 2>&1
+if ($LASTEXITCODE -ne 1) { throw "versionRange: a range nothing satisfies should exit 1" }
+Assert-Contains 'versionRange: a range nothing satisfies reports E0756' 'E0756' ($noMatchOut -join "`n")
+
+$bothAppDir = Join-Path $gitFixtureRoot 'bad-ref-and-range'
+New-Item -ItemType Directory -Path $bothAppDir -Force | Out-Null
+Set-Content -LiteralPath (Join-Path $bothAppDir 'lume.json') -Value ('{"name":"bad-ref-and-range","version":"0.1.0","dependencies":[{"name":"mathutils","git":"' + $mathutilsRemoteUrl + '","ref":"v1.0.0","versionRange":"^1.0.0"}]}') -NoNewline
+$bothOut = & $Lume install $bothAppDir 2>&1
+if ($LASTEXITCODE -ne 1) { throw "versionRange: declaring both ref and versionRange should exit 1" }
+Assert-Contains 'versionRange: declaring both ref and versionRange reports E0747' 'E0747' ($bothOut -join "`n")
+
+# Lock-pin composition: an unchanged versionRange must behave exactly like
+# an unchanged ref already does (Phase 1) - a plain re-install never
+# touches the network, --check still catches a newer matching tag as
+# drift, and --update is what actually picks it up.
+Push-Location $mathutilsWork
+Set-Content -LiteralPath (Join-Path $mathutilsWork 'ops.lume') -Value "pub fn ops.square(value: int) -> int {`n  return value * value`n}`n`npub fn ops.v150(value: int) -> int {`n  return value`n}" -NoNewline
+git add -A
+git -c user.email=test@lume.dev -c user.name=lume-test commit -q -m 'mathutils v1.5.0'
+git tag v1.5.0
+git push -q origin main --tags
+Pop-Location
+$mathutilsV150Sha = (git --git-dir="$mathutilsRemote" rev-parse v1.5.0).Trim()
+
+$caretReinstallOut = & $Lume install $caretAppDir
+if ($LASTEXITCODE -ne 0) { throw "versionRange: plain re-install exited $LASTEXITCODE" }
+$caretLockAfterPlain = (Get-Content -LiteralPath (Join-Path $caretAppDir 'lume.lock.json') -Raw) | ConvertFrom-Json
+Assert-Equal 'versionRange: plain install keeps the pinned tag despite a newer matching tag existing' $mathutilsV142Sha ($caretLockAfterPlain.resolved[0].path -replace '^.*[\\/]', '')
+
+$caretCheckOut = & $Lume install $caretAppDir --check 2>&1
+if ($LASTEXITCODE -ne 1) { throw "versionRange: install --check after a newer matching tag was published should exit 1" }
+Assert-Contains 'versionRange: --check still reports a newer matching tag as drift' 'E0739' ($caretCheckOut -join "`n")
+
+$caretUpdateOut = & $Lume install $caretAppDir --update
+if ($LASTEXITCODE -ne 0) { throw "versionRange: install --update exited $LASTEXITCODE" }
+$caretLockAfterUpdate = (Get-Content -LiteralPath (Join-Path $caretAppDir 'lume.lock.json') -Raw) | ConvertFrom-Json
+Assert-Equal 'versionRange: install --update picks up the newer matching tag' $mathutilsV150Sha ($caretLockAfterUpdate.resolved[0].path -replace '^.*[\\/]', '')
+
 # Malformed entries: both `path`/`git`, and `git` without `ref`, both
 # collapse onto the same E0747 - see resolveDependencies's own comment on
 # why these share one code rather than a code each.

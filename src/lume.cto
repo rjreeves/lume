@@ -215,6 +215,16 @@ type ResolvedDep = {
   // verification), same reasoning as git/ref, so `--check` can catch it
   // being silently removed from lume.json without a corresponding install.
   signedBy: Text
+  // "" unless the manifest declared `versionRange` instead of a literal
+  // `ref` - records the declared *constraint* (e.g. "^1.2.0"), not the
+  // concrete tag `ref` ends up holding once resolveBestTag picks one, so
+  // a plain install can tell "the constraint is unchanged, trust the
+  // pinned tag" apart from "the constraint changed, re-resolve" the same
+  // way it already does for git/ref/signedBy. Named distinctly from the
+  // `version` field above - that one is this *package's own* declared
+  // manifest version (readManifestVersion), an unrelated concept that
+  // happens to share a similar name.
+  versionRange: Text
 }
 
 type ResolveOutcome = {
@@ -6165,7 +6175,8 @@ fn readExistingResolvedDeps(lockPath: Text): List<ResolvedDep> [io] = {
           dependencyNames: readDependencyNames(JsonValue.get(entry, "dependencies")),
           git: JsonValue.asText(JsonValue.get(entry, "git")),
           ref: JsonValue.asText(JsonValue.get(entry, "ref")),
-          signedBy: JsonValue.asText(JsonValue.get(entry, "signedBy"))
+          signedBy: JsonValue.asText(JsonValue.get(entry, "signedBy")),
+          versionRange: JsonValue.asText(JsonValue.get(entry, "versionRange"))
         })
         index = index + 1
       }
@@ -6346,19 +6357,44 @@ fn findResolvedPath(resolved: List<ResolvedDep>, name: Text): Text? = {
 // path. `signedBy` is included so that adding/changing it on an
 // already-pinned dependency actually re-verifies, instead of silently
 // keeping a pin that predates the new expectation.
-fn findExistingPin(pins: List<ResolvedDep>, name: Text, git: Text, ref: Text, signedBy: Text): Text? = {
+// Bundles a git dependency's resolved cache path together with the
+// concrete `ref` (a literal tag/branch/commit, or the tag name
+// resolveBestTag picked for a `versionRange` constraint) it was actually
+// resolved against - both a pin lookup and a fresh resolveVersionedGitDependency
+// call need to hand this same pair back to their caller, since the lock
+// file must record the real resolved tag either way (see ResolvedDep's
+// own `ref`/`versionRange` field comments).
+type GitResolution = { path: Text, ref: Text }
+
+// `versionRange` is compared instead of `ref` when the manifest declares
+// one, not alongside it: a versionRange-declared entry's *currently*
+// declared `ref` is always "" (they're mutually exclusive), while the
+// stored pin's `ref` holds the previously *resolved* concrete tag (e.g.
+// "v1.4.2") - comparing that against "" would never match, defeating the
+// pin on every single install. Matching on the declared constraint
+// instead is what lets a plain install skip resolveBestTag's network
+// call entirely when the constraint is unchanged, the same way it
+// already skips resolveGitDependency for an unchanged literal `ref`.
+fn findExistingPin(pins: List<ResolvedDep>, name: Text, ref: Text, versionRange: Text, git: Text, signedBy: Text): GitResolution? = {
   var index = 0
   var found = false
-  var path = ""
+  var result = GitResolution { path: "", ref: "" }
   while index < List.len(pins) and not found {
     val pin = List.getOrPanic(pins, index)
-    if Text.eq(pin.name, name) and Text.eq(pin.git, git) and Text.eq(pin.ref, ref) and Text.eq(pin.signedBy, signedBy) then {
-      found = true
-      path = pin.path
+    if Text.eq(pin.name, name) and Text.eq(pin.git, git) and Text.eq(pin.signedBy, signedBy) then {
+      if not Text.eq(versionRange, "") then {
+        if Text.eq(pin.versionRange, versionRange) then {
+          found = true
+          result = GitResolution { path: pin.path, ref: pin.ref }
+        }
+      } else if Text.eq(pin.ref, ref) and Text.eq(pin.versionRange, "") then {
+        found = true
+        result = GitResolution { path: pin.path, ref: pin.ref }
+      }
     }
     index = index + 1
   }
-  if found then Some(path) else None
+  if found then Some(result) else None
 }
 
 // Shells out to a real `git` binary, no timeout - a clone/checkout can
@@ -6498,6 +6534,83 @@ fn looksLikeCommitSha(ref: Text): Bool = {
   }
 }
 
+// A parsed `major.minor.patch` version - deliberately lenient, matching
+// how real tags in the wild are inconsistently formatted: a leading `v`
+// is stripped before parsing, and 1-3 numeric dot-separated components
+// are accepted (`2`, `1.5`, `1.5.3`), missing ones defaulting to 0.
+// `valid: false` for anything that doesn't parse cleanly (a non-numeric
+// segment, more than 3 segments, or an empty string) - a tag that isn't
+// semver-shaped at all (`nightly`, `latest`) is meant to be silently
+// skipped by resolveBestTag, not treated as version 0.0.0.
+type SemverParts = { major: Int, minor: Int, patch: Int, valid: Bool }
+
+fn parseSemver(text: Text): SemverParts = {
+  val stripped = if Text.startsWith(text, "v") then Text.slice(text, 1, Text.len(text)) else text
+  val segments = if Text.eq(stripped, "") then [] else Text.split(stripped, ".")
+  if List.len(segments) == 0 or List.len(segments) > 3 then {
+    SemverParts { major: 0, minor: 0, patch: 0, valid: false }
+  } else {
+    val majorOpt = parseInt(List.getOrPanic(segments, 0))
+    val minorOpt = if List.len(segments) > 1 then parseInt(List.getOrPanic(segments, 1)) else Some(0)
+    val patchOpt = if List.len(segments) > 2 then parseInt(List.getOrPanic(segments, 2)) else Some(0)
+    if let Some(major) = majorOpt {
+      if let Some(minor) = minorOpt {
+        if let Some(patch) = patchOpt {
+          SemverParts { major: major, minor: minor, patch: patch, valid: true }
+        } else { SemverParts { major: 0, minor: 0, patch: 0, valid: false } }
+      } else { SemverParts { major: 0, minor: 0, patch: 0, valid: false } }
+    } else { SemverParts { major: 0, minor: 0, patch: 0, valid: false } }
+  }
+}
+
+// -1 if a < b, 0 if equal, 1 if a > b - the usual major/minor/patch
+// lexicographic comparison, manual rather than a built-in comparator for
+// the same reason textLessThan (:6789) is manual: no generic ordering
+// primitive exists for a record type in this language.
+fn compareSemver(a: SemverParts, b: SemverParts): Int = {
+  if a.major != b.major then (if a.major < b.major then -1 else 1)
+  else if a.minor != b.minor then (if a.minor < b.minor then -1 else 1)
+  else if a.patch != b.patch then (if a.patch < b.patch then -1 else 1)
+  else 0
+}
+
+// Checks `candidate` against `range`'s own leading operator - `^`/`~`/
+// nothing (exact). Any range syntax not recognized here (a comparison
+// operator, an OR'd range, a pre-release tag - all explicitly out of
+// scope for this first cut) falls through to `false` for every candidate,
+// which resolveBestTag folds into the same "no tag satisfies it" E0756
+// rather than a separate "malformed syntax" code - a caller who mistypes
+// the constraint sees one message naming the exact string they typed,
+// not a different one depending on which way it's wrong.
+fn satisfiesVersionRange(candidate: SemverParts, range: Text): Bool = {
+  if not candidate.valid then { false }
+  else if Text.startsWith(range, "^") then {
+    val base = parseSemver(Text.slice(range, 1, Text.len(range)))
+    if not base.valid then { false }
+    else {
+      val upperMajor = if base.major > 0 then base.major + 1 else base.major
+      val upperMinor = if base.major > 0 then 0 else base.minor + 1
+      val atLeastBase = compareSemver(candidate, base) >= 0
+      val belowUpper = candidate.major < upperMajor or (candidate.major == upperMajor and candidate.minor < upperMinor)
+      atLeastBase and belowUpper
+    }
+  } else if Text.startsWith(range, "~") then {
+    val base = parseSemver(Text.slice(range, 1, Text.len(range)))
+    if not base.valid then { false }
+    else {
+      // ~1.2.3 means >=1.2.3, <1.3.0 - same major.minor series, any patch
+      // at or above base's own (the lower-bound compare already covers
+      // "at or above").
+      val atLeastBase = compareSemver(candidate, base) >= 0
+      val sameMinorSeries = candidate.major == base.major and candidate.minor == base.minor
+      atLeastBase and sameMinorSeries
+    }
+  } else {
+    val exact = parseSemver(range)
+    exact.valid and compareSemver(candidate, exact) == 0
+  }
+}
+
 // Best-effort fast path: resolves `ref` to a commit SHA via one
 // lightweight network round-trip (no object transfer), so a cache hit can
 // skip a full clone entirely. Deliberately conservative - only trusts the
@@ -6521,6 +6634,44 @@ fn lsRemoteSha(gitUrl: Text, ref: Text): Text? = {
     }
   }
   sha
+}
+
+// Turns a declared `versionRange` constraint into a concrete tag name by
+// enumerating every tag on `gitUrl` and picking the highest one
+// satisfying `range` - the caller feeds the result into
+// resolveGitDependency exactly as if the manifest had declared that tag
+// as a literal `ref`, so nothing downstream (cache, lock-pinning,
+// signedBy verification) needs to know a range was ever involved.
+// `--refs` suppresses the `^{}`-peeled duplicate line ls-remote would
+// otherwise print for an annotated tag (confirmed against git's own
+// documentation for this flag) - unlike lsRemoteSha above, this never
+// needs to reason about annotated-vs-lightweight at all, because only
+// the tag *name* is used here, never the sha on this line (a fresh
+// `git checkout <tagName>` in resolveGitDependency resolves the name to
+// the right commit either way, annotated or not).
+fn resolveBestTag(gitUrl: Text, range: Text): Result<Text, Text> [io] = {
+  val result = runGit(["ls-remote", "--tags", "--refs", gitUrl])
+  var bestTag = ""
+  var bestVersion = SemverParts { major: 0, minor: 0, patch: 0, valid: false }
+  if let Ok(output) = result {
+    for line in Text.split(output, "\n") {
+      val tab = Text.indexOf(line, "\t") ?? -1
+      if tab > 0 then {
+        val refName = Text.slice(line, tab + 1, Text.len(line))
+        val prefix = "refs/tags/"
+        if Text.startsWith(refName, prefix) then {
+          val tagName = Text.slice(refName, Text.len(prefix), Text.len(refName))
+          val candidate = parseSemver(tagName)
+          if candidate.valid and satisfiesVersionRange(candidate, range) and (not bestVersion.valid or compareSemver(candidate, bestVersion) > 0) then {
+            bestTag = tagName
+            bestVersion = candidate
+          }
+        }
+      }
+    }
+  }
+  if Text.eq(bestTag, "") then { Err("E0756 no tag on `" ++ gitUrl ++ "` satisfies version range `" ++ range ++ "`") }
+  else { Ok(bestTag) }
 }
 
 // Recursively copies `from` into `to`, skipping any entry literally named
@@ -6670,6 +6821,26 @@ fn resolveGitDependency(gitUrl: Text, ref: Text, expectedFingerprint: Text): Res
   if Text.eq(problem, "") then Ok(resultPath) else Err(problem)
 }
 
+// Resolves either declared source form for a git entry into a
+// GitResolution - a literal `ref`, passed straight through to
+// resolveGitDependency unchanged (its own signature and behavior are
+// untouched by this feature), or a `versionRange` constraint, turned into
+// a concrete tag name by resolveBestTag first. Either way the returned
+// `ref` is the actual literal string that was resolved against (the
+// declared `ref` itself, or whichever tag resolveBestTag picked) - never
+// the constraint - so the lock file can always record what was really
+// checked out, not just what was asked for.
+fn resolveVersionedGitDependency(gitUrl: Text, ref: Text, versionRange: Text, expectedFingerprint: Text): Result<GitResolution, Text> [io] = {
+  val refResult = if Text.eq(versionRange, "") then Ok(ref) else resolveBestTag(gitUrl, versionRange)
+  if let Err(message) = refResult { Err(message) }
+  else if let Ok(effectiveRef) = refResult {
+    val pathResult = resolveGitDependency(gitUrl, effectiveRef, expectedFingerprint)
+    if let Err(message) = pathResult { Err(message) }
+    else if let Ok(path) = pathResult { Ok(GitResolution { path: path, ref: effectiveRef }) }
+    else { Err("unreachable") }
+  } else { Err("unreachable") }
+}
+
 fn resolveDependencies(rootDir: Text, rootRelative: Text, active: List<Text>, activeGitRefs: List<Text>, resolved: List<ResolvedDep>, existingPins: List<ResolvedDep>, respectPins: Bool): ResolveOutcome [io] = {
   val manifestPath = Path.join(packageDirPath(rootDir, rootRelative), "lume.json")
   if let Some(source) = readFile(manifestPath) {
@@ -6684,19 +6855,23 @@ fn resolveDependencies(rootDir: Text, rootRelative: Text, active: List<Text>, ac
         val declaredPath = JsonValue.asText(JsonValue.get(entry, "path"))
         val declaredGit = JsonValue.asText(JsonValue.get(entry, "git"))
         val declaredRef = JsonValue.asText(JsonValue.get(entry, "ref"))
+        val declaredVersionRange = JsonValue.asText(JsonValue.get(entry, "versionRange"))
         val declaredSignedBy = JsonValue.asText(JsonValue.get(entry, "signedBy"))
         val hasPath = not Text.eq(declaredPath, "")
         val hasGit = not Text.eq(declaredGit, "")
+        val hasRef = not Text.eq(declaredRef, "")
+        val hasVersionRange = not Text.eq(declaredVersionRange, "")
         // Exactly one of `path`/`git` - both or neither is the same class
         // of manifest error as the existing missing-name/version check
-        // (E0737): malformed input, not an empty/absent dependency. `git`
-        // without `ref` is folded into the same code rather than a
-        // dedicated one - both are "this entry doesn't declare a usable
+        // (E0737): malformed input, not an empty/absent dependency. A
+        // `git` entry must declare exactly one of `ref`/`versionRange` -
+        // folded into the same code rather than a dedicated one, same
+        // reasoning: both are "this entry doesn't declare a usable
         // source," and a caller never needs to tell them apart
         // programmatically, only read the message.
-        val gitRefKey = declaredGit ++ "@" ++ declaredRef
-        if (hasPath and hasGit) or (not hasPath and not hasGit) or (hasGit and Text.eq(declaredRef, "")) then {
-          problem = "E0747 dependency `" ++ depName ++ "` in `" ++ manifestPath ++ "` must declare exactly one of `path`/`git`, and `git` requires `ref`"
+        val gitRefKey = declaredGit ++ "@" ++ (if hasVersionRange then declaredVersionRange else declaredRef)
+        if (hasPath and hasGit) or (not hasPath and not hasGit) or (hasGit and hasRef and hasVersionRange) or (hasGit and not hasRef and not hasVersionRange) then {
+          problem = "E0747 dependency `" ++ depName ++ "` in `" ++ manifestPath ++ "` must declare exactly one of `path`/`git`, and `git` requires exactly one of `ref`/`versionRange`"
         } else if hasGit and containsName(activeGitRefs, gitRefKey) then {
           // Cheap, I/O-free pre-check for the common literal-cycle case (the
           // same git+ref pair already being resolved higher up the active
@@ -6724,21 +6899,37 @@ fn resolveDependencies(rootDir: Text, rootRelative: Text, active: List<Text>, ac
           // `ref` - a manifest edit that only adds/changes `signedBy` on an
           // already-pinned dependency must re-resolve (and so actually run
           // verifyCommitSignature) rather than silently keeping the old,
-          // never-checked-against-this-key pin.
-          val pinnedPath = if hasGit and respectPins then findExistingPin(existingPins, depName, declaredGit, declaredRef, declaredSignedBy) else None
+          // never-checked-against-this-key pin. Same reasoning extends to
+          // `versionRange` (findExistingPin's own comment has the detail on
+          // why it's compared instead of `ref`, not alongside it).
+          val pinnedResolution = if hasGit and respectPins then findExistingPin(existingPins, depName, declaredRef, declaredVersionRange, declaredGit, declaredSignedBy) else None
+          // resolveVersionedGitDependency (below) turns a `versionRange`
+          // constraint into a concrete tag name via resolveBestTag - one
+          // `git ls-remote --tags` round trip - only right before it
+          // actually calls resolveGitDependency, never eagerly: called
+          // from inside each of the two branches below that can actually
+          // reach a fresh resolution, so a valid, still-cached pin skips
+          // the network call entirely, exactly like an unchanged literal
+          // `ref` already does.
           val gitResolution =
-            if let Some(pinned) = pinnedPath {
-              if isDirectory(pinned) then Ok(pinned) else resolveGitDependency(declaredGit, declaredRef, declaredSignedBy)
-            } else if hasGit then resolveGitDependency(declaredGit, declaredRef, declaredSignedBy)
-            else Ok("")
+            if let Some(pinned) = pinnedResolution {
+              if isDirectory(pinned.path) then Ok(pinned) else resolveVersionedGitDependency(declaredGit, declaredRef, declaredVersionRange, declaredSignedBy)
+            } else if hasGit then resolveVersionedGitDependency(declaredGit, declaredRef, declaredVersionRange, declaredSignedBy)
+            else Ok(GitResolution { path: "", ref: "" })
           if let Err(message) = gitResolution {
             problem = message
-          } else if let Ok(gitPath) = gitResolution {
+          } else if let Ok(resolution) = gitResolution {
             // A git source's resolved path is already absolute (it lives in
             // the shared clone cache, outside the project tree) - unlike a
             // local `path` entry, it's used as-is, never joined against
             // `rootRelative` or run through normalizePath's `..`-collapsing
-            // (see packageDirPath).
+            // (see packageDirPath). `resolvedRef` is the literal tag/branch/
+            // commit actually resolved against - the declared `ref` itself,
+            // or whichever tag resolveBestTag picked for a `versionRange` -
+            // never the constraint string, so the lock file below records
+            // what was really checked out.
+            val gitPath = resolution.path
+            val resolvedRef = resolution.ref
             val depRootRelative = if hasGit then gitPath else normalizePath(if Text.eq(rootRelative, "") then declaredPath else Path.join(rootRelative, declaredPath))
             if containsName(active, depRootRelative) then {
               // Checked before `resolved`, not after: an entry is added to
@@ -6759,7 +6950,7 @@ fn resolveDependencies(rootDir: Text, rootRelative: Text, active: List<Text>, ac
               val depManifestPath = Path.join(packageDirPath(rootDir, depRootRelative), "lume.json")
               if let Ok(depVersion) = readManifestVersion(depManifestPath) {
                 val depDependencyNames = readManifestDependencyNames(depManifestPath)
-                currentResolved = List.push(currentResolved, ResolvedDep { name: depName, path: depRootRelative, version: depVersion, dependencyNames: depDependencyNames, git: if hasGit then declaredGit else "", ref: if hasGit then declaredRef else "", signedBy: if hasGit then declaredSignedBy else "" })
+                currentResolved = List.push(currentResolved, ResolvedDep { name: depName, path: depRootRelative, version: depVersion, dependencyNames: depDependencyNames, git: if hasGit then declaredGit else "", ref: if hasGit then resolvedRef else "", signedBy: if hasGit then declaredSignedBy else "", versionRange: if hasGit then declaredVersionRange else "" })
                 val nextActiveGitRefs = if hasGit then List.push(activeGitRefs, gitRefKey) else activeGitRefs
                 val nested = resolveDependencies(rootDir, depRootRelative, List.push(active, depRootRelative), nextActiveGitRefs, currentResolved, existingPins, respectPins)
                 if not Text.eq(nested.problem, "") then { problem = nested.problem }
@@ -6893,6 +7084,16 @@ fn computeLockContent(dir: Text, manifestPath: Text, respectPins: Bool): Result<
           // break `--check` for every one of them the moment this ships.
           if not Text.eq(dep.signedBy, "") then {
             JsonValue.set(lockEntry, "signedBy", Json.string(dep.signedBy))
+          }
+          // Same convention again: only present when the manifest declared
+          // `versionRange` instead of a literal `ref`. `ref` above still
+          // always holds the actual resolved tag either way (see
+          // resolveVersionedGitDependency) - this only records the
+          // constraint that produced it, so a plain install can tell "the
+          // constraint is unchanged, trust the pin" from "it changed,
+          // re-resolve" the same way it already does for `ref` itself.
+          if not Text.eq(dep.versionRange, "") then {
+            JsonValue.set(lockEntry, "versionRange", Json.string(dep.versionRange))
           }
         }
         val ownNames = Json.array()
