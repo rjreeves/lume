@@ -650,6 +650,30 @@ Assert-Equal 'api: map.fold has three documented parameters' '3' ($mapFold.param
 if ([string]::IsNullOrWhiteSpace($mapFold.description)) { throw 'api: map.fold has no description' }
 if ([string]::IsNullOrWhiteSpace($mapFold.example)) { throw 'api: map.fold has no example' }
 
+# dir.exists: fs.exists is file-only (confirmed live while writing its own
+# docs entry - it returns false for a path that's genuinely an existing
+# directory, since it calls Certo's file-only fileExists rather than also
+# checking isDirectory), so there was previously no way at all to check
+# whether a directory exists. dir.exists closes that gap directly.
+$dirExistsFixture = Join-Path ([System.IO.Path]::GetTempPath()) ("lume_dir_exists_test_" + [System.Guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $dirExistsFixture -Force | Out-Null
+$dirExistsScript = Join-Path $dirExistsFixture 'probe.lume'
+$dirExistsScriptBody = "fn main(args: [str]) -> int {`n  print(dir.exists(args.get(0)))`n  print(dir.exists(args.get(1)))`n  print(fs.exists(args.get(1)))`n  return 0`n}"
+Set-Content -LiteralPath $dirExistsScript -Value $dirExistsScriptBody -NoNewline
+$missingPath = Join-Path $dirExistsFixture 'does-not-exist'
+$fileInFixture = Join-Path $dirExistsFixture 'a.txt'
+Set-Content -LiteralPath $fileInFixture -Value 'hi' -NoNewline
+$dirExistsOut = & $Lume run $dirExistsScript $dirExistsFixture $fileInFixture
+if ($LASTEXITCODE -ne 0) { throw "dir.exists probe exited $LASTEXITCODE" }
+$dirExistsLines = $dirExistsOut -split "`n"
+Assert-Equal 'dir.exists: true for a genuinely existing directory' 'true' $dirExistsLines[0]
+Assert-Equal 'dir.exists: false for a path that is a file, not a directory' 'false' $dirExistsLines[1]
+Assert-Equal 'fs.exists: true for that same file (contrast with dir.exists on it)' 'true' $dirExistsLines[2]
+$dirExistsMissingOut = & $Lume run $dirExistsScript $missingPath $missingPath
+if ($LASTEXITCODE -ne 0) { throw "dir.exists probe (missing path) exited $LASTEXITCODE" }
+Assert-Equal 'dir.exists: false for a path that does not exist at all' 'false' (($dirExistsMissingOut -split "`n")[0])
+Remove-Item -Recurse -Force $dirExistsFixture -Confirm:$false
+
 # Timing output isn't a good fit for exact-match assertions (matches the
 # existing `benchmark` command, which has zero test.ps1 coverage of its own
 # for the same reason) - just confirm profile runs and reports every
