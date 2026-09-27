@@ -581,7 +581,40 @@ how git's own `verify-commit` behaves outside Lume. The lock entry records
 the manifest's declared `signedBy` the same conditional way it records
 `git`/`ref` (present only when actually declared), so `--check` can catch
 it being silently removed from `lume.json` without a corresponding
-install. Missing/malformed root manifest is `E0705`; a
+install.
+
+A git dependency entry can declare `versionRange` instead of a literal
+`ref` (the two are mutually exclusive — declaring both, or a `git` entry
+declaring neither, is `E0747`): `{"name": str, "git": str, "versionRange":
+str}`. This is real semver-range resolution, not a registry lookup — `git
+ls-remote --tags --refs <url>` already gives a per-repository list of every
+tag the maintainer published, the same "candidate versions to pick from"
+ambiguity a central registry would otherwise provide; `install` enumerates
+those tags, parses each as `major.minor.patch` (an optional leading `v` is
+stripped; 1-3 numeric components are accepted, missing ones defaulting to
+`0`), and picks the highest one satisfying `versionRange`. Three constraint
+forms are supported: an exact version (`"1.2.3"`), caret (`"^1.2.3"` →
+`>=1.2.3, <2.0.0`, or `<1.3.0` when the major version is `0`, matching
+npm's own caret semantics), and tilde (`"~1.2.3"` → `>=1.2.3, <1.3.0`) —
+the full semver spec's pre-release tags, build metadata, comparison
+operators, OR'd ranges, and `x`/`*` wildcards are all out of scope. No tag
+satisfying the range is `E0756`. The resolved *tag name* — never the
+constraint string — is what feeds into the same clone/cache/`signedBy`
+machinery a literal `ref` already uses, and what the lock file's own `ref`
+field records; `versionRange` is recorded alongside it (present only when
+declared) purely so a plain `install` can tell "the constraint is
+unchanged, trust the pinned tag" from "it changed, re-resolve" the same
+way it already does for a literal `ref` — an unchanged `versionRange`
+touches the network no more than an unchanged `ref` does, and only
+`--update` (or `--check`, which always fully re-resolves) picks up a newly
+published tag that now satisfies the same constraint better. This is
+deliberately *not* graph-wide constraint unification: if two different
+declarations of the same package name resolve to two different tags, that
+still surfaces as the ordinary `E0708` ambiguous-name conflict, exactly as
+two different literal `ref`s on the same name already would — computing an
+intersection of constraints across the whole dependency tree the way
+`npm`/`cargo`'s resolvers do remains a separate, unimplemented, and
+substantially harder problem. Missing/malformed root manifest is `E0705`; a
 dependency whose own manifest can't be read is `E0706`; the same
 declared name resolving to two different locations is `E0708`; a
 genuine dependency cycle is `E0709`; a lock file write failure is

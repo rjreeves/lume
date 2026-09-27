@@ -785,13 +785,28 @@ fallible, non-trivial Lume code" from being natively testable at all.
   writing the lock file; ordinary `run`/`check`/`test` only ever read
   the already-resolved lock file, never the manifest, satisfying this
   file's own closing constraint below;
-- use explicit versions and deterministic resolution — partially
-  shipped: `version` is declared and recorded, and resolution is
-  already fully deterministic for local-path dependencies (a path has
-  no ambiguity to resolve); real semver-range resolution (multiple
-  candidate versions, picking one that satisfies every constraint)
-  remains deferred until a registry makes that ambiguity possible in
-  the first place;
+- ~~use explicit versions and deterministic resolution~~ — this bullet's
+  own framing turned out to be stale in the same way "package signing"'s
+  was: it named "a registry" as the blocker, but a registry in the sense
+  that actually matters here - a place to enumerate candidate versions of
+  a package - isn't required. `git ls-remote --tags --refs <url>` already
+  gives that per-repository, for free, once git dependencies existed
+  (`resolveGitDependency`). Shipped: a git dependency entry can declare
+  `versionRange` instead of a literal `ref` (`resolveBestTag`,
+  `satisfiesVersionRange`, `src/lume.cto`) - three constraint forms
+  (exact, `^`, `~`, matching npm's own caret/tilde semantics), resolved by
+  enumerating a URL's own tags and picking the highest match; no tag
+  matching is `E0756`. Composes for free with the lock-pin/`signedBy`
+  machinery already shipped: the resolved *tag*, not the constraint, is
+  what gets cached and pinned, so a plain `install` with an unchanged
+  `versionRange` touches the network no more than an unchanged `ref`
+  does. Deliberately **not** attempted: graph-wide constraint
+  *unification* - if two different declarations of the same package name
+  resolve to two different tags, that's still the ordinary `E0708`
+  ambiguous-name conflict, not an automatically-computed intersection the
+  way `npm`/`cargo`'s resolvers provide. That remains a real, separate,
+  substantially harder gap - a genuine constraint-solving problem, not a
+  "no registry" one;
 - ~~resolve transitive dependencies~~ — shipped: `lume install` walks
   a dependency's own `dependencies` too, recursively, into the same
   flat `lume.lock.json`, with cycle (`E0709`) and ambiguous-name

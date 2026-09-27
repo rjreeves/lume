@@ -1077,7 +1077,37 @@ own GPG keyring (`gpg --import`/`--recv-keys` it yourself first, same as
 you would to verify any GPG-signed commit) — `signedBy` doesn't manage
 keys or trust for you, it only checks a signature against a key you
 already trust. Leave `signedBy` off and nothing changes; every existing
-git dependency is unaffected. Everything past that — cycle
+git dependency is unaffected.
+
+A git dependency can also declare `versionRange` instead of a literal
+`ref` (the two are mutually exclusive — declaring both, or neither, is
+`E0747`):
+
+```json
+{ "name": "mathutils", "git": "https://example.com/org/mathutils.git", "versionRange": "^1.2.0" }
+```
+
+`install` enumerates every tag on that URL (`git ls-remote --tags`), parses
+each as `major.minor.patch` (a leading `v` is stripped; 1-3 numeric
+components are accepted), and picks the highest one satisfying the range —
+`^1.2.0` means `>=1.2.0, <2.0.0` (or `<1.3.0` if the major version is `0`,
+matching npm's own caret rule), `~1.2.0` means `>=1.2.0, <1.3.0`, and a
+bare `"1.2.0"` matches only that exact version. No tag satisfying the
+range is `E0756`. This needs no central registry — a git remote's own tags
+already give the "candidate versions to pick from" a registry would
+otherwise provide. What it does *not* do is unify constraints across your
+whole dependency tree: if two different declarations of the same package
+name end up resolving to two different tags, that's the same `E0708`
+ambiguous-name conflict two different literal `ref`s on the same name
+already produce, not an automatically-solved intersection. The resolved
+tag becomes the lock file's `ref` (so a plain `install` with an unchanged
+`versionRange` reuses it without touching the network, exactly like an
+unchanged `ref` already does), and `versionRange` itself is recorded
+alongside it — only `install --update` (or `--check`, which always
+re-resolves) picks up a newly published tag that now satisfies the range
+better.
+
+Everything past that — cycle
 detection (including a git dependency that repeats the identical
 `(git, ref)` pair further down its own dependency chain), isolation,
 transitively resolving a git dependency's own further dependencies
