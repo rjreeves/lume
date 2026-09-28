@@ -1,0 +1,28 @@
+name: CI
+
+# Runs on a self-hosted runner rather than a GitHub-hosted one: lume.cto is
+# compiled by Certo (https://github.com/rjreeves/Certo), a private, actively
+# developed sibling compiler that only exists on the maintainer's own
+# machine - there's no public artifact a hosted runner could fetch. Trigger
+# is push-to-main only (never pull_request), so this never executes a fork
+# PR's workflow code on that machine.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: [self-hosted, lume-build]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build (Certo -> lume.exe)
+        shell: pwsh
+        run: ./build.ps1
+
+      - name: Test
+        shell: pwsh
+        run: ./test.ps1
