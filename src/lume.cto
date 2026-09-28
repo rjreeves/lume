@@ -1230,6 +1230,7 @@ fn countName(names: List<Text>, name: Text): Int = {
 fn builtinNames(): List<Text> = [
   "args.count", "args.get",
   "fs.exists", "fs.read_text", "fs.write_text", "fs.try_read_text", "fs.try_write_text", "fs.read_bytes", "fs.write_bytes",
+  "fs.copy", "fs.rename", "fs.remove_dir",
   "env.get", "env.has", "env.set", "env.unset",
   "process.run", "process.run_with_input", "process.run_with_env", "process.run_with_options", "process.code", "process.stdout", "process.stderr", "process.ok",
   "str.len", "str.trim", "str.upper", "str.lower", "str.from_int", "str.to_int",
@@ -1253,6 +1254,7 @@ fn builtinNames(): List<Text> = [
 fn builtinCounts(): List<Int> = [
   0, 1,
   1, 1, 2, 1, 2, 1, 2,
+  2, 2, 2,
   1, 1, 2, 1,
   2, 3, 3, 4, 1, 1, 1, 1,
   1, 1, 1, 1, 1, 1,
@@ -1278,7 +1280,7 @@ fn builtinCounts(): List<Int> = [
 type BuiltinParam = { name: Text, ptype: Text }
 // `failureMode` covers three shapes, deliberately not padded with a
 // code for every entry: reading checkBuiltinTypes/callBuiltin in full
-// found that almost none of the 113 builtins can fail once correctly
+// found that almost none of the 117 builtins can fail once correctly
 // typed - a `problem = "E0..."` inside callBuiltin that only re-checks
 // something checkBuiltinTypes already guaranteed at compile time isn't
 // a real, reachable failure mode, so it's left out rather than listed
@@ -1312,6 +1314,9 @@ fn builtinDocs(): List<BuiltinDoc> = [
   BuiltinDoc { name: "fs.try_write_text", parameters: [bp("path", "str"), bp("content", "str")], returnType: "result<bool,str>", description: "Writes `content` to `path`, returning Err instead of failing on a write error.", failureMode: "Returns Err on failure; never panics.", example: "fs.try_write_text(\"out.txt\", \"hello\") // Ok(true) or Err(\"...\")" },
   BuiltinDoc { name: "fs.read_bytes", parameters: [bp("path", "str")], returnType: "result<bytes,str>", description: "Reads a file's full contents as raw bytes.", failureMode: "Returns Err on failure; never panics.", example: "fs.read_bytes(\"data.bin\") // Ok(bytes) or Err(\"...\")" },
   BuiltinDoc { name: "fs.write_bytes", parameters: [bp("path", "str"), bp("data", "bytes")], returnType: "bool", description: "Writes raw bytes to `path`, creating or overwriting it; the bool reports whether the write succeeded.", failureMode: "", example: "fs.write_bytes(\"data.bin\", data) // true" },
+  BuiltinDoc { name: "fs.copy", parameters: [bp("from", "str"), bp("to", "str")], returnType: "bool", description: "Copies a *file*'s contents from `from` to `to`, creating or overwriting `to`; file-only, like fs.exists - copying a directory returns false. The bool reports whether the copy succeeded.", failureMode: "", example: "fs.copy(\"config.json\", \"config.bak.json\") // true if it succeeded" },
+  BuiltinDoc { name: "fs.rename", parameters: [bp("from", "str"), bp("to", "str")], returnType: "bool", description: "Renames or moves a file or directory from `from` to `to`. The bool reports whether it succeeded - a move across filesystem volumes can fail where a same-volume rename would not.", failureMode: "", example: "fs.rename(\"old.txt\", \"new.txt\") // true if it succeeded" },
+  BuiltinDoc { name: "fs.remove_dir", parameters: [bp("path", "str"), bp("recurse", "bool")], returnType: "bool", description: "Removes the directory at `path`. With `recurse` false, only an already-empty directory is removed - a non-empty one is left alone and the call returns false. With `recurse` true, the directory and everything in it are removed.", failureMode: "", example: "fs.remove_dir(\"build\", true) // true if it (and its contents) were removed" },
 
   BuiltinDoc { name: "env.get", parameters: [bp("name", "str")], returnType: "str", description: "The environment variable's value, or \"\" if it isn't set - there is no way to tell \"unset\" apart from \"set to the empty string\" from this alone; use env.has first if that distinction matters.", failureMode: "", example: "env.get(\"HOME\") // e.g. \"/home/ada\", or \"\" if unset" },
   BuiltinDoc { name: "env.has", parameters: [bp("name", "str")], returnType: "bool", description: "Whether an environment variable is set, even to an empty value.", failureMode: "", example: "env.has(\"CI\") // true inside most CI environments" },
@@ -3250,7 +3255,7 @@ fn checkBuiltinTypes(code: List<Instruction>, name: Text, stackInput: List<Text>
     stack = valueType.stack
     if not Text.startsWith(valueType.value, "result<") and not Text.startsWith(valueType.value, "Result<") then { problem = "E0622 result operation requires result value" }
     resultType = normalizeResultSpelling(valueType.value)
-  } else if Text.eq(name, "fs.write_text") or Text.eq(name, "fs.try_write_text") or Text.eq(name, "str.contains") or Text.eq(name, "str.starts_with") or Text.eq(name, "str.ends_with") or Text.eq(name, "json.get") or Text.eq(name, "path.join") or Text.eq(name, "env.set") then {
+  } else if Text.eq(name, "fs.write_text") or Text.eq(name, "fs.try_write_text") or Text.eq(name, "fs.copy") or Text.eq(name, "fs.rename") or Text.eq(name, "str.contains") or Text.eq(name, "str.starts_with") or Text.eq(name, "str.ends_with") or Text.eq(name, "json.get") or Text.eq(name, "path.join") or Text.eq(name, "env.set") then {
     val right = pop(stack)
     val left = pop(right.stack)
     stack = left.stack
@@ -3282,6 +3287,12 @@ fn checkBuiltinTypes(code: List<Instruction>, name: Text, stackInput: List<Text>
     val valueType = pop(stack)
     stack = valueType.stack
     if not Text.eq(valueType.value, "str") then { problem = "E0608 builtin `dir.exists` requires str" }
+    resultType = "bool"
+  } else if Text.eq(name, "fs.remove_dir") then {
+    val recurseType = pop(stack)
+    val pathType = pop(recurseType.stack)
+    stack = pathType.stack
+    if not Text.eq(pathType.value, "str") or not Text.eq(recurseType.value, "bool") then { problem = "E0757 builtin `fs.remove_dir` requires (str, bool)" }
     resultType = "bool"
   } else if Text.eq(name, "time.now") then { resultType = "int" }
   else if Text.eq(name, "fixture.temp_dir") then { resultType = "str" }
@@ -5419,6 +5430,20 @@ fn callBuiltin(code: List<Instruction>, name: Text, input: List<Text>, deadlineM
     stack = one.stack
     if let Ok(value) = requireText(one.value, name) { result = boolValue(isDirectory(value)) }
     else if let Err(message) = requireText(one.value, name) { problem = message }
+  } else if Text.eq(name, "fs.remove_dir") then {
+    val recurseArg = pop(stack)
+    val pathArg = pop(recurseArg.stack)
+    stack = pathArg.stack
+    if let Ok(path) = requireText(pathArg.value, name) {
+      if not Text.eq(valueKind(recurseArg.value), "b:") then { problem = "E0757 builtin `fs.remove_dir` requires (str, bool)" }
+      else {
+        val recurse = Text.eq(valueBody(recurseArg.value), "true")
+        if recurse then { result = boolValue(removeDir(path)) }
+        else if let Some(entries) = listDir(path) {
+          result = boolValue(if List.len(entries) == 0 then removeDir(path) else false)
+        } else { result = boolValue(false) }
+      }
+    } else if let Err(message) = requireText(pathArg.value, name) { problem = message }
   } else if Text.eq(name, "time.now") then {
     result = intValue(DateTime.toUnix(DateTime.now()))
   } else if Text.eq(name, "fixture.temp_dir") then {
@@ -5654,6 +5679,11 @@ fn callBuiltin(code: List<Instruction>, name: Text, input: List<Text>, deadlineM
         } else if Text.eq(name, "fs.try_write_text") then {
           if writeFile(first, second) then { result = resultOk(boolValue(true)) }
           else { result = resultErr("cannot write file `" ++ first ++ "`") }
+        } else if Text.eq(name, "fs.copy") then {
+          if let Some(content) = readFileBytes(first) { result = boolValue(writeFileBytes(second, content)) }
+          else { result = boolValue(false) }
+        } else if Text.eq(name, "fs.rename") then {
+          result = boolValue(renameFile(first, second))
         } else if Text.eq(name, "str.contains") then { result = boolValue(Text.contains(first, second)) }
         else if Text.eq(name, "str.starts_with") then { result = boolValue(Text.startsWith(first, second)) }
         else if Text.eq(name, "str.ends_with") then { result = boolValue(Text.endsWith(first, second)) }

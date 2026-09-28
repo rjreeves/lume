@@ -674,6 +674,66 @@ if ($LASTEXITCODE -ne 0) { throw "dir.exists probe (missing path) exited $LASTEX
 Assert-Equal 'dir.exists: false for a path that does not exist at all' 'false' (($dirExistsMissingOut -split "`n")[0])
 Remove-Item -Recurse -Force $dirExistsFixture -Confirm:$false
 
+# fs.copy/fs.rename/fs.remove_dir: fs.copy is file-only (like fs.exists -
+# copying a directory just fails, since it goes through readFileBytes),
+# fs.rename works on files and directories alike (it's a thin wrapper over
+# the same renameFile primitive resolveGitDependency already relies on),
+# and fs.remove_dir's `recurse` flag distinguishes "only if already empty"
+# from "take everything with it" rather than always doing the latter the
+# way fixture.cleanup does.
+$fsOpsFixture = Join-Path ([System.IO.Path]::GetTempPath()) ("lume_fs_ops_test_" + [System.Guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $fsOpsFixture -Force | Out-Null
+$fsOpsScript = Join-Path $fsOpsFixture 'probe.lume'
+$fsOpsScriptBody = @'
+fn main(args: [str]) -> int {
+  print(fs.copy(args.get(0), args.get(1)))
+  print(fs.read_text(args.get(1)))
+  print(fs.rename(args.get(1), args.get(2)))
+  print(fs.exists(args.get(1)))
+  print(fs.read_text(args.get(2)))
+  print(fs.copy(args.get(3), args.get(4)))
+  print(fs.remove_dir(args.get(5), false))
+  print(dir.exists(args.get(5)))
+  print(fs.remove_dir(args.get(6), false))
+  print(dir.exists(args.get(6)))
+  print(fs.remove_dir(args.get(5), true))
+  print(dir.exists(args.get(5)))
+  return 0
+}
+'@
+Set-Content -LiteralPath $fsOpsScript -Value $fsOpsScriptBody -NoNewline
+$fsOpsSrc = Join-Path $fsOpsFixture 'src.txt'
+Set-Content -LiteralPath $fsOpsSrc -Value 'hello copy' -NoNewline
+$fsOpsCopied = Join-Path $fsOpsFixture 'copied.txt'
+$fsOpsRenamed = Join-Path $fsOpsFixture 'renamed.txt'
+$fsOpsMissingSrc = Join-Path $fsOpsFixture 'does-not-exist.txt'
+$fsOpsMissingDst = Join-Path $fsOpsFixture 'also-does-not-exist.txt'
+$fsOpsFullDir = Join-Path $fsOpsFixture 'full_dir'
+New-Item -ItemType Directory -Path $fsOpsFullDir -Force | Out-Null
+Set-Content -LiteralPath (Join-Path $fsOpsFullDir 'a.txt') -Value 'x' -NoNewline
+$fsOpsEmptyDir = Join-Path $fsOpsFixture 'empty_dir'
+New-Item -ItemType Directory -Path $fsOpsEmptyDir -Force | Out-Null
+$fsOpsOut = & $Lume run $fsOpsScript $fsOpsSrc $fsOpsCopied $fsOpsRenamed $fsOpsMissingSrc $fsOpsMissingDst $fsOpsFullDir $fsOpsEmptyDir
+if ($LASTEXITCODE -ne 0) { throw "fs.copy/fs.rename/fs.remove_dir probe exited $LASTEXITCODE" }
+$fsOpsLines = $fsOpsOut -split "`n"
+Assert-Equal 'fs.copy: true on a successful copy' 'true' $fsOpsLines[0]
+Assert-Equal 'fs.copy: the copy has the source contents' 'hello copy' $fsOpsLines[1]
+Assert-Equal 'fs.rename: true on a successful rename' 'true' $fsOpsLines[2]
+Assert-Equal 'fs.rename: the old path no longer exists' 'false' $fsOpsLines[3]
+Assert-Equal 'fs.rename: the new path has the file contents' 'hello copy' $fsOpsLines[4]
+Assert-Equal 'fs.copy: false when the source file does not exist' 'false' $fsOpsLines[5]
+Assert-Equal 'fs.remove_dir: false for a non-empty directory without recurse' 'false' $fsOpsLines[6]
+Assert-Equal 'fs.remove_dir: the non-empty directory is left in place' 'true' $fsOpsLines[7]
+Assert-Equal 'fs.remove_dir: true for an already-empty directory without recurse' 'true' $fsOpsLines[8]
+Assert-Equal 'fs.remove_dir: the empty directory is gone' 'false' $fsOpsLines[9]
+Assert-Equal 'fs.remove_dir: true for a non-empty directory with recurse' 'true' $fsOpsLines[10]
+Assert-Equal 'fs.remove_dir: the recursively-removed directory is gone' 'false' $fsOpsLines[11]
+Remove-Item -Recurse -Force $fsOpsFixture -Confirm:$false
+
+$invalidRemoveDirArgs = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_remove_dir_args.lume') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "fs.remove_dir validation should exit 1" }
+Assert-Equal 'fs.remove_dir requires (str, bool)' 'E0757 line 2: builtin `fs.remove_dir` requires (str, bool)' ($invalidRemoveDirArgs -join "`n")
+
 # Timing output isn't a good fit for exact-match assertions (matches the
 # existing `benchmark` command, which has zero test.ps1 coverage of its own
 # for the same reason) - just confirm profile runs and reports every
