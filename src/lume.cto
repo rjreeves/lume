@@ -1237,7 +1237,7 @@ fn builtinNames(): List<Text> = [
   "str.contains", "str.starts_with", "str.ends_with",
   "json.valid", "json.get", "json.encode",
   "path.join", "path.basename", "path.dirname", "path.extension", "path.stem",
-  "dir.list", "dir.walk", "dir.exists",
+  "dir.list", "dir.walk", "dir.exists", "dir.create",
   "time.now", "time.to_iso", "time.year", "time.month", "time.day", "time.hour", "time.minute", "time.second", "time.format", "time.in_timezone", "time.format_in_timezone",
   "duration.seconds", "duration.minutes", "duration.hours", "duration.days",
   "Duration.of_seconds", "Duration.of_minutes", "Duration.of_hours", "Duration.of_days", "Duration.add", "Duration.sub", "Duration.scale", "Duration.to_seconds",
@@ -1261,7 +1261,7 @@ fn builtinCounts(): List<Int> = [
   2, 2, 2,
   1, 2, 1,
   2, 1, 1, 1, 1,
-  1, 2, 1,
+  1, 2, 1, 1,
   0, 1, 1, 1, 1, 1, 1, 1, 2, 2, 3,
   1, 1, 1, 1,
   1, 1, 1, 1, 2, 2, 2, 1,
@@ -1356,6 +1356,7 @@ fn builtinDocs(): List<BuiltinDoc> = [
   BuiltinDoc { name: "dir.list", parameters: [bp("path", "str")], returnType: "result<[str],str>", description: "Lists a directory's immediate entries. Names only (not full paths), unsorted, and not recursive - see dir.walk for that.", failureMode: "Returns Err on failure; never panics.", example: "dir.list(\".\") // Ok([\"a.lume\", \"b.lume\"])" },
   BuiltinDoc { name: "dir.walk", parameters: [bp("path", "str"), bp("maxDepth", "int")], returnType: "result<[str],str>", description: "Recursively lists files under `path` as full paths, files only (a subdirectory is recursed into, never included in the result itself). `maxDepth` 0 means only `path`'s own files; an unreadable subdirectory partway through the walk is silently skipped, not a failure.", failureMode: "Returns Err on failure; never panics.", example: "dir.walk(\".\", 32) // Ok([\"src/a.lume\", \"src/sub/b.lume\"])" },
   BuiltinDoc { name: "dir.exists", parameters: [bp("path", "str")], returnType: "bool", description: "Whether a directory exists at `path`. Complements fs.exists, which is file-only and returns false for a directory.", failureMode: "", example: "dir.exists(\"src\") // true if it exists as a directory" },
+  BuiltinDoc { name: "dir.create", parameters: [bp("path", "str")], returnType: "bool", description: "Creates a directory at `path`, including any missing parent directories (like `mkdir -p`); returns true if the directory exists afterward, whether newly created or already present. Writing a file does *not* create its parent directory automatically - use dir.create first when the parent might not exist yet.", failureMode: "", example: "dir.create(\"build/output\") // true, creating both `build` and `build/output` if neither existed" },
 
   BuiltinDoc { name: "time.now", parameters: [], returnType: "int", description: "Current Unix epoch time in seconds.", failureMode: "", example: "time.now() // e.g. 1735000000" },
   BuiltinDoc { name: "time.to_iso", parameters: [bp("seconds", "int")], returnType: "str", description: "Formats epoch seconds as a UTC ISO-8601 string.", failureMode: "", example: "time.to_iso(0) // \"1970-01-01T00:00:00Z\"" },
@@ -3287,6 +3288,11 @@ fn checkBuiltinTypes(code: List<Instruction>, name: Text, stackInput: List<Text>
     val valueType = pop(stack)
     stack = valueType.stack
     if not Text.eq(valueType.value, "str") then { problem = "E0608 builtin `dir.exists` requires str" }
+    resultType = "bool"
+  } else if Text.eq(name, "dir.create") then {
+    val valueType = pop(stack)
+    stack = valueType.stack
+    if not Text.eq(valueType.value, "str") then { problem = "E0608 builtin `dir.create` requires str" }
     resultType = "bool"
   } else if Text.eq(name, "fs.remove_dir") then {
     val recurseType = pop(stack)
@@ -5429,6 +5435,15 @@ fn callBuiltin(code: List<Instruction>, name: Text, input: List<Text>, deadlineM
     val one = pop(stack)
     stack = one.stack
     if let Ok(value) = requireText(one.value, name) { result = boolValue(isDirectory(value)) }
+    else if let Err(message) = requireText(one.value, name) { problem = message }
+  } else if Text.eq(name, "dir.create") then {
+    val one = pop(stack)
+    stack = one.stack
+    // makeDir (Certo's certo_make_dir) already creates any missing parent
+    // directories and is idempotent - true both when freshly created and
+    // when the directory already existed - so this needs no recurse flag
+    // the way fs.remove_dir does; there's only one sensible behavior.
+    if let Ok(value) = requireText(one.value, name) { result = boolValue(makeDir(value)) }
     else if let Err(message) = requireText(one.value, name) { problem = message }
   } else if Text.eq(name, "fs.remove_dir") then {
     val recurseArg = pop(stack)

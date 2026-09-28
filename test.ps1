@@ -728,6 +728,39 @@ Assert-Equal 'fs.remove_dir: true for an already-empty directory without recurse
 Assert-Equal 'fs.remove_dir: the empty directory is gone' 'false' $fsOpsLines[9]
 Assert-Equal 'fs.remove_dir: true for a non-empty directory with recurse' 'true' $fsOpsLines[10]
 Assert-Equal 'fs.remove_dir: the recursively-removed directory is gone' 'false' $fsOpsLines[11]
+
+# dir.create: probing fs.remove_dir's own PR found there was no way to
+# create a directory at all - confirmed live that fs.write_text does not
+# create a missing parent directory (it just fails). makeDir (Certo's
+# certo_make_dir) already does mkdir -p and is idempotent, so dir.create
+# needs no recurse flag the way fs.remove_dir has one.
+$dirCreateFixture = Join-Path ([System.IO.Path]::GetTempPath()) ("lume_dir_create_test_" + [System.Guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $dirCreateFixture -Force | Out-Null
+$dirCreateScript = Join-Path $dirCreateFixture 'probe.lume'
+$dirCreateScriptBody = @'
+fn main(args: [str]) -> int {
+  let nested = path.join(args.get(0), "a/b/c")
+  print(dir.exists(nested))
+  print(dir.create(nested))
+  print(dir.exists(nested))
+  print(dir.exists(path.join(args.get(0), "a")))
+  print(dir.create(nested))
+  print(fs.write_text(path.join(nested, "out.txt"), "hello"))
+  print(fs.exists(path.join(nested, "out.txt")))
+  return 0
+}
+'@
+Set-Content -LiteralPath $dirCreateScript -Value $dirCreateScriptBody -NoNewline
+$dirCreateOut = & $Lume run $dirCreateScript $dirCreateFixture
+if ($LASTEXITCODE -ne 0) { throw "dir.create probe exited $LASTEXITCODE" }
+$dirCreateLines = $dirCreateOut -split "`n"
+Assert-Equal 'dir.create: nested path does not exist before creation' 'false' $dirCreateLines[0]
+Assert-Equal 'dir.create: true on successful creation' 'true' $dirCreateLines[1]
+Assert-Equal 'dir.create: the nested path exists afterward' 'true' $dirCreateLines[2]
+Assert-Equal 'dir.create: an intermediate missing parent was also created' 'true' $dirCreateLines[3]
+Assert-Equal 'dir.create: idempotent - true again when the directory already exists' 'true' $dirCreateLines[4]
+Assert-Equal 'dir.create: writing a file into the freshly created directory now succeeds' 'true' $dirCreateLines[5]
+Assert-Equal 'dir.create: the written file exists' 'true' $dirCreateLines[6]
 Remove-Item -Recurse -Force $fsOpsFixture -Confirm:$false
 
 $invalidRemoveDirArgs = & $Lume check (Join-Path $PSScriptRoot 'examples\invalid_remove_dir_args.lume') 2>&1

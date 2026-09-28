@@ -736,9 +736,12 @@ fs.exists(path)                 // -> bool
 fs.read_text(path)              // -> str (fails the program if missing)
 fs.write_text(path, content)    // -> bool
 fs.try_read_text(path)          // -> result<str, str> (section 10's builtin convention)
-fs.try_write_text(path, content)// -> bool
+fs.try_write_text(path, content)// -> result<bool, str>
 fs.read_bytes(path)             // -> result<bytes, str>
 fs.write_bytes(path, data)      // -> bool
+fs.copy(from, to)                // -> bool (file-only, like fs.exists)
+fs.rename(from, to)              // -> bool (files or directories)
+fs.remove_dir(path, recurse)     // -> bool
 ```
 
 Prefer the `try_` forms when failure is expected and should remain data; use
@@ -780,6 +783,20 @@ if result.is_ok(found) {
     index = index + 1
   }
 }
+```
+
+`dir.exists(path) -> bool` checks a directory specifically — `fs.exists`
+is file-only and returns `false` for a directory, so the two aren't
+interchangeable. `dir.create(path) -> bool` creates a directory,
+including any missing parent directories (`mkdir -p` semantics), and is
+idempotent — `true` whether the directory was just created or already
+existed. Writing a file does *not* create its parent directory
+automatically; call `dir.create` first when the parent might not exist:
+
+```lume
+let outDir = path.join("build", "reports")
+dir.create(outDir)
+fs.write_text(path.join(outDir, "summary.txt"), "done")
 ```
 
 ## 14. Processes and environment values

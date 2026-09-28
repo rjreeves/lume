@@ -166,6 +166,9 @@ Generated from `builtinDocs()` in `src/lume.cto` (the same source `lume api` rea
 - `dir.exists(path: str) -> bool`
   Whether a directory exists at `path`. Complements fs.exists, which is file-only and returns false for a directory.
   Example: `dir.exists("src") // true if it exists as a directory`
+- `dir.create(path: str) -> bool`
+  Creates a directory at `path`, including any missing parent directories (like `mkdir -p`); returns true if the directory exists afterward, whether newly created or already present. Writing a file does *not* create its parent directory automatically - use dir.create first when the parent might not exist yet.
+  Example: `dir.create("build/output") // true, creating both `build` and `build/output` if neither existed`
 
 ## time
 
