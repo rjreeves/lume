@@ -256,10 +256,13 @@ Dependencies are transitive: `lume install` walks a dependency's own
 and `app` picks it up automatically without declaring it directly. A
 dependency cycle across `lume.json` files is a compile-time-style
 error (`E0709`), same as a `use` cycle within one project; the same
-package name resolving to two different locations is `E0708`. There's
-still no real version-range resolution or registry yet — `version` is
-recorded for forward compatibility but not yet checked against
-anything.
+package name resolving to two different locations is `E0708`. For a
+local-path dependency, `version` is still just recorded metadata, not
+checked against anything — there's no ambiguity to resolve when a path
+only ever names one exact location. A git dependency can resolve a real
+semver range instead (see below); there's still no central registry —
+a name only ever resolves through its own declared `path` or `git`
+source, never a lookup.
 
 A dependency can also resolve straight from a git repository instead of
 a local path — no registry, just a direct URL, resolved to a concrete
@@ -284,9 +287,18 @@ dependency's `ref` might have moved.
 A git dependency can optionally pin *who* published it, not just *which*
 commit, via `signedBy` (a GPG primary-key fingerprint): `install` then
 runs `git verify-commit` against the resolved commit and rejects it if
-it's unsigned or signed by a different key. See
+it's unsigned or signed by a different key.
+
+A git dependency can also declare `versionRange` instead of a literal
+`ref` — real semver-range resolution, without a central registry:
+`git ls-remote --tags` already gives a per-repository list of every tag
+the maintainer published, the same candidate-versions ambiguity a
+registry would otherwise resolve. `^1.2.0`, `~1.2.0`, and an exact
+`1.2.0` are the three supported forms; `install` picks the highest tag
+satisfying the range and pins that resolved tag exactly like a literal
+`ref` would. See
 [docs/using-lume-the-fast-one.md](docs/using-lume-the-fast-one.md) §19
-for the full walkthrough of both features.
+for the full walkthrough of all three features.
 
 ```powershell
 .\dist\lume.exe check .\examples\arithmetic.lume

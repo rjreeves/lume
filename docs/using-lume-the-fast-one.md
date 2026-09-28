@@ -1018,9 +1018,12 @@ directory instead of a local relative path; everything else about `use`
 works the same as an ordinary in-project module. A project with no
 `lume.json`/`lume.lock.json` sees no change in behavior at all. A dependency
 cycle across `lume.json` files is `E0709`; the same package name resolving
-to two different locations is `E0708`. There is no real version-range
-resolution or registry yet — `version` is recorded but not checked against
-anything.
+to two different locations is `E0708`. For a local-path dependency,
+`version` is still just recorded metadata, not checked against anything —
+a path only ever names one exact location, with no ambiguity to resolve.
+A git dependency can resolve a real semver range instead (see below);
+there's still no central registry — a name only ever resolves through its
+own declared `path` or `git` source, never a lookup.
 
 A dependency can also come straight from a git repository instead of a
 local path — no registry, just a direct URL, the same way Go modules
