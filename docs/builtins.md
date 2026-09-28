@@ -38,6 +38,15 @@ Generated from `builtinDocs()` in `src/lume.cto` (the same source `lume api` rea
 - `fs.write_bytes(path: str, data: bytes) -> bool`
   Writes raw bytes to `path`, creating or overwriting it; the bool reports whether the write succeeded.
   Example: `fs.write_bytes("data.bin", data) // true`
+- `fs.copy(from: str, to: str) -> bool`
+  Copies a *file*'s contents from `from` to `to`, creating or overwriting `to`; file-only, like fs.exists - copying a directory returns false. The bool reports whether the copy succeeded.
+  Example: `fs.copy("config.json", "config.bak.json") // true if it succeeded`
+- `fs.rename(from: str, to: str) -> bool`
+  Renames or moves a file or directory from `from` to `to`. The bool reports whether it succeeded - a move across filesystem volumes can fail where a same-volume rename would not.
+  Example: `fs.rename("old.txt", "new.txt") // true if it succeeded`
+- `fs.remove_dir(path: str, recurse: bool) -> bool`
+  Removes the directory at `path`. With `recurse` false, only an already-empty directory is removed - a non-empty one is left alone and the call returns false. With `recurse` true, the directory and everything in it are removed.
+  Example: `fs.remove_dir("build", true) // true if it (and its contents) were removed`
 
 ## env
 

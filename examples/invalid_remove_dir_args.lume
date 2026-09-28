@@ -1,0 +1,4 @@
+fn main(args: [str]) -> int {
+  let value = fs.remove_dir("build", "not bool")
+  return 0
+}
