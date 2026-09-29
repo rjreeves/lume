@@ -2408,3 +2408,47 @@ already found and attributed correctly for the trivial benchmark's
 unexplained speedup. A same-session A/B against the actual prior binary,
 not just the prior checkpoint's recorded numbers, resolved it directly
 rather than by inference.
+
+## Apparent trivial-check slowdown after 43 commits of package-signing/semver/docs work (2026-09-29)
+
+Thirty-some PRs landed since the last checkpoint (git-based dependency
+resolution, lock-pin enforcement, GPG commit-signing verification,
+semver-range resolution, the structured `builtinDocs()` table, and a
+handful of new `dir.*`/`fs.*` builtins) - none of them touch `execute()`
+or the type checker's hot paths, but `benchmark.ps1`'s trivial
+`functions.lume` check crept from this file's long-documented ~9.1-9.8 ms
+baseline to a consistently reproduced ~12.8-13.5 ms (three separate runs),
+a ~33-40% gap too large and too stable to wave off without checking.
+
+Same-session A/B against the actual prior binary, not the old recorded
+number, per this file's own established method: built `ef1c38e` (the
+commit at this file's last checkpoint, 2026-09-24, 43 commits behind
+current) directly via `git show ef1c38e:src/lume.cto`, compiled
+standalone alongside the current `dist/lume.exe`, both invoked through
+`benchmark.ps1`'s own `-Lume` override, interleaved old/current/old/current
+in one session:
+
+| Run | ef1c38e (old) CheckMeanMs | Current CheckMeanMs |
+| --- | ---: | ---: |
+| 1 | 13.603 | 13.277 |
+| 2 | 13.065 | 13.290 |
+
+Old and current are indistinguishable - both land in the same 13.0-13.6 ms
+band, and the run-to-run spread within each binary (13.065-13.603 for old
+alone) exceeds the gap between old and current. **None of the 43 commits
+since the last checkpoint introduced any measurable check-time cost.**
+The ~9.1-9.8 ms documented baseline itself is the outlier here: this
+machine/session is consistently ~3-4 ms slower per trivial `check`/`run`
+invocation than whatever machine or session recorded that number,
+most likely dominated by process-spawn overhead for a benchmark this
+small (100 iterations of launching a whole `lume.exe` process) rather
+than anything inside the compiler. Same conclusion as the 2026-09-23
+entry, reached the same way: a cross-checkpoint number looked like a
+regression, and a same-session A/B against the real prior binary showed
+it wasn't one.
+
+Binary size did grow for real over the same 43 commits - `ef1c38e`
+built to 695,808 bytes, current builds to 752,640 bytes (+56,832 bytes,
++8.2%) - but that's the expected cost of the actual shipped features
+(the hand-authored `builtinDocs()` table covering 113+ builtins, GPG
+verification, semver parsing), not evidence of anything unintended.
