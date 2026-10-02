@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout Lume
+        uses: actions/checkout@v4
+
+      - name: Checkout Certo
+        uses: actions/checkout@v4
+        with:
+          repository: rjreeves/Certo
+          path: certo
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry and Certo build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            certo/target
+          key: ${{ runner.os }}-certo-${{ hashFiles('certo/Cargo.lock') }}
+
+      - name: Build Certo
+        run: cargo build --release -p certo
+        working-directory: certo
+
+      - name: Build Lume
+        run: pwsh -File build.ps1 -Certo certo/target/release/certo.exe
+
+      - name: Test Lume
+        run: pwsh -File test.ps1
