@@ -7284,6 +7284,52 @@ fn installPackages(dir: Text, checkOnly: Bool, forceUpdate: Bool): Unit [io] = {
 
 fn compileSource(source: Text): CompileResult = compile(lex(source))
 
+// The C ABI embedding entry point - exported as `certo_lume_embed_call`
+// once this file is built with `certo build src/lume.cto --emit-dll`
+// (this file has zero other `pub fn`s, confirmed via `grep -c "^pub fn "`,
+// so this is the DLL's entire intentional export surface beyond the
+// always-present `certo_free`). Deliberately a single opaque Text
+// argument and a single Text result, not generic typed marshaling -
+// this mirrors the already-existing, already-tested subprocess
+// embedding contract (examples/embed_demo.lume, manual SS22): a program
+// written to decode its own JSON argument and encode its own JSON
+// result works unchanged whether it's invoked as a subprocess or
+// through this C ABI, because the Lume-level contract is identical
+// either way - only the transport differs.
+//
+// Compiles `source` fresh on every call (no cross-call artifact
+// caching) - a real performance cost for a host calling repeatedly,
+// deliberately deferred rather than solved here; proving the
+// mechanism works comes first. Returns a JSON envelope built the same
+// way apiManifest()/computeLockContent already build theirs
+// (Json.object/JsonValue.set/Json.stringify), not hand-rolled string
+// concatenation, so result-string escaping is correct for free:
+// {"ok":true,"value":"<fnName's own return text>"} on success,
+// {"ok":false,"error":"<compile or call failure>"} otherwise -
+// matching the {"ok":...}/error(code, message) envelope convention
+// Certo's own certo-capi crate already uses (crates/capi/src/api.rs).
+pub fn lumeEmbedCall(source: Text, fnName: Text, rawArg: Text, timeoutMs: Int): Text = {
+  val compiled = compileSource(source)
+  if not Text.eq(compiled.problem, "") then {
+    val envelope = Json.object()
+    JsonValue.set(envelope, "ok", Json.bool(false))
+    JsonValue.set(envelope, "error", Json.string(compiled.problem))
+    Json.stringify(envelope)
+  } else {
+    val deadlineMs = if timeoutMs > 0 then monotonicMillis() + timeoutMs else 0
+    val called = callPure(compiled.code, "f:" ++ fnName, ["s:" ++ rawArg], deadlineMs, timeoutMs)
+    val envelope = Json.object()
+    if not Text.eq(called.problem, "") then {
+      JsonValue.set(envelope, "ok", Json.bool(false))
+      JsonValue.set(envelope, "error", Json.string(called.problem))
+    } else {
+      JsonValue.set(envelope, "ok", Json.bool(true))
+      JsonValue.set(envelope, "value", Json.string(valueBody(called.value)))
+    }
+    Json.stringify(envelope)
+  }
+}
+
 // A blocking header read: readLine() strips only the trailing '\n', leaving a
 // trailing '\r' on real clients' CRLF-terminated header lines, so lines are
 // trimmed before comparison. Returns None on EOF or a message with no (or an
