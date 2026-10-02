@@ -1271,13 +1271,16 @@ without an offsetting benefit).
 
 ## 22. Embedding Lume in another program
 
-Lume has no embeddable library form (no `liblume.dll`/`.so`, no C API
-to link against) — `dist/lume.exe` is a standalone executable, and
-that's the only integration point that exists today. The real,
-already-available option is subprocess embedding: any host language
-that can spawn a process and read its stdout/stderr/exit code can use
-`lume.exe run <script.lume> [args...]` as a callable subroutine, with
-no new engineering on either side.
+Two options exist, both reusing the same underlying contract — a
+function that decodes its own argument and encodes its own result —
+over two different transports: subprocess embedding (below, the
+simpler option, one process per call) and a C ABI (section 22.1, load
+once and call many times with no per-call process-spawn cost).
+
+Subprocess embedding: any host language that can spawn a process and
+read its stdout/stderr/exit code can use `lume.exe run <script.lume>
+[args...]` as a callable subroutine, with no new engineering on either
+side.
 
 The contract:
 
@@ -1340,9 +1343,72 @@ script, 20 samples) — the same process-startup floor
 [`BENCHMARKS.md`](../BENCHMARKS.md) already measures elsewhere, not a
 per-embedding-call tax. Cheap enough for most CLI-orchestration and
 batch use cases; for a tight loop calling into Lume many times per
-second, that per-call cost is a real one to budget for, since there is
-no way to keep a Lume process warm and feed it multiple distinct
-requests today.
+second, that per-call cost adds up — section 22.1's C ABI avoids it
+entirely by loading the compiler once and calling into it repeatedly,
+at the cost of needing a host language that can load a native library.
+
+### 22.1. The C ABI option
+
+`src/lume.cto` compiles both ways: as the normal `lume.exe` executable
+(`build.ps1`) and, separately, as a shared library exposing one
+function, `lumeEmbedCall(source, fnName, rawArg, timeoutMs) -> Text`,
+to any host that can load a DLL and call a C function — no subprocess,
+no per-call startup cost.
+
+```powershell
+certo build dist\lume.build.cto --emit-dll -o dist\lume.dll
+```
+
+The exported C symbol is `certo_lume_embed_call` (Certo's `pub fn` →
+`certo_<snake_case>` convention — note that `certo-ffi --header`'s
+generated header gets this specific name wrong for multi-word function
+names like this one, predicting `certo_lumeEmbedCall` instead; declare
+the real symbol by hand until that's fixed):
+
+```c
+extern const char* certo_lume_embed_call(
+    const char* source, const char* fnName, const char* rawArg, int64_t timeoutMs);
+```
+
+Same contract as the subprocess option, by design — a function written
+for one works unchanged for the other, since the Lume-level convention
+(decode your own argument, encode your own result) is identical,
+only the transport differs:
+
+- `source` must be a **complete** Lume program, including its own
+  `fn main` — `compileSource` requires one to exist even though it is
+  never executed; only `fnName` is ever called, via the same `callPure`
+  machinery the native test runner uses.
+- `rawArg` is passed to `fnName` as a single `str` argument — decode it
+  yourself (`Type.from_json`, `str.to_int`, or however your function's
+  own contract works) the same way a subprocess-embedded script would
+  decode its own CLI argument.
+- The result is always a JSON envelope, not the raw return value
+  directly: `{"ok":true,"value":"<fnName's return text>"}` on success,
+  `{"ok":false,"error":"<compile or runtime failure>"}` on a compile
+  error, an unknown function name, a timeout, or a runtime panic.
+- `timeoutMs` (<= 0 for none) bounds the call the same way
+  `test "name", timeout: <ms> { ... }` already bounds a native test
+  (section 13) — a hang inside the called function can't hang the host.
+
+See [`examples/embed_demo_c_abi.c`](../examples/embed_demo_c_abi.c)
+for a runnable proof (the success path and three distinct failure
+modes — a compile error, an unknown function name, and a runtime
+panic — all checked):
+
+```powershell
+clang examples\embed_demo_c_abi.c dist\lume.lib -o dist\embed_demo_c_abi.exe
+.\dist\embed_demo_c_abi.exe
+```
+
+Like the subprocess example, this isn't wired into `test.ps1` — it
+needs a C toolchain (`clang`) on `PATH`, a separate step from the
+compiler's own normal build/test cycle.
+
+`lumeEmbedCall` recompiles `source` fresh on every call; there is no
+cross-call caching of a compiled artifact yet — a real cost for a host
+calling the same source repeatedly, deliberately left for later rather
+than solved up front.
 
 ## 23. Editor and AI tooling
 

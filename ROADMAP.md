@@ -1515,11 +1515,40 @@ things rather than writing the obvious thing.
   worth knowing about). See
   [`examples/embed_demo.lume`](../examples/embed_demo.lume)/
   [`examples/embed_demo_host.py`](../examples/embed_demo_host.py) for a
-  runnable proof. **A narrow C ABI remains a separate, unstarted, and
-  much larger item** - Certo's own build path only ever produces a
+  runnable proof. ~~A narrow C ABI remains a separate, unstarted, and
+  much larger item - Certo's own build path only ever produces a
   standalone executable today, not a linkable library, and Lume's
   runtime value representation (tagged strings) would need real
-  marshaling design to cross a C ABI at all;
+  marshaling design to cross a C ABI at all.~~ **That framing was
+  stale** - confirmed live rather than assumed: Certo already has
+  `--emit-dll`, automatic `pub fn` -> `certo_<snake_case>` C export,
+  and `certo-ffi --header` (`Certo/dll-demo/`, a pre-existing, working
+  demo with real C/C#/Rust consumers). The *actual* blocker was
+  narrower - `src/lume.cto` has `main()`, and Certo's `--emit-dll`
+  never linked `shell32`, so any source with `main()` anywhere in its
+  import graph failed with `undefined symbol: CommandLineToArgvW`
+  ([`rjreeves/Certo#6`](https://github.com/rjreeves/Certo/pull/6),
+  merged, a one-line fix). Shipped as `lumeEmbedCall(source, fnName,
+  rawArg, timeoutMs) -> Text`, exported from `src/lume.cto` built with
+  `--emit-dll` - deliberately a single opaque `str` argument and
+  result, not generic typed marshaling, reusing the exact same
+  decode-your-own-argument/encode-your-own-result contract the
+  subprocess option above already established, so a function written
+  for one works unchanged for the other. Verified end to end from a
+  genuinely different host (a real C program, loading `lume.dll`
+  directly, no subprocess) with 6 checks covering the success path and
+  three distinct failure modes (compile error, unknown function name,
+  runtime panic) - see
+  [`examples/embed_demo_c_abi.c`](../examples/embed_demo_c_abi.c) and
+  `docs/using-lume-the-fast-one.md` section 22.1. A second real gap
+  found live along the way, documented but not fixed here (out of
+  scope for this item specifically): `certo-ffi --header` predicts the
+  wrong C symbol name for a multi-word `pub fn` (`certo_lumeEmbedCall`
+  instead of the real `certo_lume_embed_call`) - a Certo-side header-
+  generator bug, not a Lume-side one. No cross-call artifact caching
+  yet (`lumeEmbedCall` recompiles `source` every call) - a real
+  performance cost for a host calling repeatedly, deliberately
+  deferred rather than solved here;
 - ~~release archives~~ — the archive half shipped, Windows-only (this
   dev environment has no cross-platform build infrastructure, the same
   constraint "reproducible standalone executable builds" above already
