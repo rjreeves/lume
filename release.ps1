@@ -39,6 +39,7 @@ New-Item -ItemType Directory -Path $stageDir | Out-Null
 Copy-Item -LiteralPath (Join-Path $dist 'lume.exe') -Destination $stageDir
 Copy-Item -LiteralPath (Join-Path $root 'README.md') -Destination $stageDir
 Copy-Item -LiteralPath (Join-Path $root 'SPEC.md') -Destination $stageDir
+Copy-Item -LiteralPath (Join-Path $root 'LICENSE') -Destination $stageDir
 New-Item -ItemType Directory -Path (Join-Path $stageDir 'docs') -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $root 'docs\using-lume-the-fast-one.md') -Destination (Join-Path $stageDir 'docs')
 Copy-Item -LiteralPath (Join-Path $root 'docs\builtins.md') -Destination (Join-Path $stageDir 'docs')

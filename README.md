@@ -1031,3 +1031,7 @@ comparing models, prompts, and language revisions.
 ## Recommended implementation
 
 Write the compiler and VM in Rust or Zig. Emit a compact register bytecode directly during parsing, cache it by content hash, and embed a small standard runtime. Do not start with LLVM: it improves peak native performance, not the compile-time goal of this language.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
