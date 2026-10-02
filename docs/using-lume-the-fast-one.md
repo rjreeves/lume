@@ -1360,10 +1360,12 @@ certo build dist\lume.build.cto --emit-dll -o dist\lume.dll
 ```
 
 The exported C symbol is `certo_lume_embed_call` (Certo's `pub fn` →
-`certo_<snake_case>` convention — note that `certo-ffi --header`'s
-generated header gets this specific name wrong for multi-word function
-names like this one, predicting `certo_lumeEmbedCall` instead; declare
-the real symbol by hand until that's fixed):
+`certo_<snake_case>` convention). `certo-ffi --header dist\lume.build.cto
+-o dist\lume.h` generates a matching header automatically — it used to
+predict the wrong name (`certo_lumeEmbedCall`, no case conversion) for
+a multi-word function name like this one, found live while writing
+this section and fixed upstream
+([`rjreeves/Certo#7`](https://github.com/rjreeves/Certo/pull/7)):
 
 ```c
 extern const char* certo_lume_embed_call(
