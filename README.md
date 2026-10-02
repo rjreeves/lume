@@ -264,6 +264,18 @@ semver range instead (see below); there's still no central registry —
 a name only ever resolves through its own declared `path` or `git`
 source, never a lookup.
 
+The manifest can also declare an optional `lumeVersion` field, a floor
+on the compiler itself rather than metadata about the package:
+
+```json
+{ "name": "app", "version": "0.1.0", "lumeVersion": "0.3.0" }
+```
+
+`lume install` checks it against `lume version`'s output before doing
+any dependency resolution — an older running compiler, or a value that
+isn't a plain `major.minor.patch`, is `E0758`. Leave it off and nothing
+changes.
+
 A dependency can also resolve straight from a git repository instead of
 a local path — no registry, just a direct URL, resolved to a concrete
 commit at install time:

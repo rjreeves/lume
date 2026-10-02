@@ -1025,6 +1025,24 @@ A git dependency can resolve a real semver range instead (see below);
 there's still no central registry — a name only ever resolves through its
 own declared `path` or `git` source, never a lookup.
 
+The manifest can also declare an optional `lumeVersion` field, naming the
+minimum Lume version the project needs — distinct from the `version` field
+above, which is just the package's own identity version:
+
+```json
+{ "name": "app", "version": "0.1.0", "lumeVersion": "0.3.0" }
+```
+
+`lume install` checks it against `lume version`'s own output before doing
+any dependency resolution. Running an older Lume than declared — or a
+`lumeVersion` that isn't a plain `major.minor.patch` string — is `E0758`.
+Leave it off and nothing changes; every existing project installs exactly
+as before. It's a floor, not a range: `"0.3.0"` means "this version or any
+newer one," not "compatible with the 0.3 series only" the way a git
+dependency's `^0.3.0` would — there's no caret/tilde form here, since the
+whole point is to keep matching every future release until something
+actually breaks.
+
 A dependency can also come straight from a git repository instead of a
 local path — no registry, just a direct URL, the same way Go modules
 resolve a dependency by its repository location:

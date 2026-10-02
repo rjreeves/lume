@@ -6303,6 +6303,35 @@ fn readManifestVersion(manifestPath: Text): Result<Text, Text> = {
   } else { Err("E0705 cannot read manifest `" ++ manifestPath ++ "`") }
 }
 
+// An optional `lumeVersion` manifest field - distinct from the required
+// `version` field above, which is the *package's own* identity version,
+// not a compiler-compatibility floor. Absent entirely: every existing
+// project with no such field installs exactly as before, same
+// backward-compatibility bar `signedBy`/`versionRange` were held to.
+// Declares a plain minimum ("at least this version"), not a caret/tilde
+// range: those encode a *bounded compatible series* (satisfiesVersionRange,
+// :6630) that stops matching at the next major/minor - the wrong shape for
+// "any Lume version from here on," which is what a language-version floor
+// actually means. Checked once, in computeLockContent, before any
+// dependency resolution runs - the same "validate the manifest shape
+// first" structure readManifestVersion above already establishes.
+fn checkLumeVersionCompat(manifestPath: Text): Result<Bool, Text> = {
+  if let Some(source) = readFile(manifestPath) {
+    val declaredField = JsonValue.get(Json.parse(source), "lumeVersion")
+    if not JsonValue.isString(declaredField) then { Ok(true) }
+    else {
+      val declaredText = JsonValue.asText(declaredField)
+      val declared = parseSemver(declaredText)
+      val running = parseSemver(lumeVersion())
+      if not declared.valid then {
+        Err("E0758 manifest `" ++ manifestPath ++ "` declares an unparseable `lumeVersion` (`" ++ declaredText ++ "`)")
+      } else if compareSemver(running, declared) < 0 then {
+        Err("E0758 manifest `" ++ manifestPath ++ "` requires Lume `" ++ declaredText ++ "` or newer, but this is Lume `" ++ lumeVersion() ++ "`")
+      } else { Ok(true) }
+    }
+  } else { Err("E0705 cannot read manifest `" ++ manifestPath ++ "`") }
+}
+
 // The plain dependency names a manifest itself declares - used to build
 // each lock-file entry's own "dependencies" list, so module resolution can
 // later tell "this package declared X" apart from "X merely exists
@@ -7099,6 +7128,7 @@ fn hashPackageSource(packageDir: Text): Text [io] = {
 // change (still catches a floating ref that moved as drift, on purpose).
 fn computeLockContent(dir: Text, manifestPath: Text, respectPins: Bool): Result<Text, Text> = {
   if let Err(message) = readManifestVersion(manifestPath) { Err(message) }
+  else if let Err(message) = checkLumeVersionCompat(manifestPath) { Err(message) }
   else {
     val existingPins = readExistingResolvedDeps(Path.join(dir, "lume.lock.json"))
     val outcome = resolveDependencies(dir, "", [], [], [], existingPins, respectPins)
@@ -8510,11 +8540,13 @@ fn formatSource(source: Text): Text = {
   Text.join(output, newline()) ++ newline()
 }
 
-// The single source of truth for Lume's own version string - both the
-// `help` command's banner and the `api` command's JSON manifest read it
-// from here, rather than each hand-maintaining its own copy of the
-// literal (they used to, and could silently drift out of sync).
-fn lumeVersion(): Text = "0.1.0-bootstrap"
+// The single source of truth for Lume's own version string - the
+// `help` banner, the `version`/`--version` command, the `api` command's
+// JSON manifest, and a project's own optional `lumeVersion` compatibility
+// check in lume.json (installPackages) all read it from here, rather than
+// each hand-maintaining its own copy of the literal (they used to, and
+// could silently drift out of sync).
+fn lumeVersion(): Text = "0.3.0"
 
 fn apiManifest(): Text = {
   val root = Json.object()
@@ -8639,6 +8671,7 @@ fn usage(): Unit [io] = {
   println("       lume install <dir> [--check]")
   println("       lume lsp")
   println("       lume api|api-docs|ai-reference")
+  println("       lume version|--version")
 }
 
 fn runCode(code: List<Instruction>): Unit [io] = {
@@ -8720,6 +8753,8 @@ fn main(): Unit [io] = {
     println(aiReference())
   } else if Text.eq(command, "lsp") then {
     runLspServer()
+  } else if Text.eq(command, "version") or Text.eq(command, "--version") then {
+    println(lumeVersion())
   } else if Text.eq(command, "help") or Text.eq(command, "--help") or Text.eq(path, "") then {
     usage()
   } else if Text.eq(command, "exec") then {

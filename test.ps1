@@ -650,6 +650,15 @@ Assert-Equal 'api: map.fold has three documented parameters' '3' ($mapFold.param
 if ([string]::IsNullOrWhiteSpace($mapFold.description)) { throw 'api: map.fold has no description' }
 if ([string]::IsNullOrWhiteSpace($mapFold.example)) { throw 'api: map.fold has no example' }
 
+# version/--version: both aliases print the same single-source-of-truth
+# string api's own "version" field already reads (lumeVersion(), src/lume.cto).
+$versionOut = & $Lume version
+if ($LASTEXITCODE -ne 0) { throw "version exited $LASTEXITCODE" }
+Assert-Equal 'version: prints a bare version string' $apiJson.version ($versionOut | Select-Object -First 1)
+$versionFlagOut = & $Lume --version
+if ($LASTEXITCODE -ne 0) { throw "--version exited $LASTEXITCODE" }
+Assert-Equal '--version: same output as the version command' $apiJson.version ($versionFlagOut | Select-Object -First 1)
+
 # dir.exists: fs.exists is file-only (confirmed live while writing its own
 # docs entry - it returns false for a path that's genuinely an existing
 # directory, since it calls Certo's file-only fileExists rather than also
@@ -1943,6 +1952,43 @@ Set-Content -LiteralPath (Join-Path $cyclicAppDir 'lume.json') -Value ('{"name":
 $cyclicOutput = & $Lume install $cyclicAppDir 2>&1
 if ($LASTEXITCODE -ne 1) { throw "self-referential git dependency install should exit 1" }
 Assert-Equal 'git dependency cycle pre-check: self-referential git+ref reports E0709' 'E0709 dependency cycle at `cyclic`' ($cyclicOutput -join "`n")
+
+# lumeVersion: an optional manifest-level floor on the compiler itself,
+# distinct from the required `version` field (the package's own identity
+# version) - checked in computeLockContent before any dependency
+# resolution, so these need no git fixture at all, just a bare manifest.
+$lumeVerOkDir = Join-Path $gitFixtureRoot 'lumever-ok'
+New-Item -ItemType Directory -Path $lumeVerOkDir -Force | Out-Null
+Set-Content -LiteralPath (Join-Path $lumeVerOkDir 'lume.json') -Value ('{"name":"lumever-ok","version":"0.1.0","lumeVersion":"' + (& $Lume version) + '","dependencies":[]}') -NoNewline
+$lumeVerOkOutput = & $Lume install $lumeVerOkDir
+if ($LASTEXITCODE -ne 0) { throw "lumeVersion: install with the exact running version exited $LASTEXITCODE : $lumeVerOkOutput" }
+
+$lumeVerOldDir = Join-Path $gitFixtureRoot 'lumever-old'
+New-Item -ItemType Directory -Path $lumeVerOldDir -Force | Out-Null
+Set-Content -LiteralPath (Join-Path $lumeVerOldDir 'lume.json') -Value '{"name":"lumever-old","version":"0.1.0","lumeVersion":"0.1.0","dependencies":[]}' -NoNewline
+$lumeVerOldOutput = & $Lume install $lumeVerOldDir
+if ($LASTEXITCODE -ne 0) { throw "lumeVersion: install with an older declared minimum exited $LASTEXITCODE : $lumeVerOldOutput" }
+
+$lumeVerAbsentDir = Join-Path $gitFixtureRoot 'lumever-absent'
+New-Item -ItemType Directory -Path $lumeVerAbsentDir -Force | Out-Null
+Set-Content -LiteralPath (Join-Path $lumeVerAbsentDir 'lume.json') -Value '{"name":"lumever-absent","version":"0.1.0","dependencies":[]}' -NoNewline
+$lumeVerAbsentOutput = & $Lume install $lumeVerAbsentDir
+if ($LASTEXITCODE -ne 0) { throw "lumeVersion: install with no lumeVersion field at all exited $LASTEXITCODE : $lumeVerAbsentOutput" }
+
+$lumeVerTooNewDir = Join-Path $gitFixtureRoot 'lumever-toonew'
+New-Item -ItemType Directory -Path $lumeVerTooNewDir -Force | Out-Null
+Set-Content -LiteralPath (Join-Path $lumeVerTooNewDir 'lume.json') -Value '{"name":"lumever-toonew","version":"0.1.0","lumeVersion":"9.9.9","dependencies":[]}' -NoNewline
+$lumeVerTooNewOutput = & $Lume install $lumeVerTooNewDir 2>&1
+if ($LASTEXITCODE -ne 1) { throw "lumeVersion: install requiring a newer-than-running version should exit 1" }
+Assert-Contains 'lumeVersion: requiring a newer-than-running compiler reports E0758' 'E0758' ($lumeVerTooNewOutput -join "`n")
+Assert-Contains 'lumeVersion: the E0758 message names the declared minimum' '9.9.9' ($lumeVerTooNewOutput -join "`n")
+
+$lumeVerBadDir = Join-Path $gitFixtureRoot 'lumever-unparseable'
+New-Item -ItemType Directory -Path $lumeVerBadDir -Force | Out-Null
+Set-Content -LiteralPath (Join-Path $lumeVerBadDir 'lume.json') -Value '{"name":"lumever-unparseable","version":"0.1.0","lumeVersion":"not-a-version","dependencies":[]}' -NoNewline
+$lumeVerBadOutput = & $Lume install $lumeVerBadDir 2>&1
+if ($LASTEXITCODE -ne 1) { throw "lumeVersion: an unparseable declared value should exit 1" }
+Assert-Contains 'lumeVersion: an unparseable declared value reports E0758' 'E0758' ($lumeVerBadOutput -join "`n")
 
 Remove-Item -LiteralPath $gitFixtureRoot -Recurse -Force
 
