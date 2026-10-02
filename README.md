@@ -276,6 +276,11 @@ any dependency resolution — an older running compiler, or a value that
 isn't a plain `major.minor.patch`, is `E0758`. Leave it off and nothing
 changes.
 
+`lume migrate <dir>` reports, purely informationally, which recorded
+migrations fall between a manifest's declared `lumeVersion` and the
+running compiler — today always "no recorded migrations needed," since
+no breaking change has ever shipped in this project's history.
+
 A dependency can also resolve straight from a git repository instead of
 a local path — no registry, just a direct URL, resolved to a concrete
 commit at install time:
