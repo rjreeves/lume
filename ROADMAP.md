@@ -1541,10 +1541,11 @@ things rather than writing the obvious thing.
   class of bug the build step alone wouldn't. **Installers for major
   desktop platforms remain unstarted** - a real installer (MSI, code
   signing, macOS/Linux packages) needs build infrastructure this
-  single-machine Windows environment doesn't have. **No LICENSE file
-  exists in this repo** - asked directly rather than assumed (a
-  business/legal decision, not an engineering one): skipped for this
-  PR, left as its own explicit open item, not silently decided.
+  single-machine Windows environment doesn't have. ~~No LICENSE file
+  exists in this repo~~ — resolved: MIT, the business/legal decision
+  this item deliberately left open rather than silently picked for
+  someone. `LICENSE` is now bundled into the release archive alongside
+  `README.md`/`SPEC.md` (`release.ps1`).
 
 ### Developer experience
 
