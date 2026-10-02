@@ -6332,6 +6332,68 @@ fn checkLumeVersionCompat(manifestPath: Text): Result<Bool, Text> = {
   } else { Err("E0705 cannot read manifest `" ++ manifestPath ++ "`") }
 }
 
+// The registry `lume migrate` reports against - genuinely, honestly
+// empty today, not padded with invented entries. No breaking change has
+// ever shipped in this project's history (confirmed directly before
+// writing this: nothing in BACKLOG.md/ROADMAP.md describes one that
+// actually reached users rather than being caught by review first), so
+// there is nothing yet for a real migration entry to describe. The first
+// one, whenever a real breaking change needs it, is added here and
+// nowhere else - `migrateCommand` below never special-cases an empty
+// list, so adding an entry needs no change to the command itself.
+type LanguageMigration = { fromVersion: Text, toVersion: Text, description: Text }
+fn languageMigrations(): List<LanguageMigration> = []
+
+// `lume migrate <dir>` - reports which of languageMigrations()'s entries
+// fall in the range between a manifest's declared `lumeVersion` and the
+// running compiler's own version, reusing the exact same parseSemver/
+// compareSemver checkLumeVersionCompat above already established. No
+// declared `lumeVersion` at all means no floor to migrate from, not an
+// error - this command is purely informational, never a replacement for
+// the hard E0758 floor check install already enforces.
+fn migrateCommand(dir: Text): Unit [io] = {
+  val manifestPath = Path.join(dir, "lume.json")
+  if let Some(source) = readFile(manifestPath) {
+    val declaredField = JsonValue.get(Json.parse(source), "lumeVersion")
+    if not JsonValue.isString(declaredField) then {
+      println("no `lumeVersion` declared in `" ++ manifestPath ++ "` - nothing to check against")
+    } else {
+      val declaredText = JsonValue.asText(declaredField)
+      val declared = parseSemver(declaredText)
+      val running = parseSemver(lumeVersion())
+      if not declared.valid then {
+        eprintln("E0758 manifest `" ++ manifestPath ++ "` declares an unparseable `lumeVersion` (`" ++ declaredText ++ "`)")
+        Process.quit(1)
+      } else {
+        // Applies when the declared floor predates the change (so the
+        // project's own code may still assume the old behavior) and the
+        // running compiler already includes it (so the gap is real, not
+        // hypothetical) - `fromVersion` is documentation of what changed,
+        // not itself compared; `toVersion` is the one boundary that matters.
+        var applicable: List<LanguageMigration> = []
+        for entry in languageMigrations() {
+          val to = parseSemver(entry.toVersion)
+          if compareSemver(declared, to) < 0 and compareSemver(running, to) >= 0 then {
+            applicable = List.pushMut(applicable, entry)
+          }
+        }
+        if List.len(applicable) == 0 then {
+          println("Lume " ++ declaredText ++ " -> " ++ lumeVersion() ++ ": no recorded migrations needed")
+        } else {
+          println("Lume " ++ declaredText ++ " -> " ++ lumeVersion() ++ ": " ++ intToText(List.len(applicable)) ++ " migration(s) to review")
+          for entry in applicable {
+            println("  " ++ entry.fromVersion ++ " -> " ++ entry.toVersion ++ ": " ++ entry.description)
+          }
+          Process.quit(1)
+        }
+      }
+    }
+  } else {
+    eprintln("E0705 cannot read manifest `" ++ manifestPath ++ "`")
+    Process.quit(1)
+  }
+}
+
 // The plain dependency names a manifest itself declares - used to build
 // each lock-file entry's own "dependencies" list, so module resolution can
 // later tell "this package declared X" apart from "X merely exists
@@ -8669,6 +8731,7 @@ fn usage(): Unit [io] = {
   println("       lume test <file.lume|dir> [--filter text] [--ignore names]")
   println("       lume fmt <file.lume> [--check]")
   println("       lume install <dir> [--check]")
+  println("       lume migrate <dir>")
   println("       lume lsp")
   println("       lume api|api-docs|ai-reference")
   println("       lume version|--version")
@@ -8765,6 +8828,8 @@ fn main(): Unit [io] = {
     } else { runCode(artifact.code) }
   } else if Text.eq(command, "install") then {
     installPackages(path, hasFlag("--check"), hasFlag("--update"))
+  } else if Text.eq(command, "migrate") then {
+    migrateCommand(path)
   } else if let Some(entries) = listDir(path) {
     if not Text.eq(command, "test") then {
       eprintln("command `" ++ command ++ "` requires a file")

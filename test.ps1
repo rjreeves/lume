@@ -1990,6 +1990,24 @@ $lumeVerBadOutput = & $Lume install $lumeVerBadDir 2>&1
 if ($LASTEXITCODE -ne 1) { throw "lumeVersion: an unparseable declared value should exit 1" }
 Assert-Contains 'lumeVersion: an unparseable declared value reports E0758' 'E0758' ($lumeVerBadOutput -join "`n")
 
+# migrate: purely informational, reusing the same fixtures above - never
+# mutates lume.json, never replaces the hard E0758 floor install enforces.
+$migrateAbsentOut = & $Lume migrate $lumeVerAbsentDir
+if ($LASTEXITCODE -ne 0) { throw "migrate: no lumeVersion field exited $LASTEXITCODE" }
+Assert-Contains 'migrate: no lumeVersion field reports nothing to check against' 'nothing to check against' ($migrateAbsentOut -join "`n")
+
+$migrateOkOut = & $Lume migrate $lumeVerOkDir
+if ($LASTEXITCODE -ne 0) { throw "migrate: declared equal to running exited $LASTEXITCODE" }
+Assert-Contains 'migrate: declared equal to running reports no migrations needed' 'no recorded migrations needed' ($migrateOkOut -join "`n")
+
+$migrateOldOut = & $Lume migrate $lumeVerOldDir
+if ($LASTEXITCODE -ne 0) { throw "migrate: an older declared minimum exited $LASTEXITCODE" }
+Assert-Contains 'migrate: an older declared minimum still reports no migrations needed (empty registry)' 'no recorded migrations needed' ($migrateOldOut -join "`n")
+
+$migrateBadOut = & $Lume migrate $lumeVerBadDir 2>&1
+if ($LASTEXITCODE -ne 1) { throw "migrate: an unparseable declared value should exit 1" }
+Assert-Contains 'migrate: an unparseable declared value reports E0758' 'E0758' ($migrateBadOut -join "`n")
+
 Remove-Item -LiteralPath $gitFixtureRoot -Recurse -Force
 
 # examples/taskgraph - the "validate representative shell/Python

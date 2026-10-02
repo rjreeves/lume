@@ -1043,6 +1043,14 @@ dependency's `^0.3.0` would — there's no caret/tilde form here, since the
 whole point is to keep matching every future release until something
 actually breaks.
 
+`lume migrate <dir>` reports which recorded migrations fall between a
+project's declared `lumeVersion` and the running compiler, without
+changing anything — purely informational, never a substitute for the
+hard `E0758` floor `install` already enforces. Today it always reports
+"no recorded migrations needed," honestly: no breaking change has ever
+shipped in this project's history, so the registry it checks against is
+genuinely empty, not a stub pretending to have found nothing.
+
 A dependency can also come straight from a git repository instead of a
 local path — no registry, just a direct URL, the same way Go modules
 resolve a dependency by its repository location:

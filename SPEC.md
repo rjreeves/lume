@@ -486,6 +486,17 @@ as before. The check is a plain minimum, not a caret/tilde range: it
 means "this version or newer, indefinitely," not "compatible with this
 minor series only."
 
+`lume migrate <dir>` reports, informationally, which recorded language
+migrations fall between a manifest's declared `lumeVersion` and the
+running compiler's version, without modifying anything. Today that
+registry is genuinely empty — no breaking change has ever shipped in
+this project's history — so every real invocation reports "no recorded
+migrations needed"; this is the honest, correct answer given the
+registry's actual contents, not a stub standing in for a check that
+didn't run. The command exists so the first real migration, whenever
+one ships, has somewhere to be reported from day one rather than
+needing new plumbing built under time pressure.
+
 `lume install <dir>` is a separate step from ordinary compilation, per
 this project's own constraint that package resolution must not happen
 on every compile: it reads `<dir>/lume.json` and walks the full
