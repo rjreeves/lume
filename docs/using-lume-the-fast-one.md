@@ -1223,6 +1223,15 @@ lume exec deploy.lbc
 Truncated or corrupt bytecode is rejected rather than partially executed.
 `.lbc` files are reproducible build products, ignored by Git.
 
+This cache write happens as a side effect of `lume run`/`check` itself,
+before the script's own `main` body runs — a script that shells out to
+`git status` on itself (a release or CI script checking the working tree
+is clean before proceeding, for example) will see its own fresh `.lbc`
+file as an untracked change unless `*.lbc` is already in `.gitignore`.
+Add that ignore rule up front in any repo whose scripts self-inspect
+`git status` this way, rather than debugging a self-referential "dirty
+tree" failure after the fact.
+
 Measure the in-process compiler and artifact decoder:
 
 ```text
