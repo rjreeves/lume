@@ -473,6 +473,19 @@ here either — a name only ever resolves through its own declared `git`
 URL). Exactly one of `path`/`git` must be present, and `git` requires
 `ref` (a tag, branch, or commit) — either violation is `E0747`.
 
+The manifest's top level can also declare an optional `lumeVersion`
+field — distinct from the required `version` field above, which is the
+package's *own* identity version, not a compiler-compatibility floor —
+naming the minimum Lume version the package needs (e.g.
+`"lumeVersion": "0.3.0"`). `lume install` checks it against the running
+compiler's own `lumeVersion()` before any dependency resolution; a
+running version older than declared, or a `lumeVersion` that doesn't
+parse as `major.minor.patch`, is `E0758`. Absent entirely (the common
+case today), nothing changes — every existing project installs exactly
+as before. The check is a plain minimum, not a caret/tilde range: it
+means "this version or newer, indefinitely," not "compatible with this
+minor series only."
+
 `lume install <dir>` is a separate step from ordinary compilation, per
 this project's own constraint that package resolution must not happen
 on every compile: it reads `<dir>/lume.json` and walks the full
