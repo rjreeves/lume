@@ -1799,7 +1799,20 @@ things rather than writing the obvious thing.
   silently drift the way a genuinely separate hand-maintained document
   could — `api`/`api-docs` check it first and refuse to print anything
   if it ever fails, and `test.ps1` runs both on every test run;
-- a compatibility and migration checker for language revisions.
+- ~~a compatibility and migration checker for language revisions~~ —
+  shipped as `lume migrate <dir>`, reporting which recorded migrations
+  fall between a manifest's declared `lumeVersion` and the running
+  compiler (`languageMigrations()`, `src/lume.cto`). Re-confirmed
+  directly before building, not assumed from the earlier note below:
+  no breaking change has ever actually shipped in this project's
+  history (the one close call — `install --check` almost breaking
+  every pre-existing lock file's byte shape on upgrade — was caught by
+  code review before it ever reached a release), so the registry this
+  command reports against is genuinely, honestly empty today, the
+  same shape `compilerBuildHash()`/the `LBC5` header started in before
+  either had anything real to detect. Purely informational — never
+  mutates `lume.json`, never replaces the hard `E0758` floor `install`
+  already enforces via `checkLumeVersionCompat`.
 
 ### Performance engineering
 
