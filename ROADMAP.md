@@ -1541,14 +1541,14 @@ things rather than writing the obvious thing.
   runtime panic) - see
   [`examples/embed_demo_c_abi.c`](../examples/embed_demo_c_abi.c) and
   `docs/using-lume-the-fast-one.md` section 22.1. A second real gap
-  found live along the way, documented but not fixed here (out of
-  scope for this item specifically): `certo-ffi --header` predicts the
-  wrong C symbol name for a multi-word `pub fn` (`certo_lumeEmbedCall`
-  instead of the real `certo_lume_embed_call`) - a Certo-side header-
-  generator bug, not a Lume-side one. No cross-call artifact caching
-  yet (`lumeEmbedCall` recompiles `source` every call) - a real
-  performance cost for a host calling repeatedly, deliberately
-  deferred rather than solved here;
+  found live along the way - `certo-ffi --header` predicted the wrong
+  C symbol name for a multi-word `pub fn` (`certo_lumeEmbedCall`
+  instead of the real `certo_lume_embed_call`) - was itself fixed
+  upstream once scoped on its own
+  ([`rjreeves/Certo#7`](https://github.com/rjreeves/Certo/pull/7)).
+  No cross-call artifact caching yet (`lumeEmbedCall` recompiles
+  `source` every call) - a real performance cost for a host calling
+  repeatedly, deliberately deferred rather than solved here;
 - ~~release archives~~ — the archive half shipped, Windows-only (this
   dev environment has no cross-platform build infrastructure, the same
   constraint "reproducible standalone executable builds" above already
