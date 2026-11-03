@@ -1295,6 +1295,42 @@ if ($LASTEXITCODE -ne 0) { throw "bytecode exited $LASTEXITCODE" }
 if (-not (($bytecode -join "`n") -match 'mul')) { throw 'bytecode did not contain mul' }
 Write-Host 'PASS bytecode'
 
+# Opcode table (SPEC.md section 17, "Opcode reference"). Opcodes are plain
+# strings, not an enum, so nothing else stops the compiler from emitting one
+# the spec doesn't know about, or the spec from listing one that no longer
+# exists. Two checks: every opcode `lume bytecode` actually emits across the
+# example programs is documented, and every documented opcode still appears
+# as a string literal in the compiler source.
+$specText = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'SPEC.md') -Raw
+$opcodeSection = [regex]::Match($specText, '(?s)### Opcode reference(.*?)## 18\.').Groups[1].Value
+if ($opcodeSection -eq '') { throw 'SPEC.md has no "### Opcode reference" section before section 18' }
+$documentedOps = @{}
+foreach ($specLine in ($opcodeSection -split "`n")) {
+  $rowMatch = [regex]::Match($specLine, '^\| ((?:`[a-z_]+`(?:, )?)+) \|')
+  if ($rowMatch.Success) {
+    foreach ($opMatch in [regex]::Matches($rowMatch.Groups[1].Value, '`([a-z_]+)`')) { $documentedOps[$opMatch.Groups[1].Value] = $true }
+  }
+}
+$statedCount = [regex]::Match($opcodeSection, 'There are\s+(\d+)\.').Groups[1].Value
+Assert-Equal 'opcode table: the stated opcode count matches the number of rows' $statedCount ([string]$documentedOps.Count)
+
+$observedOps = @{}
+foreach ($exampleFile in Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'examples') -Filter *.lume -File) {
+  $exampleBytecode = & $Lume bytecode $exampleFile.FullName 2>$null
+  if ($LASTEXITCODE -ne 0) { continue }
+  foreach ($bytecodeLine in $exampleBytecode) {
+    $fields = @(($bytecodeLine -split '\s+') | Where-Object { $_ -ne '' })
+    if ($fields.Count -ge 2) { $observedOps[$fields[1]] = $true }
+  }
+}
+if ($observedOps.Count -lt 40) { throw "opcode table: only $($observedOps.Count) distinct opcodes observed across examples - the scan itself looks broken" }
+$undocumentedOps = @($observedOps.Keys | Where-Object { -not $documentedOps.ContainsKey($_) } | Sort-Object)
+Assert-Equal 'opcode table: every opcode the compiler emits is documented in SPEC.md' '' ($undocumentedOps -join ',')
+
+$lumeSourceText = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'src\lume.cto') -Raw
+$staleDocumentedOps = @($documentedOps.Keys | Where-Object { -not $lumeSourceText.Contains('"' + $_ + '"') } | Sort-Object)
+Assert-Equal 'opcode table: every documented opcode still exists in the compiler source' '' ($staleDocumentedOps -join ',')
+
 $nativeTests = & $Lume test (Join-Path $PSScriptRoot 'examples\native_tests.lume')
 if ($LASTEXITCODE -ne 0) { throw "native test runner exited $LASTEXITCODE" }
 Assert-Equal 'native test runner' "PASS adds two values`nPASS recognizes present values`n2 passed; 0 failed" ($nativeTests -join "`n")

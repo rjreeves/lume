@@ -1070,6 +1070,117 @@ an opcode it doesn't recognize (protecting against a structurally-valid
 but semantically-stale artifact, such as one built by an incompatible
 compiler version).
 
+### Opcode reference
+
+Opcodes are plain strings in the `op` field, not an enum, so this table is
+the only authoritative list — `test.ps1` checks it two ways: every opcode
+`lume bytecode` emits across the example programs must appear here, and
+every opcode listed here must still exist in the compiler source. There are
+45. `lume bytecode <file.lume>` prints one instruction per line as
+`index  op  text  number`.
+
+How to read the table:
+
+- `text` and `number` are the two operand slots; "—" means the opcode
+  ignores that slot.
+- Jump offsets are **relative to the jumping instruction itself**
+  (`ip = ip + number`), not absolute indexes.
+- Execution starts at the instruction after `main`'s `function` marker. The
+  declaration opcodes (last table) are metadata read by scanners such as
+  function and type lookup — they are never executed, and reaching one
+  as an instruction is `E0725`, the same as any unrecognized opcode.
+- There are two interpreter loops: `execute` (the program entry path) and
+  `callPure` (closures, callbacks, and test bodies). They handle the same
+  opcodes with two exceptions: `main_param` only ever runs in `execute`,
+  and `closure_end` only in `callPure`.
+
+**Constants and bindings**
+
+| Opcode | `text` | `number` | Effect |
+| --- | --- | --- | --- |
+| `const_int` | — | the literal | Push an `int`. |
+| `const_str` | the literal | — | Push a `str`. |
+| `const_bool` | — | `1` true, `0` false | Push a `bool`. |
+| `fn_ref` | function name | — | Push a function value (`&name`). |
+| `load` | binding name | — | Push the binding's value; `E0303` if undefined. |
+| `store` | binding name | — | Pop and bind. |
+| `param` | `name\|type` | — | Pop an argument into a parameter binding. The callee pops its own arguments; `call` does not. |
+| `main_param` | `name\|type` | — | Bind `main`'s command-line `[str]` parameter. |
+
+**Arithmetic and comparison**
+
+| Opcode | `text` | `number` | Effect |
+| --- | --- | --- | --- |
+| `add` | — | — | Pop right, pop left, push `left + right`. Two `str` operands concatenate; otherwise both must be `int` (`E0301`). |
+| `sub`, `mul` | — | — | Pop right, pop left, push the `int` result (`E0301` otherwise). |
+| `div`, `mod` | — | — | As above; a zero divisor is `E0302`. |
+| `neg` | — | — | Pop an `int`, push its negation. |
+| `compare` | the operator (`==`, `!=`, `<`, `<=`, `>`, `>=`) | — | Pop right, pop left, push a `bool`. Dispatches to a user `Eq`/`Ord` implementation where one exists. |
+
+**Calls, returns, and results**
+
+| Opcode | `text` | `number` | Effect |
+| --- | --- | --- | --- |
+| `call` | function or builtin name | argument count | Call a user function if one is declared, otherwise a builtin. |
+| `generic_call` | `Protocol.method` | `argCount * 1000 + selfIndex` | Resolve the method from the receiver's runtime type, then call it; `E0693` if that type has no implementation. |
+| `return` | — | — | Pop the result and return to the caller. In `main` the value must be an `int` (`E0304`) and becomes the exit code. |
+| `propagate` | — | — | Postfix `?`. Pop a `Result`: `Ok` pushes the inner value; `Err` returns the `Err` from the current function (in `main`, it becomes the diagnostic). |
+| `unwrap` | — | — | Postfix `!`. The VM currently treats it exactly like `propagate`. |
+
+**Control flow**
+
+| Opcode | `text` | `number` | Effect |
+| --- | --- | --- | --- |
+| `jump` | — | forward offset | Unconditional jump. |
+| `jump_false` | — | forward offset | Pop a `bool` (`E0305` otherwise); jump if it is `false`. |
+| `if_expr_start` | — | forward offset | Start of an `if` expression: pop a `bool`, jump to the else branch if `false`. |
+| `if_expr_then_end` | — | forward offset | End of the then branch: jump past the else branch. |
+| `if_expr_finish` | — | — | No-op marker where both branches converge. |
+
+**Match**
+
+| Opcode | `text` | `number` | Effect |
+| --- | --- | --- | --- |
+| `match_start` | — | — | Save the current variable scope. |
+| `match_arm` | `Constructor\|payload bindings` | forward offset | If the subject's variant matches, bind the payload and consume the subject; otherwise jump to the next arm. |
+| `match_arm_end` | — | forward offset | Jump past the remaining arms. |
+| `match_finish` | — | — | Restore the saved variable scope. |
+
+**Closures**
+
+| Opcode | `text` | `number` | Effect |
+| --- | --- | --- | --- |
+| `closure_start` | closure descriptor | instructions to skip | Push a closure value capturing the current bindings, then jump over its body. |
+| `closure_end` | closure descriptor | — | End of a closure body. `callPure` treats it like `return`; `execute` never reaches it, because `closure_start` jumps past the body. |
+
+**Data**
+
+| Opcode | `text` | `number` | Effect |
+| --- | --- | --- | --- |
+| `make_list` | — | element count | Pop that many values, push a list. |
+| `make_record` | `Type\|labels` | field count | Pop that many values, push a record. |
+| `make_variant` | `Enum.Variant\|labels` | payload count | Pop that many values, push an enum variant. |
+| `update_record` | comma-joined field labels | label count | Pop the updated values and the base record, push the updated copy. |
+| `get_field` | field name | — | Pop a record, push the field; `E0330` if absent. |
+| `decode_json` | record type name | — | Pop a `str`, push the decoded record (`E0331` if not a `str`). |
+
+**Output and tests**
+
+| Opcode | `text` | `number` | Effect |
+| --- | --- | --- | --- |
+| `print`, `eprint` | — | — | Pop a value and write it as a line to stdout / stderr. |
+| `test_expect` | the `expect.*` builtin name | — | Pop an assertion result; a failure value or `false` fails the test. |
+
+**Declarations (metadata, never executed)**
+
+| Opcode | `text` | `number` | Effect |
+| --- | --- | --- | --- |
+| `function` | `name\|returnType\|generics\|constraints\|testName\|testTimeoutMs` | parameter count | Marks a function's entry point; `main` and `__test_N` functions are found this way. |
+| `record_type` | `Name\|field=type;field=type` | — | Declares a record type. |
+| `enum_type` | `Name\|Variant=label=type,label=type;Variant=` | — | Declares an enum; variants are `;`-separated, a payload-less variant ends in `=`. |
+| `protocol_type` | `Name\|method=ParamTypes@ReturnType` | — | Declares a protocol and its method signatures. |
+| `protocol_impl` | `Protocol\|Type\|method\|line` | — | Records an `impl`; the last component is the `impl` declaration's source line. |
+
 ## 18. Diagnostics contract
 
 Every diagnostic has a stable code, primary span, short message, and
