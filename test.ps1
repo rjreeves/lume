@@ -2388,6 +2388,68 @@ try {
   $sameFileHoverResp = Read-LspMessage $lspProc | ConvertFrom-Json
   Assert-Equal 'same-file hover still resolves unchanged' 'fn add(a: int, b: int): int' $sameFileHoverResp.result.contents.value
 
+  # URI spelling (BACKLOG.md item 9): LSP URIs are percent-encoded text and
+  # real clients send that form - VS Code sends file:///c%3A/dir/x.lume
+  # (lower-case drive, encoded colon) and %20 for a space. Before the fix
+  # the server turned that into a nonexistent path, so every feature that
+  # reads a file which isn't open (here: the `use`d helper, never opened in
+  # this session) returned nothing, and a valid file got a false "unknown
+  # function" diagnostic. Same fixture and positions as the cross-file tests
+  # above; only the spelling of the open document's URI differs.
+  $encodedMainPath = (Join-Path $PSScriptRoot 'examples\cross_file_lsp_main_encoded.lume') -replace '\\', '/'
+  $encodedDrive = $encodedMainPath.Substring(0, 1).ToLower()
+  $encodedMainUri = "file:///$encodedDrive%3A" + $encodedMainPath.Substring(2)
+  $encodedHelperUri = "file:///$encodedDrive" + (($crossFileHelperPath -replace '\\', '/').Substring(1))
+  $didOpenEncoded = @{ jsonrpc = '2.0'; method = 'textDocument/didOpen'; params = @{ textDocument = @{ uri = $encodedMainUri; text = $crossFileMainSource } } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $didOpenEncoded
+  $encodedOpenDiag = Read-LspMessage $lspProc | ConvertFrom-Json
+  Assert-Equal 'encoded uri: diagnostics echo the uri the client sent' $encodedMainUri $encodedOpenDiag.params.uri
+  Assert-Equal 'encoded uri: a valid file with an on-disk import gets no false diagnostic' '0' "$($encodedOpenDiag.params.diagnostics.Count)"
+
+  $encodedHoverReq = @{ jsonrpc = '2.0'; id = 40; method = 'textDocument/hover'; params = @{ textDocument = @{ uri = $encodedMainUri }; position = @{ line = 3; character = 9 } } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $encodedHoverReq
+  $encodedHoverResp = Read-LspMessage $lspProc | ConvertFrom-Json
+  Assert-Equal 'encoded uri: cross-file hover resolves an import that is not open' 'fn add(a: int, b: int): int' $encodedHoverResp.result.contents.value
+
+  $encodedDefReq = @{ jsonrpc = '2.0'; id = 41; method = 'textDocument/definition'; params = @{ textDocument = @{ uri = $encodedMainUri }; position = @{ line = 3; character = 9 } } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $encodedDefReq
+  $encodedDefResp = Read-LspMessage $lspProc | ConvertFrom-Json
+  Assert-Equal 'encoded uri: cross-file definition points at the decoded real file' $encodedHelperUri $encodedDefResp.result.uri
+
+  # A document is identified by what its URI means, not its spelling: closing
+  # it with the unencoded spelling must remove the document opened with the
+  # encoded one (so a later request for it finds nothing).
+  $didCloseUnencoded = @{ jsonrpc = '2.0'; method = 'textDocument/didClose'; params = @{ textDocument = @{ uri = 'file:///' + $encodedMainPath } } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $didCloseUnencoded
+  Read-LspMessage $lspProc | Out-Null
+  Send-LspMessage $lspProc $encodedHoverReq
+  $encodedAfterCloseResp = Read-LspMessage $lspProc | ConvertFrom-Json
+  Assert-Equal 'encoded uri: closing by a differently-spelled uri removes the document' 'True' "$($null -eq $encodedAfterCloseResp.result)"
+
+  # A space in the directory name arrives as %20, and must round-trip through
+  # both directions (the helper lives in a directory with a space in it).
+  $spaceDir = Join-Path ([System.IO.Path]::GetTempPath()) ('lume uri spaces ' + [System.Guid]::NewGuid().ToString('N'))
+  New-Item -ItemType Directory -Path $spaceDir -Force | Out-Null
+  try {
+    Copy-Item -LiteralPath $crossFileHelperPath -Destination (Join-Path $spaceDir 'cross_file_lsp_helper.lume')
+    $spaceMainPath = (Join-Path $spaceDir 'main.lume') -replace '\\', '/'
+    $spaceMainUri = 'file:///' + $spaceMainPath.Substring(0, 1).ToLower() + '%3A' + ($spaceMainPath.Substring(2) -replace ' ', '%20')
+    $didOpenSpace = @{ jsonrpc = '2.0'; method = 'textDocument/didOpen'; params = @{ textDocument = @{ uri = $spaceMainUri; text = $crossFileMainSource } } } | ConvertTo-Json -Depth 10 -Compress
+    Send-LspMessage $lspProc $didOpenSpace
+    $spaceOpenDiag = Read-LspMessage $lspProc | ConvertFrom-Json
+    Assert-Equal 'encoded space: a valid file with an on-disk import gets no false diagnostic' '0' "$($spaceOpenDiag.params.diagnostics.Count)"
+    $spaceHoverReq = @{ jsonrpc = '2.0'; id = 42; method = 'textDocument/hover'; params = @{ textDocument = @{ uri = $spaceMainUri }; position = @{ line = 3; character = 9 } } } | ConvertTo-Json -Depth 10 -Compress
+    Send-LspMessage $lspProc $spaceHoverReq
+    $spaceHoverResp = Read-LspMessage $lspProc | ConvertFrom-Json
+    Assert-Equal 'encoded space: cross-file hover resolves through a path containing a space' 'fn add(a: int, b: int): int' $spaceHoverResp.result.contents.value
+    $spaceDefReq = @{ jsonrpc = '2.0'; id = 43; method = 'textDocument/definition'; params = @{ textDocument = @{ uri = $spaceMainUri }; position = @{ line = 3; character = 9 } } } | ConvertTo-Json -Depth 10 -Compress
+    Send-LspMessage $lspProc $spaceDefReq
+    $spaceDefResp = Read-LspMessage $lspProc | ConvertFrom-Json
+    Assert-Contains 'encoded space: a uri the server builds encodes the space' '/lume%20uri%20spaces%20' $spaceDefResp.result.uri
+  } finally {
+    Remove-Item -LiteralPath $spaceDir -Recurse -Force -ErrorAction SilentlyContinue
+  }
+
   # cross-file references: examples\cross_file_lsp_helper.lume also declares
   # add_three, which calls add(a, b) internally - a real occurrence inside
   # the imported file itself, not just its declaration. Three locations
@@ -2723,6 +2785,25 @@ try {
   Assert-Equal 'workspace/symbol returns an empty array when nothing matches' '0' "$($wsSymbolRespNoMatch.result.Count)"
 } finally {
   if (-not $wsSymbolProc.HasExited) { $wsSymbolProc.Kill() }
+}
+
+# Same fixture, but the workspace root arrives the way VS Code spells it
+# (lower-case drive, encoded colon). Before the URI-decoding fix the root
+# decoded to a nonexistent path and workspace/symbol silently found nothing.
+$wsEncodedRootPath = $wsSymbolRoot -replace '\\', '/'
+$wsEncodedRootUri = 'file:///' + $wsEncodedRootPath.Substring(0, 1).ToLower() + '%3A' + $wsEncodedRootPath.Substring(2)
+$wsEncodedProc = [System.Diagnostics.Process]::Start($wsSymbolPsi)
+try {
+  $wsEncodedInitReq = @{ jsonrpc = '2.0'; id = 1; method = 'initialize'; params = @{ rootUri = $wsEncodedRootUri } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $wsEncodedProc $wsEncodedInitReq
+  Read-LspMessage $wsEncodedProc | Out-Null
+  Send-LspMessage $wsEncodedProc '{"jsonrpc":"2.0","method":"initialized","params":{}}'
+  $wsEncodedReq = @{ jsonrpc = '2.0'; id = 2; method = 'workspace/symbol'; params = @{ query = 'alpha' } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $wsEncodedProc $wsEncodedReq
+  $wsEncodedResp = Read-LspMessage $wsEncodedProc | ConvertFrom-Json
+  Assert-Equal 'encoded rootUri: workspace/symbol still walks the real workspace' '2' "$($wsEncodedResp.result.Count)"
+} finally {
+  if (-not $wsEncodedProc.HasExited) { $wsEncodedProc.Kill() }
 }
 
 # lume debug: stepping, backtrace, locals, and a normal run staying unaffected.

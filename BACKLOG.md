@@ -10,7 +10,37 @@ and the exact compiler output, at commit `e7788cd` (`ai/lume-api.json`
 
 ## Pending
 
+None currently.
+
+## Resolved
+
 ### 9. `lume lsp` never percent-decodes `file://` URIs, so editors' default URI form breaks every disk-reading feature
+
+**Resolved:** `lspUriToPath` (`src/lume.cto`) now percent-decodes (over the
+UTF-8 bytes, so `%C3%A9` comes back as one character; a `%` not followed
+by two hex digits stays literal) *before* its drive-letter check, since
+`/c%3A/...` only has its colon at index 2 once decoded. `lspPathToUri` is
+the inverse and percent-encodes anything outside the RFC 3986 unreserved
+set plus `/` and the drive colon, so a path with a space or a non-ASCII
+character is a valid URI and the common `file:///C:/...` form is
+unchanged. Document identity moved from raw string equality to a
+normalised key (`lspUriKey`: the decoded path with only the drive letter
+folded to lower case - folding the whole path would conflate files on a
+case-sensitive system) in both `lspDocumentIndex` and
+`lspDocumentsRemove`, so a client's `file:///c%3A/x`, the server's own
+`file:///c:/x`, and `file:///C:/x` are one document. Stored keys stay
+whatever the client sent, so diagnostics still echo the client's own
+spelling. Verified against this item's own three reproductions (hover,
+`workspace/symbol`, and `publishDiagnostics` now give identical results
+for the encoded and unencoded spellings, with and without a space in the
+path) and checked in as `test.ps1` cases for an encoded colon, an encoded
+space, closing a document by a differently-spelled URI, and an encoded
+workspace root. One easy-to-miss Certo detail: the decoder's bounds check
+is a nested `if`, not `and`, because Certo's `and` does not
+short-circuit and would still read past the end of the byte buffer.
+Another: there is no `Int` -> one-byte constructor, so a decoded byte is
+the first byte of `Bytes.fromInt64LE`.
+
 
 Found while writing the VS Code extension's language client
 (`editors/vscode`). At commit `ae53bdd` (`ai/lume-api.json`
@@ -74,14 +104,15 @@ it by sending `Uri.toString(true)` (unencoded), guarded by a test in
 `editors/vscode/test/extension.test.js`; any other client has to
 rediscover that.
 
-**Suggested fix:** percent-decode in `lspUriToPath` (and encode in
+**Suggested fix:** ~~percent-decode in `lspUriToPath` (and encode in
 `lspPathToUri`) so the server round-trips whatever spelling the client
 uses, then compare document URIs after normalising both sides rather than
 as raw strings, since a client's `file:///c%3A/x` and the server's own
 `file:///c:/x` for the same file would otherwise stop matching. Once that
-lands, the extension's `toServerUri` workaround can be dropped.
-
-## Resolved
+lands, the extension's `toServerUri` workaround can be dropped.~~ Done as
+described, except the extension's `toServerUri` workaround is deliberately
+kept: it costs nothing against a fixed server and keeps the extension working
+against an older `lume.exe` that still lacks the decoding.
 
 ### 8. `T?` (`Option<T>` postfix sugar) silently corrupts the parse of everything after it instead of being rejected
 
