@@ -1295,6 +1295,40 @@ if ($LASTEXITCODE -ne 0) { throw "bytecode exited $LASTEXITCODE" }
 if (-not (($bytecode -join "`n") -match 'mul')) { throw 'bytecode did not contain mul' }
 Write-Host 'PASS bytecode'
 
+# `lume bytecode <file.lbc>`: lists a built artifact without running it. The
+# listing must match what the same program prints from source, a corrupt
+# artifact is rejected with the decoder's own error, and an artifact from a
+# different compiler build is still shown (with a note) rather than refused -
+# the whole point is being able to look at one exec has rejected.
+$lbcInspectSource = Join-Path $PSScriptRoot 'examples\arithmetic.lume'
+$lbcInspectArtifact = Join-Path $PSScriptRoot 'dist\bytecode-inspect.lbc'
+& $Lume build $lbcInspectSource $lbcInspectArtifact | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "bytecode-inspect build exited $LASTEXITCODE" }
+$fromSource = (& $Lume bytecode $lbcInspectSource) -join "`n"
+$fromArtifact = (& $Lume bytecode $lbcInspectArtifact) -join "`n"
+if ($LASTEXITCODE -ne 0) { throw "bytecode on an .lbc exited $LASTEXITCODE" }
+Assert-Equal 'bytecode <file.lbc>: lists the same instructions the source does' $fromSource $fromArtifact
+
+$lbcBytes = [IO.File]::ReadAllBytes($lbcInspectArtifact)
+$lbcTruncatedPath = Join-Path $PSScriptRoot 'dist\bytecode-inspect-truncated.lbc'
+[IO.File]::WriteAllBytes($lbcTruncatedPath, $lbcBytes[0..99])
+$lbcTruncatedOut = & $Lume bytecode $lbcTruncatedPath 2>&1
+if ($LASTEXITCODE -ne 1) { throw "bytecode on a truncated .lbc should exit 1" }
+Assert-Contains 'bytecode <file.lbc>: a truncated artifact is rejected with E0401' 'E0401' ($lbcTruncatedOut -join "`n")
+
+$lbcMissingOut = & $Lume bytecode (Join-Path $PSScriptRoot 'dist\no-such-artifact.lbc') 2>&1
+if ($LASTEXITCODE -ne 1) { throw "bytecode on a missing .lbc should exit 1" }
+Assert-Contains 'bytecode <file.lbc>: a missing artifact reports E0405' 'E0405' ($lbcMissingOut -join "`n")
+
+$lbcOtherBuild = $lbcBytes.Clone()
+$lbcOtherBuild[70] = [byte][char]'Z'
+$lbcOtherBuildPath = Join-Path $PSScriptRoot 'dist\bytecode-inspect-otherbuild.lbc'
+[IO.File]::WriteAllBytes($lbcOtherBuildPath, $lbcOtherBuild)
+$lbcOtherBuildOut = & $Lume bytecode $lbcOtherBuildPath 2>&1
+if ($LASTEXITCODE -ne 0) { throw "bytecode on an other-build .lbc should still exit 0, got $LASTEXITCODE" }
+Assert-Contains 'bytecode <file.lbc>: an other-build artifact is noted, not refused' 'different compiler build' ($lbcOtherBuildOut -join "`n")
+Assert-Contains 'bytecode <file.lbc>: an other-build artifact still lists its instructions' 'const_int' ($lbcOtherBuildOut -join "`n")
+
 # Opcode table (SPEC.md section 17, "Opcode reference"). Opcodes are plain
 # strings, not an enum, so nothing else stops the compiler from emitting one
 # the spec doesn't know about, or the spec from listing one that no longer
