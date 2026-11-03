@@ -1997,16 +1997,26 @@ things rather than writing the obvious thing.
   plausibly because ten smaller per-function scans beat one very long
   one - not root-caused further here, a number on record rather than a
   full investigation;
-- publish results across representative hardware — not closeable from
-  a single session on a single machine, which is all this has ever had
-  access to. Every number in `BENCHMARKS.md`, from its very first
-  checkpoint, was measured on the same one machine, undocumented until
-  now - `BENCHMARKS.md`'s new "Hardware environment" section records
-  that machine's own specs (as the honest single-machine baseline, not
-  a claim of "representative hardware") and a concrete reproduction
-  path, so a second machine's numbers land in a comparable table
-  instead of a disconnected one-off whenever someone runs them. Still
-  open until a genuinely different machine class actually reports in.
+- ~~publish results across representative hardware~~ — met to the bar
+  `BENCHMARKS.md` set for this item ("at least one genuinely different
+  machine class"), not beyond it. Every number in the file used to come
+  from one machine; a manual, dispatch-only workflow
+  (`.github/workflows/benchmarks.yml`, `benchmark-report.ps1`) now runs
+  the benchmark scripts on a GitHub-hosted `windows-latest` runner - an
+  AMD EPYC 9V74 virtual machine, 2 cores / 16 GB, against the maintainer's
+  Intel Core Ultra 9 laptop - and records the hardware it ran on. Three
+  separate VMs, all reporting that same CPU: every one of the 27
+  individual repeats met the 10,000 lines/second target (the slowest at
+  53,113 lines/second), the runner compiles about 36-47% slower than the
+  maintainer's machine, and the VMs differ from each other by 17-27%
+  while repeats within one VM agree to 1.6-9% - so a single dispatch
+  understates the variability. Results and the full list of caveats are in
+  `BENCHMARKS.md`'s "Second machine class" section. **Not covered:** more
+  than one CPU model, ARM, Linux or macOS (the toolchain is Windows-only
+  today), and slower physical hardware - so this is one extra machine
+  class, not a hardware matrix. The first idea considered, running the
+  benchmarks in a local Docker container, was rejected: it runs on the
+  same CPU, so it is not a different machine.
 
 The roadmap target remains 10,000 lines in under 10 ms. It should not be
 presented as achieved until the implementation meets the benchmark contract.
