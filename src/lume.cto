@@ -5723,7 +5723,64 @@ fn callBuiltin(code: List<Instruction>, name: Text, input: List<Text>, deadlineM
   }
 }
 
-fn execute(code: List<Instruction>): RunResult [io] = {
+fn enclosingFunction(code: List<Instruction>, ip: Int): Text = {
+  var index = ip
+  var name = "?"
+  var found = false
+  while index >= 0 and not found {
+    val item = List.getOrPanic(code, index)
+    if Text.eq(item.op, "function") then {
+      name = beforePipe(item.text)
+      found = true
+    } else { index = index - 1 }
+  }
+  name
+}
+
+fn containsLine(lines: List<Int>, line: Int): Bool = {
+  var found = false
+  for candidate in lines { if candidate == line then { found = true } }
+  found
+}
+
+// Debugger output goes to stderr so the debuggee's own stdout stays
+// separable. Frames are derived from returnAddresses: each saved address is
+// the instruction after a call, so the call site is one before it.
+fn debugBacktrace(code: List<Instruction>, ip: Int, returnAddresses: List<Int>): Unit [io] = {
+  val current = List.getOrPanic(code, ip)
+  eprintln("  #" ++ intToText(List.len(returnAddresses)) ++ " " ++ enclosingFunction(code, ip) ++ " line " ++ intToText(current.line))
+  var index = List.len(returnAddresses) - 1
+  while index >= 0 {
+    val site = List.getOrPanic(returnAddresses, index) - 1
+    eprintln("  #" ++ intToText(index) ++ " " ++ enclosingFunction(code, site) ++ " line " ++ intToText(List.getOrPanic(code, site).line))
+    index = index - 1
+  }
+}
+
+fn debugLocals(variables: Bindings, depth: Int): Unit [io] = {
+  val prefix = scopedName(depth, "")
+  var index = 0
+  while index < List.len(variables.names) {
+    val name = List.getOrPanic(variables.names, index)
+    if Text.startsWith(name, prefix) then {
+      eprintln("  " ++ Text.slice(name, Text.len(prefix), Text.len(name)) ++ " = " ++ display(List.getOrPanic(variables.values, index)))
+    }
+    index = index + 1
+  }
+}
+
+fn execute(code: List<Instruction>): RunResult [io] = executeWith(code, false, [])
+
+// `debugging` is false for every normal run; the per-instruction cost then is
+// one Bool test. When true, execution pauses before main's first
+// instruction and at breakpoints/steps, reading commands from stdin:
+// c(ontinue) s(tep in) n(ext) o(ut) bt locals p <name> q(uit).
+fn executeWith(code: List<Instruction>, debugging: Bool, breakLines: List<Int>): RunResult [io] = {
+  var debugActive = debugging
+  var stepMode = "step"
+  var stepDepth = 0
+  var lastLine = -1
+  var lastDepth = -1
   var stack: List<Text> = []
   var variables = Bindings { names: [], values: [] }
   var returnAddresses: List<Int> = []
@@ -5737,6 +5794,54 @@ fn execute(code: List<Instruction>): RunResult [io] = {
   while ip < List.len(code) and running and Text.eq(problem, "") {
     val current = List.getOrPanic(code, ip)
     var advance = true
+    if debugActive and current.line > 0 and (current.line != lastLine or depth != lastDepth) then {
+      lastLine = current.line
+      lastDepth = depth
+      var stop = containsLine(breakLines, current.line)
+      if Text.eq(stepMode, "step") then { stop = true }
+      else if Text.eq(stepMode, "next") and depth <= stepDepth then { stop = true }
+      else if Text.eq(stepMode, "out") and depth < stepDepth then { stop = true }
+      if stop then {
+        eprintln("stopped in " ++ enclosingFunction(code, ip) ++ " at line " ++ intToText(current.line))
+        var waiting = true
+        while waiting {
+          if let Some(raw) = readLine() {
+            val command = Text.trim(raw)
+            if Text.eq(command, "c") then {
+              stepMode = "run"
+              waiting = false
+            }
+            else if Text.eq(command, "s") then {
+              stepMode = "step"
+              waiting = false
+            }
+            else if Text.eq(command, "n") then {
+              stepMode = "next"
+              stepDepth = depth
+              waiting = false
+            }
+            else if Text.eq(command, "o") then {
+              stepMode = "out"
+              stepDepth = depth
+              waiting = false
+            }
+            else if Text.eq(command, "bt") then { debugBacktrace(code, ip, returnAddresses) }
+            else if Text.eq(command, "locals") then { debugLocals(variables, depth) }
+            else if Text.startsWith(command, "p ") then {
+              val wanted = Text.trim(Text.slice(command, 2, Text.len(command)))
+              if let Some(value) = getBinding(variables, scopedName(depth, wanted)) { eprintln("  " ++ wanted ++ " = " ++ display(value)) }
+              else { eprintln("  no local `" ++ wanted ++ "`") }
+            }
+            else if Text.eq(command, "q") then { Process.quit(0) }
+            else { eprintln("commands: c s n o bt locals p <name> q") }
+          } else {
+            stepMode = "run"
+            debugActive = false
+            waiting = false
+          }
+        }
+      }
+    }
     if Text.eq(current.op, "const_int") then { stack = List.push(stack, intValue(current.number)) }
     else if Text.eq(current.op, "const_str") then { stack = List.push(stack, textValue(current.text)) }
     else if Text.eq(current.op, "const_bool") then { stack = List.push(stack, boolValue(current.number == 1)) }
@@ -8864,6 +8969,7 @@ fn usage(): Unit [io] = {
   println("       lume check|tokens|bytecode <file.lume>")
   println("       lume bytecode <file.lbc>")
   println("       lume build <file.lume> [output.lbc]")
+  println("       lume debug <file.lume> [--break line,line]")
   println("       lume exec <file.lbc>")
   println("       lume benchmark <file.lume> [iterations]")
   println("       lume profile <file.lume> [iterations]")
@@ -9049,6 +9155,17 @@ fn main(): Unit [io] = {
           eprintln(artifact.problem)
           Process.quit(1)
         } else { runCode(artifact.code) }
+      } else if Text.eq(command, "debug") then {
+        var breakLines: List<Int> = []
+        for part in Text.split(flagValue("--break") ?? "", ",") {
+          if let Some(line) = parseInt(Text.trim(part)) { breakLines = List.pushMut(breakLines, line) }
+        }
+        val outcome = executeWith(compiled.code, true, breakLines)
+        if Text.eq(outcome.problem, "") then { Process.quit(outcome.code) }
+        else {
+          eprintln(outcome.problem)
+          Process.quit(1)
+        }
       } else if Text.eq(command, "build") then {
         val output = arg(3) ?? cachePath(path)
         val saveProblem = saveArtifact(output, combinedSource, compiled.code)

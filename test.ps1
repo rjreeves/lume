@@ -2725,4 +2725,17 @@ try {
   if (-not $wsSymbolProc.HasExited) { $wsSymbolProc.Kill() }
 }
 
+# lume debug: stepping, backtrace, locals, and a normal run staying unaffected.
+$debugTarget = Join-Path $PSScriptRoot 'examples\debug_target.lume'
+$debugOut = "s`ns`ns`ns`nbt`nlocals`np n`nc`n" | & $Lume debug $debugTarget 2>&1
+if ($LASTEXITCODE -ne 0) { throw "debug exited $LASTEXITCODE" }
+$debugText = $debugOut -join "`n"
+Assert-Contains 'debug stops at main entry' 'stopped in main at line 6' $debugText
+Assert-Contains 'debug steps into a callee' 'stopped in double at line' $debugText
+Assert-Contains 'debug backtrace shows the call site' '#0 main line 8' $debugText
+Assert-Contains 'debug prints a local' 'n = 21' $debugText
+Assert-Contains 'debug lets the program finish with its own output' '42' $debugText
+$debugBreak = "c`nc`n" | & $Lume debug $debugTarget --break 3 2>&1
+Assert-Contains 'debug honors --break' 'stopped in double at line 3' ($debugBreak -join "`n")
+
 Write-Host 'All Lume smoke tests passed.'
