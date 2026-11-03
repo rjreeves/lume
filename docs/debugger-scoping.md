@@ -125,3 +125,41 @@ Closures print as `<closure>`, function references as `fn name`, maps as
 `<map of N>`; nesting is cut at depth 3 with `...`. Other kinds (bytes,
 process results, durations-as-other-kinds) print as `<k>` and are not
 specially rendered. Covered by `examples/debug_values.lume` in `test.ps1`.
+
+## Milestone 3 result
+
+`lume debug <file> --dap` speaks the Debug Adapter Protocol over stdio, using
+the language server's `lspReadMessage`/`lspWriteMessage` framing. Supported
+requests: `initialize`, `launch` (`program`, `stopOnEntry`), `setBreakpoints`
+(line only), `configurationDone`, `threads` (one), `stackTrace`, `scopes`
+(one "Locals" scope per frame), `variables`, `evaluate` (local name only),
+`continue`, `next`, `stepIn`, `stepOut`, `disconnect`/`terminate`. Anything
+else gets an empty success response.
+
+Design points:
+- The debug hook in `execute` calls `dapStopLoop` at each stop, which emits
+  `stopped` and serves requests until one resumes execution. Frame ids are
+  call depths, so a frame's locals are the bindings under that depth.
+- The stdout-contention risk is resolved: in DAP mode the `print`/`eprint`
+  ops send `output` events (`emitOutput`) instead of writing to stdout.
+  `print` inside `callPure` (the pure-call interpreter) is not redirected.
+- After the program ends the adapter sends `exited` and `terminated`, then
+  waits for `disconnect`.
+- Covered by a scripted session in `test.ps1` (12 assertions).
+
+Limits: every message is sent with `seq` 0; breakpoints match by line across
+the whole combined source (`use`d modules are not distinguished); `pause` is
+acknowledged but cannot interrupt a running program (single-threaded
+adapter); no conditional breakpoints or watch expressions; `--dap` text
+still reaches the program's `args`.
+
+**Framing bug, found and fixed:** on Windows the shared writer
+(`lspWriteMessage`, used by both the language server and the DAP adapter)
+emitted headers as `Content-Length: N CR CR LF CR CR LF`: its explicit CR plus
+the CRT's own newline -> CR LF expansion. Strict clients cannot parse that;
+the existing tests missed it because their reader skips every CR. The writer
+now emits bare newlines and relies on the text-mode expansion (this toolchain
+is Windows-only today), giving the required `CR LF CR LF`. `test.ps1` now reads
+the raw header bytes for both `lume lsp` and `lume debug --dap` and rejects a
+doubled CR (verified to fail against the pre-fix binary). Still unverified
+against a real client such as VS Code.
