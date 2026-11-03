@@ -7284,6 +7284,71 @@ fn installPackages(dir: Text, checkOnly: Bool, forceUpdate: Bool): Unit [io] = {
 
 fn compileSource(source: Text): CompileResult = compile(lex(source))
 
+// Where lumeEmbedCall keeps compiled artifacts between calls: a per-user,
+// content-addressed directory under the same LUME_HOME / USERPROFILE / HOME
+// base the git-dependency cache uses (gitCacheRoot). "" means "don't cache"
+// - no base directory is set, or LUME_EMBED_CACHE=0 - and lumeEmbedCall then
+// behaves exactly as it did before this cache existed.
+fn embedCacheDir(): Text = {
+  if Text.eq(getEnv("LUME_EMBED_CACHE") ?? "", "0") then { "" }
+  else {
+    val base = if let Some(lumeHome) = getEnv("LUME_HOME") { lumeHome }
+               else if let Some(userProfile) = getEnv("USERPROFILE") { userProfile }
+               else if let Some(home) = getEnv("HOME") { home }
+               else { "" }
+    if Text.eq(base, "") then { "" }
+    else { Path.join(Text.replace(base, "\\", "/"), ".lume/cache/embed") }
+  }
+}
+
+// Plain hit/code pair, not Option<List<Instruction>> - same shape (and same
+// reason) as GitResolution above: avoid wrapping a multi-field value in
+// Option.
+type EmbedCacheEntry = { hit: Bool, code: List<Instruction> }
+
+// A cache hit requires the same two things compileOrCache requires of a
+// `lume run` cache hit - the artifact header's source hash matches this
+// source, and its compiler build hash matches this build - plus a clean
+// full decode, so a partially written file (a concurrent writer, a crash
+// mid-write) fails structural validation and is simply a miss, never a
+// wrong program. The 140-byte header is read first on its own so a miss
+// costs one tiny read, not a full artifact.
+fn embedCacheLookup(path: Text, hash: Text): EmbedCacheEntry [io] = {
+  if let Some(headerBytes) = readFileBytesRange(path, 0, 140) {
+    val header = decodeArtifactHeader(headerBytes)
+    if Text.eq(header.problem, "") and Text.eq(header.sourceHash, hash) and Text.eq(header.buildHash, compilerBuildHash()) then {
+      if let Some(content) = readFileBytes(path) {
+        val decoded = decodeArtifact(content)
+        if Text.eq(decoded.problem, "") then { EmbedCacheEntry { hit: true, code: decoded.code } }
+        else { EmbedCacheEntry { hit: false, code: [] } }
+      } else { EmbedCacheEntry { hit: false, code: [] } }
+    } else { EmbedCacheEntry { hit: false, code: [] } }
+  } else { EmbedCacheEntry { hit: false, code: [] } }
+}
+
+// Deliberately not compileOrCache: compileAndCache folds a failed cache
+// write into the result's `problem`, which here would turn an unwritable
+// home directory into a failed call - and working around that by
+// recompiling would double the compile cost on every call. A cache problem
+// of any kind is just a miss; only a genuine compile error is ever reported.
+fn embedCompile(source: Text): CompileResult [io] = {
+  val dir = embedCacheDir()
+  if Text.eq(dir, "") then { compileSource(source) }
+  else {
+    val hash = Crypto.sha256(source)
+    val path = Path.join(dir, hash ++ ".lbc")
+    val cached = embedCacheLookup(path, hash)
+    if cached.hit then { CompileResult { code: cached.code, problem: "" } }
+    else {
+      val compiled = compileSource(source)
+      if Text.eq(compiled.problem, "") and makeDir(dir) then {
+        val ignoredSaveProblem = saveArtifact(path, source, compiled.code)
+      }
+      compiled
+    }
+  }
+}
+
 // The C ABI embedding entry point - exported as `certo_lume_embed_call`
 // once this file is built with `certo build src/lume.cto --emit-dll`
 // (this file has zero other `pub fn`s, confirmed via `grep -c "^pub fn "`,
@@ -7297,10 +7362,10 @@ fn compileSource(source: Text): CompileResult = compile(lex(source))
 // through this C ABI, because the Lume-level contract is identical
 // either way - only the transport differs.
 //
-// Compiles `source` fresh on every call (no cross-call artifact
-// caching) - a real performance cost for a host calling repeatedly,
-// deliberately deferred rather than solved here; proving the
-// mechanism works comes first. Returns a JSON envelope built the same
+// Compiles `source` through embedCompile, which reuses a compiled artifact
+// cached on disk from an earlier call with the same source (compilation was
+// 75-93% of a call's cost, measured) instead of recompiling every time.
+// Returns a JSON envelope built the same
 // way apiManifest()/computeLockContent already build theirs
 // (Json.object/JsonValue.set/Json.stringify), not hand-rolled string
 // concatenation, so result-string escaping is correct for free:
@@ -7309,7 +7374,7 @@ fn compileSource(source: Text): CompileResult = compile(lex(source))
 // matching the {"ok":...}/error(code, message) envelope convention
 // Certo's own certo-capi crate already uses (crates/capi/src/api.rs).
 pub fn lumeEmbedCall(source: Text, fnName: Text, rawArg: Text, timeoutMs: Int): Text = {
-  val compiled = compileSource(source)
+  val compiled = embedCompile(source)
   if not Text.eq(compiled.problem, "") then {
     val envelope = Json.object()
     JsonValue.set(envelope, "ok", Json.bool(false))
