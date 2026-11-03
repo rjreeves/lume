@@ -143,9 +143,9 @@ built-in server:
 ```
 
 It's a persistent stdio JSON-RPC server backed by the real compiler's
-declaration data, not a thin wrapper: live diagnostics (including one level
-of `use`-import resolution, so a multi-file project doesn't show spurious
-errors), go-to-definition, hover, find-references, rename, document and
+declaration data, not a thin wrapper: live diagnostics (including `use`
+imports followed transitively, so a multi-file project doesn't show
+spurious errors), go-to-definition, hover, find-references, rename, document and
 workspace symbols, unfiltered name/builtin completion, and three quickfix
 code actions (insert a missing `fn main`, add a missing `use` import,
 "did you mean" for a misspelled builtin or local function) — definition,
