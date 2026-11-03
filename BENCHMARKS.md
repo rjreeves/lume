@@ -17,13 +17,14 @@ else without asking. Recorded now, not backfilled with guesses:
 | OS | Windows 11 Pro, build 10.0.26200, 64-bit |
 | Toolchain | Certo release build (`cargo build --release`), clang/lld-link Windows target |
 
-This is one machine, not "representative hardware" in the sense the
-roadmap item means - the roadmap explicitly wants results *across*
-multiple different machines, which this session has no access to
-beyond this one. What's recorded here is the honest single-machine
-baseline plus a reproduction path (below), so a second machine's
-numbers - whenever someone runs them - land in a comparable table
-instead of a disconnected one-off.
+This table is the maintainer's machine, and every checkpoint above
+this point was measured on it alone. It is no longer the only machine
+measured: a second machine class (a GitHub-hosted `windows-latest`
+runner, a cloud AMD EPYC virtual machine) is recorded in "Second
+machine class: a GitHub-hosted runner" at the end of this file, in the
+same comparable form. Two classes is still short of "representative
+hardware" in the full sense - see that section for exactly what it does
+and doesn't cover.
 
 ### Reproducing these numbers on another machine
 
@@ -49,12 +50,20 @@ instead of a disconnected one-off.
    the scripts already default to (this file's own "at least 30 runs"
    contract), not a single sample.
 
+On a GitHub-hosted `windows-latest` runner, steps 1-4 are automated:
+`gh workflow run benchmarks.yml` (optionally `-f repeat=N`,
+`-f extended=true`) builds Certo and Lume, runs the scripts through
+`benchmark-report.ps1`, records the machine's hardware table, and
+publishes the report to the run summary and as a `benchmark-report`
+artifact. It is `workflow_dispatch` only - nothing runs it on its own.
+
 A meaningful hardware comparison needs at least one genuinely
 different machine class (different CPU architecture/generation, not
 just a second Windows box with similar specs) to say anything the
 single-machine numbers here don't already show - noted so a future
 contributor knows what "done" looks like for this item, not just that
-a second number exists.
+a second number exists. That bar has now been met once, by the runner
+described in the last section of this file.
 
 ## Compiler measurements
 
@@ -2452,3 +2461,91 @@ built to 695,808 bytes, current builds to 752,640 bytes (+56,832 bytes,
 +8.2%) - but that's the expected cost of the actual shipped features
 (the hand-authored `builtinDocs()` table covering 113+ builtins, GPG
 verification, semver parsing), not evidence of anything unintended.
+
+## Second machine class: a GitHub-hosted runner (2026-11-03)
+
+Until now every number in this file came from one machine. The ROADMAP's
+"publish results across representative hardware" item needs at least one
+genuinely different machine class (see "Reproducing these numbers on
+another machine" above), so `.github/workflows/benchmarks.yml` was added
+to run the repo's own benchmark scripts on a GitHub-hosted
+`windows-latest` runner. It is `workflow_dispatch` only, and
+`benchmark-report.ps1` runs each script three times and records the
+hardware it ran on. It was dispatched three times (runs 41567614212,
+41568337471, 41568341620, all successful), so the results below are
+three separate virtual machines, not one machine measured three times.
+
+### Hardware
+
+All three runs reported identical hardware:
+
+| Component | Maintainer's machine | GitHub-hosted runner (all 3 VMs) |
+| --- | --- | --- |
+| CPU | Intel(R) Core(TM) Ultra 9 275HX | AMD EPYC 9V74 80-Core Processor |
+| Cores / logical | 24 / 24 | 2 / 4 |
+| RAM | 31.3 GB | 16 GB |
+| Storage | NVMe SSD | Microsoft NVMe Direct Disk v2 (SSD) |
+| OS | Windows 11 Pro | Windows Server 2025 Datacenter, build 26100, 64-bit |
+| Machine | physical | Microsoft Corporation Virtual Machine |
+
+A different vendor, a different CPU generation, a server part instead of
+a laptop part, and virtualized - the bar this file set for "genuinely
+different". The toolchain is the same: a Certo release build
+(`cargo build --release -p certo`) driving clang/lld-link.
+
+### Results
+
+Mean of each VM's three repeats. Compile time in ms, throughput in lines
+per second. The maintainer's column is a single run of the same report
+script on 2026-11-03.
+
+| Benchmark | Maintainer's machine | VM 1 | VM 2 | VM 3 | Runner mean vs maintainer |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 10,000 trivial lines, compile ms | 28.1 | 41.4 | 36.5 | 46.4 | 1.47x |
+| 10,000 trivial lines, lines/s | 355,872 | 241,813 | 274,585 | 215,937 | 0.69x |
+| 10,000-line feature mix, compile ms | 125.3 | 168.1 | 157.8 | 186.1 | 1.36x |
+| 10,000-line feature mix, lines/s | 79,829 | 59,495 | 63,366 | 53,724 | 0.74x |
+| Generic dispatch, compile ms | 92.2 | 132.0 | 123.7 | 144.8 | 1.45x |
+| Generic dispatch, lines/s | 108,519 | 75,743 | 80,846 | 69,066 | 0.69x |
+
+### What this shows
+
+- **Every one of the 27 individual repeats met the 10,000 lines/second
+  target.** The slowest single repeat was 53,113 lines/second, more than
+  5x the target, on a 2-core virtual machine.
+- **The runner compiles about 36-47% slower than the maintainer's
+  machine** (1.36x-1.47x the compile time, averaged over the three VMs).
+  The compiler appears to be single-threaded, so the likely cause is
+  single-core speed rather than the core count - an inference from the
+  hardware, not something measured here.
+- **The VMs differ from each other far more than one VM differs from
+  itself.** The three VMs' means differ by 17-27% on the compile
+  benchmarks, while the three repeats within a single VM agreed to
+  1.6-9%. All three VMs reported the same CPU model, so this is
+  VM-to-VM variation (host load, neighbours), not different hardware.
+  A single dispatch would have understated the real variability, which
+  is why this section uses three. Two of the three runs started two
+  seconds apart and may have competed for the same host; that was not
+  controlled.
+- **`benchmark.ps1`'s check/run timings are left out of the conclusion.**
+  They read 11.0-14.0 ms on the runner against 10.1-10.6 ms on the
+  maintainer's machine in the same report, but that benchmark is
+  dominated by process-spawn cost, and this same machine has measured
+  12.8-13.5 ms in another session (see the 2026-09-29 entry above) - the
+  gap is inside noise already seen locally.
+
+### What this does not show
+
+- **One CPU model.** Three VMs, one EPYC 9V74 - one extra machine class,
+  not a range of them.
+- **x86-64 and Windows only.** Nothing here speaks to ARM, Linux or
+  macOS; the toolchain is Windows-only today.
+- **No slower physical hardware.** A low-end laptop or older desktop
+  would be a different question from a cloud server part.
+- **The maintainer's column is a single run.**
+
+### Reproducing
+
+`gh workflow run benchmarks.yml`, optionally with `-f repeat=N` and
+`-f extended=true` for the larger and incremental benchmarks. Dispatch it
+more than once: as above, one VM is not a stable estimate.
