@@ -104,6 +104,9 @@ fn main(args: [str]) -> int {
 - [BENCHMARKS.md](BENCHMARKS.md) — how the goals must be tested
 - [src/lume.cto](src/lume.cto) — lexer, parser, bytecode emitter, and VM in Certo
 - [lsp/](lsp/) — editor language server (diagnostics, completion, hover, definitions, formatting)
+- [editors/vscode](editors/vscode/README.md) — VS Code extension that launches `lume debug --dap`
+- [docs/](docs) — practical guide, generated builtin reference, debugger scoping
+- [ai/](ai) — generation contract, machine-readable API, and the fixed evaluation tasks
 
 ## Build the bootstrap compiler
 
@@ -1019,9 +1022,10 @@ execution:
 .\benchmark.ps1 -Iterations 100
 ```
 
-The `LBC4` artifact is a compact length-prefixed binary file. It records a
-SHA-256 source hash, instruction count, source lines for diagnostics, and VM
-instructions. The decoder validates every record boundary and rejects corrupt,
+The `LBC5` artifact is a compact length-prefixed binary file. It records a
+SHA-256 source hash, a hash of the compiler build that wrote it (so a `lume.exe`
+upgrade invalidates stale caches even when the source is unchanged), instruction
+count, source lines for diagnostics, and VM instructions. The decoder validates every record boundary and rejects corrupt,
 truncated, or unsupported files. `.lbc` files are ignored by Git because they
 are reproducible build products.
 
