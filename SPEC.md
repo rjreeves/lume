@@ -1077,7 +1077,8 @@ the only authoritative list — `test.ps1` checks it two ways: every opcode
 `lume bytecode` emits across the example programs must appear here, and
 every opcode listed here must still exist in the compiler source. There are
 45. `lume bytecode <file.lume>` prints one instruction per line as
-`index  op  text  number`.
+`index  op  text  number`; `lume bytecode <file.lbc>` prints the same listing
+for an already-built artifact, without running it.
 
 How to read the table:
 

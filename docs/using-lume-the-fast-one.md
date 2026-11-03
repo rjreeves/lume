@@ -106,16 +106,28 @@ lume run <file.lume> [args...]
 lume check <file.lume>
 lume tokens <file.lume>
 lume bytecode <file.lume>
+lume bytecode <file.lbc>
 lume build <file.lume> [output.lbc]
 lume exec <file.lbc>
 lume benchmark <file.lume> [iterations]
+lume profile <file.lume> [iterations]
 lume test <file.lume|dir> [--filter text] [--ignore names]
 lume fmt <file.lume> [--check]
-lume install <dir>
+lume install <dir> [--check]
+lume migrate <dir>
 lume lsp
 lume api
+lume api-docs
 lume ai-reference
+lume version
 ```
+
+`lume bytecode` lists a program's instructions, one per line, either by
+compiling a `.lume` file or by decoding an already-built `.lbc` artifact
+without running it. For an artifact built by a different compiler build, it
+still shows the listing (with a note on stderr) even though `exec` would
+reject it, so you can look at one to find out why. The opcodes it prints are
+documented in SPEC section 17.
 
 Use `check` in fast feedback loops: it validates a program without running its
 effects. Add `--json` to `check`/`fmt --check`/`test` for machine-readable

@@ -6079,6 +6079,33 @@ fn loadArtifact(path: Text): ArtifactResult [io] = {
   else { ArtifactResult { code: [], sourceHash: "", buildHash: "", problem: "E0405 cannot read bytecode artifact `" ++ path ++ "`" } }
 }
 
+// `lume bytecode <file.lbc>`: list an artifact's instructions without
+// running it, in the same `index  op  text  number` form `lume bytecode
+// <file.lume>` prints. Goes through decodeArtifact - the same structural
+// validation (E0401-E0403) exec relies on - but deliberately NOT through
+// loadArtifact's build-hash check: refusing to *show* an artifact because a
+// different compiler built it would defeat the main reason to inspect one
+// (working out why exec rejected it). A mismatch is reported as a note on
+// stderr instead, so stdout stays a clean listing, and the exit code is 0 -
+// the artifact decoded fine, it just wouldn't run here.
+fn printArtifact(path: Text): Unit [io] = {
+  if let Some(content) = readFileBytes(path) {
+    val decoded = decodeArtifact(content)
+    if not Text.eq(decoded.problem, "") then {
+      eprintln(decoded.problem)
+      Process.quit(1)
+    } else {
+      if not Text.eq(decoded.buildHash, compilerBuildHash()) then {
+        eprintln("note: `" ++ path ++ "` was built by a different compiler build, so `lume exec` would reject it (E0406)")
+      }
+      printCode(decoded.code)
+    }
+  } else {
+    eprintln("E0405 cannot read bytecode artifact `" ++ path ++ "`")
+    Process.quit(1)
+  }
+}
+
 fn importedModules(source: Text): List<Text> = {
   val tokens = lex(source)
   var modules: List<Text> = []
@@ -8770,6 +8797,7 @@ fn usage(): Unit [io] = {
   println("lume " ++ lumeVersion())
   println("usage: lume run <file.lume> [args...]")
   println("       lume check|tokens|bytecode <file.lume>")
+  println("       lume bytecode <file.lbc>")
   println("       lume build <file.lume> [output.lbc]")
   println("       lume exec <file.lbc>")
   println("       lume benchmark <file.lume> [iterations]")
@@ -8872,6 +8900,8 @@ fn main(): Unit [io] = {
       eprintln(artifact.problem)
       Process.quit(1)
     } else { runCode(artifact.code) }
+  } else if Text.eq(command, "bytecode") and Text.endsWith(path, ".lbc") then {
+    printArtifact(path)
   } else if Text.eq(command, "install") then {
     installPackages(path, hasFlag("--check"), hasFlag("--update"))
   } else if Text.eq(command, "migrate") then {
