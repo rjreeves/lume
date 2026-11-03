@@ -108,6 +108,7 @@ lume tokens <file.lume>
 lume bytecode <file.lume>
 lume bytecode <file.lbc>
 lume build <file.lume> [output.lbc]
+lume debug <file.lume> [--break line,line | --dap]
 lume exec <file.lbc>
 lume benchmark <file.lume> [iterations]
 lume profile <file.lume> [iterations]
@@ -128,6 +129,10 @@ without running it. For an artifact built by a different compiler build, it
 still shows the listing (with a note on stderr) even though `exec` would
 reject it, so you can look at one to find out why. The opcodes it prints are
 documented in SPEC section 17.
+
+`lume debug` steps through a program line by line from stdin (breakpoints, call stack,
+locals, value printing); with `--dap` it serves the Debug Adapter Protocol for editors.
+See `docs/debugger-scoping.md` for scope and limits.
 
 Use `check` in fast feedback loops: it validates a program without running its
 effects. Add `--json` to `check`/`fmt --check`/`test` for machine-readable
