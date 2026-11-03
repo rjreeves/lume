@@ -2450,6 +2450,28 @@ try {
     Remove-Item -LiteralPath $spaceDir -Recurse -Force -ErrorAction SilentlyContinue
   }
 
+  # Diagnostics follow imports transitively. examples\modules.lume imports
+  # modules\stats.lume, which itself imports modules\math.lume. Only the
+  # direct import's text used to be spliced into the diagnostic compile, so
+  # this valid, runnable program got a false "unknown function
+  # `stats.sum_of_squares`" - in every URI spelling (it is not a URI issue).
+  $nestedPath = Join-Path $PSScriptRoot 'examples\modules.lume'
+  $nestedUri = 'file:///' + ($nestedPath -replace '\\', '/')
+  $nestedSource = [System.IO.File]::ReadAllText($nestedPath)
+  $didOpenNested = @{ jsonrpc = '2.0'; method = 'textDocument/didOpen'; params = @{ textDocument = @{ uri = $nestedUri; text = $nestedSource } } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $didOpenNested
+  $nestedDiag = Read-LspMessage $lspProc | ConvertFrom-Json
+  Assert-Equal 'nested imports: a valid file whose import imports another gets no false diagnostic' '0' "$($nestedDiag.params.diagnostics.Count)"
+
+  # ... but a genuinely undefined name behind that same import chain must
+  # still be reported, not masked by the more permissive import handling.
+  $nestedBrokenSource = $nestedSource.Replace('sum_of_squares', 'no_such_function')
+  $didChangeNestedBroken = @{ jsonrpc = '2.0'; method = 'textDocument/didChange'; params = @{ textDocument = @{ uri = $nestedUri }; contentChanges = @(@{ text = $nestedBrokenSource }) } } | ConvertTo-Json -Depth 10 -Compress
+  Send-LspMessage $lspProc $didChangeNestedBroken
+  $nestedBrokenDiag = Read-LspMessage $lspProc | ConvertFrom-Json
+  Assert-Equal 'nested imports: a genuine unknown function is still reported' '1' "$($nestedBrokenDiag.params.diagnostics.Count)"
+  Assert-Contains 'nested imports: the reported error names the missing function' 'no_such_function' $nestedBrokenDiag.params.diagnostics[0].message
+
   # cross-file references: examples\cross_file_lsp_helper.lume also declares
   # add_three, which calls add(a, b) internally - a real occurrence inside
   # the imported file itself, not just its declaration. Three locations

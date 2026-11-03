@@ -8300,16 +8300,47 @@ fn lspResolveCrossFileDeclaration(documents: LspDocuments, currentPath: Text, cu
 // a client, so it doesn't need to byte-for-byte match loadModule's own
 // internal combine format). "" if there are no imports or none resolve to
 // real content - this file's existing empty-sentinel convention throughout.
+type LspImportLoad = {
+  source: Text
+  loadedPaths: List<Text>
+}
+
+// Mirrors loadModule (the real loader): depth-first, each file loaded once,
+// a file's own imports spliced ahead of its text. Unlike loadModule it
+// reads through the document store (unsaved editor text beats disk), never
+// fails (an unreadable or cyclic import is skipped, so the diagnostic
+// compile reports whatever is genuinely wrong), and resolves no package
+// dependencies. Following imports transitively matters: a file that imports
+// a module which itself imports another used to get a false "unknown
+// function", because only the direct import's text was spliced in.
+fn lspLoadModule(documents: LspDocuments, path: Text, active: List<Text>, alreadyLoaded: List<Text>): LspImportLoad = {
+  if containsName(alreadyLoaded, path) or containsName(active, path) then { LspImportLoad { source: "", loadedPaths: alreadyLoaded } }
+  else {
+    val text = lspReadFile(documents, lspPathToUri(path), path)
+    if Text.eq(text, "") then { LspImportLoad { source: "", loadedPaths: alreadyLoaded } }
+    else {
+      val nextActive = List.push(active, path)
+      var loadedPaths = alreadyLoaded
+      var combined = ""
+      for moduleName in importedModules(text) {
+        val resolved = resolveModulePath(path, moduleName, [])
+        val dependency = lspLoadModule(documents, resolved.path, nextActive, loadedPaths)
+        combined = combined ++ dependency.source
+        loadedPaths = dependency.loadedPaths
+      }
+      LspImportLoad { source: combined ++ text ++ newline(), loadedPaths: List.push(loadedPaths, path) }
+    }
+  }
+}
+
 fn lspImportedSource(documents: LspDocuments, currentPath: Text, currentText: Text): Text = {
-  val modules = importedModules(currentText)
   var combined = ""
-  var index = 0
-  while index < List.len(modules) {
-    val resolved = resolveModulePath(currentPath, List.getOrPanic(modules, index), [])
-    val importedUri = lspPathToUri(resolved.path)
-    val importedText = lspReadFile(documents, importedUri, resolved.path)
-    if not Text.eq(importedText, "") then { combined = combined ++ importedText ++ newline() }
-    index = index + 1
+  var loadedPaths: List<Text> = []
+  for moduleName in importedModules(currentText) {
+    val resolved = resolveModulePath(currentPath, moduleName, [])
+    val dependency = lspLoadModule(documents, resolved.path, [currentPath], loadedPaths)
+    combined = combined ++ dependency.source
+    loadedPaths = dependency.loadedPaths
   }
   combined
 }

@@ -14,6 +14,72 @@ None currently.
 
 ## Resolved
 
+### 10. `lume lsp` diagnostics only follow one level of `use`, so a file whose import imports another gets a false "unknown function"
+
+**Resolved:** `lspImportedSource` (`src/lume.cto`) now follows imports
+transitively through a new `lspLoadModule`, shaped like the real loader
+(`loadModule`): depth-first, each file loaded once, a file's own imports
+spliced ahead of its text. It differs from `loadModule` on purpose in
+three ways: it reads through the document store (unsaved editor text beats
+disk, as before), it never fails (an unreadable or cyclic import is
+skipped, so the diagnostic compile reports whatever is genuinely wrong),
+and it resolves no package dependencies (unchanged). Verified against this
+item's own reproduction (diagnostics for `examples\modules.lume` are now
+empty in both URI spellings; hover and definition unchanged) and checked
+in as `test.ps1` cases: the valid nested-import file gets no diagnostic,
+and the same file with a genuinely undefined function still reports it, so
+the more permissive loading does not mask real errors. Hover, definition,
+references, and rename deliberately stay one level deep, as documented -
+this changes diagnostics only. Not a Certo issue, but a reserved word to
+know: `loaded` is one, so the new record field and variable are
+`loadedPaths`.
+
+Found while checking the URI-decoding fix (item 9) in a real VS Code window
+with `examples\modules.lume`: the file showed a red line with "unknown
+function `stats.sum_of_squares`" even though `lume run` runs it. At
+commit `70c04f7` (`ai/lume-api.json` `version: 0.1.0-bootstrap`).
+
+**Claim contradicted:** none stated outright, but the README says
+diagnostics include `use`-import resolution "so a multi-file project doesn't
+show spurious errors". That held for one level only.
+
+**Reproduction:** `examples\modules.lume` imports `modules.stats`
+(`examples\modules\stats.lume`), which imports `math`
+(`examples\modules\math.lume`), and calls `stats.sum_of_squares`:
+
+```
+$ lume run examples\modules.lume
+25
+```
+
+Opened over `lume lsp` the same file publishes
+`E0216 unknown function `stats.sum_of_squares``, with a raw JSON-RPC probe
+and with the percent-encoded and unencoded URI spellings alike (so it is
+independent of item 9), while hover and go-to-definition on that same name
+resolve correctly. A single-level import (`d.lume` importing `e.lume`) is
+fine, which is what narrowed it down.
+
+Root cause: the diagnostic path first compiles the document alone, and only
+when that fails does it retry with "imports + this document" to see whether
+resolving imports makes the failure go away. That retry spliced in the raw
+text of the *direct* imports only. `stats.lume` calls `math.square`, which
+lives one level further down and was never spliced, so the retry failed too
+and the original error was published.
+
+**Impact:** a program whose imported module itself uses a function from
+another module shows a red line in the editor on code that compiles and
+runs, which teaches people to ignore the diagnostics. Among this
+repository's examples only `modules.lume` reproduced it: `task_board.lume`
+and `taskgraph.lume` (checked against the same server) were already clean,
+presumably because their import chains happen to splice in enough text for
+the retry compile to succeed. That makes it easy to miss, not rare in real
+projects.
+
+**Suggested fix:** ~~follow imports transitively when building the combined
+source for the diagnostic retry, the way `loadModule` does for a real
+compile.~~ Done as described.
+
+
 ### 9. `lume lsp` never percent-decodes `file://` URIs, so editors' default URI form breaks every disk-reading feature
 
 **Resolved:** `lspUriToPath` (`src/lume.cto`) now percent-decodes (over the
