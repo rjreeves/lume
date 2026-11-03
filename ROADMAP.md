@@ -1546,9 +1546,20 @@ things rather than writing the obvious thing.
   instead of the real `certo_lume_embed_call`) - was itself fixed
   upstream once scoped on its own
   ([`rjreeves/Certo#7`](https://github.com/rjreeves/Certo/pull/7)).
-  No cross-call artifact caching yet (`lumeEmbedCall` recompiles
-  `source` every call) - a real performance cost for a host calling
-  repeatedly, deliberately deferred rather than solved here;
+  The one thing deferred at the time - `lumeEmbedCall` recompiling
+  `source` on every call - has since shipped as an on-disk,
+  content-addressed artifact cache. Measured first rather than assumed
+  (compilation was 75-93% of a call), then through the C ABI: a call on
+  a 3.7 KB program drops from ~13 ms to ~0.2 ms, ~0.7 to ~0.09 ms on a
+  tiny one, ~124 to ~1.1 ms on a 36 KB one. Disk rather than in-memory
+  because `src/lume.cto` has no top-level mutable state to hold one, and
+  it reuses the existing `.lbc` format and validation (source hash +
+  compiler-build hash + full decode) so a stale, corrupt, or half-written
+  entry is just a miss. Real limits, documented in section 22.1: it
+  grows by one file per distinct source with no eviction
+  (`LUME_EMBED_CACHE=0` turns it off), and `lume.dll` reads
+  `LUME_HOME`/`LUME_EMBED_CACHE` from the environment as of load time, so
+  a host must set them before loading the library;
 - ~~release archives~~ — the archive half shipped, Windows-only (this
   dev environment has no cross-platform build infrastructure, the same
   constraint "reproducible standalone executable builds" above already

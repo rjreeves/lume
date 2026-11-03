@@ -1406,9 +1406,9 @@ only the transport differs:
   (section 13) — a hang inside the called function can't hang the host.
 
 See [`examples/embed_demo_c_abi.c`](../examples/embed_demo_c_abi.c)
-for a runnable proof (the success path and three distinct failure
-modes — a compile error, an unknown function name, and a runtime
-panic — all checked):
+for a runnable proof: the success path, three distinct failure modes (a
+compile error, an unknown function name, a runtime panic), and every
+behavior of the artifact cache described below.
 
 ```powershell
 clang examples\embed_demo_c_abi.c dist\lume.lib -o dist\embed_demo_c_abi.exe
@@ -1419,10 +1419,38 @@ Like the subprocess example, this isn't wired into `test.ps1` — it
 needs a C toolchain (`clang`) on `PATH`, a separate step from the
 compiler's own normal build/test cycle.
 
-`lumeEmbedCall` recompiles `source` fresh on every call; there is no
-cross-call caching of a compiled artifact yet — a real cost for a host
-calling the same source repeatedly, deliberately left for later rather
-than solved up front.
+#### The compiled-artifact cache
+
+Compiling `source` is most of a call's cost (measured: 75–93%), so
+`lumeEmbedCall` keeps the compiled artifact on disk and reuses it the next
+time it sees the same `source`. Measured through the C ABI, a call on a
+3.7 KB program drops from about 13 ms to about 0.2 ms once cached (about
+0.7 ms to 0.09 ms on a tiny program; about 124 ms to 1.1 ms on a 36 KB one).
+
+- **Where:** `<base>\.lume\cache\embed\<sha256 of source>.lbc`, where
+  `<base>` is `LUME_HOME`, else `USERPROFILE`, else `HOME` — the same base
+  the git-dependency cache uses. If none is set, nothing is cached and
+  every call compiles, exactly as before.
+- **Always safe to ignore:** an entry is used only if its source hash and
+  its compiler-build hash both match and it decodes completely. A stale
+  entry from another compiler build, a truncated or corrupt file, or one a
+  concurrent call is still writing is simply a miss — the call recompiles
+  and rewrites it. A cache that can't be written (read-only or missing home
+  directory) never fails a call, and only successful compiles are cached.
+- **Turning it off:** set `LUME_EMBED_CACHE=0`.
+- **Set the environment before the DLL loads.** `lume.dll` reads
+  `LUME_HOME` and `LUME_EMBED_CACHE` from the process environment as it was
+  when the library was loaded; changing them afterwards (`putenv`,
+  `SetEnvironmentVariable`) is not seen, confirmed live. The example re-launches
+  itself once per scenario for exactly this reason.
+- **It grows.** There is one file per *distinct* `source`, and nothing
+  evicts old ones. That is fine for the intended use — a few fixed scripts
+  called with different arguments — but a host that generates a unique
+  program text on every call would fill the directory, and should set
+  `LUME_EMBED_CACHE=0` (or clear the directory itself).
+- **Trust model:** like `lume run`'s `.lbc` and the git cache, the cache is
+  trusted as the current user's own data; the hash binds an entry to its
+  source, it is not a signature.
 
 ## 23. Editor and AI tooling
 
