@@ -30,4 +30,5 @@ the first workspace folder is used.
 
 Inherited from the adapter, see `docs/debugger-scoping.md`: line breakpoints
 only, locals only, no conditional breakpoints, and breakpoints match by line
-across the whole combined source. Not yet tested in the VS Code UI itself.
+across the whole combined source. Tried by hand in VS Code: a breakpoint stops
+with locals shown, and Continue runs the program to the end.

@@ -9,6 +9,7 @@
   "engines": { "vscode": "^1.80.0" },
   "categories": ["Debuggers"],
   "main": "./extension.js",
+  "activationEvents": ["onDebug", "onDebugResolve:lume", "onDebugAdapterProtocolTracker:lume", "onLanguage:lume"],
   "contributes": {
     "languages": [
       { "id": "lume", "aliases": ["Lume"], "extensions": [".lume"] }
