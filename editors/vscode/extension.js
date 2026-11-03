@@ -62,10 +62,11 @@ class LumeAdapterFactory {
 
 const SELECTOR = { language: 'lume', scheme: 'file' };
 
-// The server compares document URIs as plain strings and converts them to
-// paths without percent-decoding, so send the unencoded form
-// (file:///c:/dir/x.lume) rather than VS Code's default (file:///c%3A/...);
-// otherwise `use` imports and workspace symbols resolve to nonsense paths.
+// Send the unencoded form (file:///c:/dir/x.lume) rather than VS Code's
+// default (file:///c%3A/...). Current servers decode either spelling, but a
+// lume.exe built before BACKLOG.md item 9 was fixed does not percent-decode,
+// and with the default form its `use` imports and workspace symbols resolve
+// to nonsense paths. Harmless against a fixed server, so it stays.
 function toServerUri(uri) {
   return uri.toString(true);
 }

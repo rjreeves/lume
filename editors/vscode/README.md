@@ -77,7 +77,8 @@ than `dist\lume.exe`.
 
 ## Notes
 
-The language server compares document URIs as plain strings and converts them
-to paths without percent-decoding, so the extension sends unencoded `file:///c:/...`
-URIs rather than VS Code's default `file:///c%3A/...`; with the default form,
-`use` imports of files that aren't open in the editor would not resolve.
+The extension sends unencoded `file:///c:/...` URIs rather than VS Code's
+default `file:///c%3A/...`. A `lume.exe` built before BACKLOG.md item 9 was
+fixed does not percent-decode URIs, and with the default form its `use`
+imports of files that aren't open in the editor would not resolve. Current
+builds decode either spelling, so this is only a compatibility measure.

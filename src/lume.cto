@@ -7999,11 +7999,17 @@ type LspState = {
   workspaceRoot: Text
 }
 
+// Documents are matched by what the URI means, not how it is spelled: a
+// client may say file:///c%3A/dir/x.lume (VS Code's default), while this
+// server builds file:///c:/dir/x.lume for the same file from a path. The
+// stored key stays whatever the client sent (diagnostics and responses
+// echo it back), only the comparison is normalised.
 fn lspDocumentIndex(uris: List<Text>, uri: Text): Int = {
+  val key = lspUriKey(uri)
   var index = 0
   var result = -1
   while index < List.len(uris) and result == -1 {
-    if Text.eq(List.getOrPanic(uris, index), uri) then { result = index }
+    if Text.eq(lspUriKey(List.getOrPanic(uris, index)), key) then { result = index }
     index = index + 1
   }
   result
@@ -8026,11 +8032,12 @@ fn lspDocumentsSet(documents: LspDocuments, uri: Text, text: Text): LspDocuments
 }
 
 fn lspDocumentsRemove(documents: LspDocuments, uri: Text): LspDocuments = {
+  val key = lspUriKey(uri)
   var newUris: List<Text> = []
   var newTexts: List<Text> = []
   var index = 0
   while index < List.len(documents.uris) {
-    if not Text.eq(List.getOrPanic(documents.uris, index), uri) then {
+    if not Text.eq(lspUriKey(List.getOrPanic(documents.uris, index)), key) then {
       newUris = List.push(newUris, List.getOrPanic(documents.uris, index))
       newTexts = List.push(newTexts, List.getOrPanic(documents.texts, index))
     }
@@ -8104,8 +8111,15 @@ fn lspFindDeclaration(sites: List<LspDeclaration>, name: Text): LspDeclaration =
 // letter must be stripped too, not just the "file://" scheme prefix.
 // Confirmed live before this fix: leaving it in place made readFile fail
 // to find a real file on disk that definitely existed.
+//
+// A URI is percent-encoded text (RFC 3986), and real clients use that: VS
+// Code sends file:///c%3A/dir/x.lume with the drive colon encoded and a
+// space as %20. The decode happens before the drive-letter check, since
+// "/c%3A/..." only has its colon at index 2 once decoded. Confirmed live
+// before this fix (BACKLOG.md item 9): an encoded URI turned every
+// disk-reading feature into a lookup of a nonexistent path.
 fn lspUriToPath(uri: Text): Text = {
-  val stripped = if Text.startsWith(uri, "file://") then Text.slice(uri, 7, Text.len(uri)) else uri
+  val stripped = lspPercentDecode(if Text.startsWith(uri, "file://") then Text.slice(uri, 7, Text.len(uri)) else uri)
   if Text.len(stripped) > 2 and Text.eq(charAt(stripped, 0), "/") and Text.eq(charAt(stripped, 2), ":") then {
     Text.slice(stripped, 1, Text.len(stripped))
   } else { stripped }
@@ -8116,9 +8130,104 @@ fn lspUriToPath(uri: Text): Text = {
 // three-slash "file:///C:/..." form a real editor would send - a Unix
 // absolute path ("/home/...") already supplies its own leading slash, so
 // plain "file://" + path already comes out as the correct "file:///home/...".
+// Anything outside the unreserved set (plus "/" and the drive colon) is
+// percent-encoded, so a path with a space or a non-ASCII character is a
+// valid URI a client can parse.
 fn lspPathToUri(path: Text): Text = {
-  if Text.len(path) > 1 and Text.eq(charAt(path, 1), ":") then { "file:///" ++ path }
-  else { "file://" ++ path }
+  val encoded = lspPercentEncode(path)
+  if Text.len(path) > 1 and Text.eq(charAt(path, 1), ":") then { "file:///" ++ encoded }
+  else { "file://" ++ encoded }
+}
+
+// What a document URI means, independent of spelling: the decoded path,
+// with a Windows drive letter folded to lower case (VS Code sends "c:",
+// paths built elsewhere may say "C:"). Only the drive letter is folded -
+// folding the whole path would conflate files on a case-sensitive system.
+fn lspUriKey(uri: Text): Text = {
+  val path = lspUriToPath(uri)
+  var key = path
+  if Text.len(path) > 1 then {
+    if Text.eq(charAt(path, 1), ":") then { key = Text.toLower(charAt(path, 0)) ++ Text.slice(path, 1, Text.len(path)) }
+  }
+  key
+}
+
+fn lspHexDigitValue(code: Int): Int = {
+  if code >= 48 and code <= 57 then code - 48
+  else if code >= 65 and code <= 70 then code - 55
+  else if code >= 97 and code <= 102 then code - 87
+  else -1
+}
+
+// %XX -> the byte XX, over the UTF-8 bytes of the text, so a multi-byte
+// character (%C3%A9) comes back as the one character it encodes. A "%" not
+// followed by two hex digits is left as a literal "%". Bounds are checked
+// with a nested `if`, not `and`: Certo's `and` does not short-circuit, so
+// `index + 2 < length and byteAt(bytes, index + 2)` would still read past
+// the end. A single byte is built by taking the first byte of an Int64
+// (little endian) - there is no direct Int -> one-byte constructor.
+fn lspPercentDecode(text: Text): Text = {
+  if not Text.contains(text, "%") then { text }
+  else {
+    val bytes = Bytes.fromText(text)
+    val length = Bytes.length(bytes)
+    var parts: List<Bytes> = []
+    var runStart = 0
+    var index = 0
+    while index < length {
+      var escaped = -1
+      if Bytes.byteAt(bytes, index) == 37 then {
+        if index + 2 < length then {
+          val high = lspHexDigitValue(Bytes.byteAt(bytes, index + 1))
+          val low = lspHexDigitValue(Bytes.byteAt(bytes, index + 2))
+          if high >= 0 then {
+            if low >= 0 then { escaped = high * 16 + low }
+          }
+        }
+      }
+      if escaped >= 0 then {
+        parts = List.pushMut(parts, Bytes.slice(bytes, runStart, index))
+        parts = List.pushMut(parts, Bytes.slice(Bytes.fromInt64LE(escaped), 0, 1))
+        index = index + 3
+        runStart = index
+      } else { index = index + 1 }
+    }
+    parts = List.pushMut(parts, Bytes.slice(bytes, runStart, length))
+    Bytes.toText(Bytes.concatMany(parts))
+  }
+}
+
+// RFC 3986 unreserved characters (letters, digits, "-", ".", "_", "~") plus
+// "/" (path separator) and ":" (a Windows drive colon, kept raw so the
+// common "file:///C:/..." form is unchanged).
+fn lspIsUriSafeByte(code: Int): Bool = {
+  (code >= 48 and code <= 57) or (code >= 65 and code <= 90) or (code >= 97 and code <= 122) or
+    code == 45 or code == 46 or code == 95 or code == 126 or code == 47 or code == 58
+}
+
+fn lspPercentEncode(text: Text): Text = {
+  val bytes = Bytes.fromText(text)
+  val length = Bytes.length(bytes)
+  var parts: List<Bytes> = []
+  var runStart = 0
+  var index = 0
+  var changed = false
+  while index < length {
+    val code = Bytes.byteAt(bytes, index)
+    if not lspIsUriSafeByte(code) then {
+      changed = true
+      parts = List.pushMut(parts, Bytes.slice(bytes, runStart, index))
+      val digits = "0123456789ABCDEF"
+      parts = List.pushMut(parts, Bytes.fromText("%" ++ charAt(digits, code / 16) ++ charAt(digits, code % 16)))
+      runStart = index + 1
+    }
+    index = index + 1
+  }
+  if not changed then { text }
+  else {
+    parts = List.pushMut(parts, Bytes.slice(bytes, runStart, length))
+    Bytes.toText(Bytes.concatMany(parts))
+  }
 }
 
 // Prefers the document store over disk - the user may have the imported

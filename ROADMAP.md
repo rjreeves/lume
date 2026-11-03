@@ -1825,7 +1825,12 @@ things rather than writing the obvious thing.
   diagnostics, hover, definition, references, rename, completion, quick
   fixes, and symbols - covered by `editors/vscode/test/extension.test.js`
   against a real server, though only through a stand-in for the `vscode`
-  module, not a live VS Code window). Tried by hand in VS Code: breakpoint stop,
+  module, not a live VS Code window; building it surfaced that `lume lsp`
+  never percent-decoded `file://` URIs, so a standard client's
+  `file:///c%3A/...` or `%20` broke every feature that reads a file the
+  editor hasn't opened and produced false "unknown function" diagnostics -
+  fixed in `lspUriToPath`/`lspPathToUri` with document identity compared by
+  decoded path, BACKLOG.md item 9). Tried by hand in VS Code: breakpoint stop,
   locals, and program output in the Debug Console. v1 limits: line
   breakpoints only (matched by line across the combined source), locals
   only, no conditional breakpoints or watch expressions, `pause` cannot
