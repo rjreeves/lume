@@ -1,0 +1,19 @@
+type Point {
+  x: int
+  y: int
+}
+
+enum State {
+  idle
+  busy(code: int)
+}
+
+fn main(args: [str]) -> int {
+  let p = Point(x: 1, y: 2)
+  let xs = [1, 2, 3]
+  let s = State.busy(code: 7)
+  let t = State.idle()
+  let name = "hi"
+  print(name)
+  return 0
+}

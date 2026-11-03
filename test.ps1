@@ -2725,4 +2725,109 @@ try {
   if (-not $wsSymbolProc.HasExited) { $wsSymbolProc.Kill() }
 }
 
+# lume debug: stepping, backtrace, locals, and a normal run staying unaffected.
+$debugTarget = Join-Path $PSScriptRoot 'examples\debug_target.lume'
+$debugOut = "s`ns`ns`ns`nbt`nlocals`np n`nc`n" | & $Lume debug $debugTarget 2>&1
+if ($LASTEXITCODE -ne 0) { throw "debug exited $LASTEXITCODE" }
+$debugText = $debugOut -join "`n"
+Assert-Contains 'debug stops at main entry' 'stopped in main at line 6' $debugText
+Assert-Contains 'debug steps into a callee' 'stopped in double at line' $debugText
+Assert-Contains 'debug backtrace shows the call site' '#0 main line 8' $debugText
+Assert-Contains 'debug prints a local' 'n = 21' $debugText
+Assert-Contains 'debug lets the program finish with its own output' '42' $debugText
+$debugBreak = "c`nc`n" | & $Lume debug $debugTarget --break 3 2>&1
+Assert-Contains 'debug honors --break' 'stopped in double at line 3' ($debugBreak -join "`n")
+
+$debugValues = "c`nlocals`np p`nc`n" | & $Lume debug (Join-Path $PSScriptRoot 'examples\debug_values.lume') --break 17 2>&1
+$debugValuesText = $debugValues -join "`n"
+Assert-Contains 'debug renders a record' 'p = Point(x: 1, y: 2)' $debugValuesText
+Assert-Contains 'debug renders a list' 'xs = [1, 2, 3]' $debugValuesText
+Assert-Contains 'debug renders an enum variant with payload' 's = State.busy(code: 7)' $debugValuesText
+Assert-Contains 'debug renders a payload-free variant' 't = State.idle' $debugValuesText
+Assert-Contains 'debug quotes strings' 'name = "hi"' $debugValuesText
+
+# Wire framing: the response header must be exactly CR LF CR LF terminated
+# (the other tests' reader skips every CR, so it cannot catch a doubled one).
+function Get-RawResponseHeader([string]$Arguments, [string]$RequestJson) {
+  $psi = New-Object System.Diagnostics.ProcessStartInfo
+  $psi.FileName = $Lume
+  $psi.Arguments = $Arguments
+  $psi.RedirectStandardInput = $true
+  $psi.RedirectStandardOutput = $true
+  $psi.RedirectStandardError = $true
+  $psi.UseShellExecute = $false
+  $proc = [System.Diagnostics.Process]::Start($psi)
+  try {
+    Send-LspMessage $proc $RequestJson
+    $stream = $proc.StandardOutput.BaseStream
+    $bytes = New-Object System.Collections.Generic.List[byte]
+    while ($true) {
+      $b = $stream.ReadByte()
+      if ($b -eq -1 -or $b -eq 123) { break }
+      $bytes.Add([byte]$b)
+    }
+    return [System.BitConverter]::ToString($bytes.ToArray())
+  } finally {
+    if (-not $proc.HasExited) { $proc.Kill() }
+  }
+}
+$framingDapHeader = Get-RawResponseHeader "debug `"$(Join-Path $PSScriptRoot 'examples\debug_target.lume')`" --dap" '{"seq":1,"type":"request","command":"initialize","arguments":{}}'
+Assert-Contains 'dap header ends in CRLF CRLF' '0D-0A-0D-0A' $framingDapHeader
+if ($framingDapHeader.Contains('0D-0D')) { throw 'dap header contains a doubled CR' }
+$framingLspHeader = Get-RawResponseHeader 'lsp' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}'
+Assert-Contains 'lsp header ends in CRLF CRLF' '0D-0A-0D-0A' $framingLspHeader
+if ($framingLspHeader.Contains('0D-0D')) { throw 'lsp header contains a doubled CR' }
+Write-Host 'PASS no doubled CR in dap/lsp headers'
+
+# lume debug --dap: a scripted Debug Adapter Protocol session over stdio.
+$dapTarget = Join-Path $PSScriptRoot 'examples\debug_target.lume'
+$dapPsi = New-Object System.Diagnostics.ProcessStartInfo
+$dapPsi.FileName = $Lume
+$dapPsi.Arguments = "debug `"$dapTarget`" --dap"
+$dapPsi.RedirectStandardInput = $true
+$dapPsi.RedirectStandardOutput = $true
+$dapPsi.RedirectStandardError = $true
+$dapPsi.UseShellExecute = $false
+$dapProc = [System.Diagnostics.Process]::Start($dapPsi)
+$script:dapSeq = 0
+function Invoke-DapRequest([string]$Command, $Arguments = @{}) {
+  $script:dapSeq++
+  Send-LspMessage $dapProc (@{ seq = $script:dapSeq; type = 'request'; command = $Command; arguments = $Arguments } | ConvertTo-Json -Depth 10 -Compress)
+  while ($true) {
+    $message = Read-LspMessage $dapProc | ConvertFrom-Json
+    if ($message.type -eq 'response' -and $message.request_seq -eq $script:dapSeq) { return $message }
+  }
+}
+try {
+  $dapInit = Invoke-DapRequest 'initialize' @{ adapterID = 'lume' }
+  Assert-Equal 'dap initialize succeeds' 'True' "$($dapInit.success)"
+  $dapInitialized = Read-LspMessage $dapProc | ConvertFrom-Json
+  Assert-Equal 'dap sends the initialized event' 'initialized' $dapInitialized.event
+  Invoke-DapRequest 'launch' @{ program = $dapTarget; stopOnEntry = $false } | Out-Null
+  $dapBreak = Invoke-DapRequest 'setBreakpoints' @{ source = @{ path = $dapTarget }; breakpoints = @(@{ line = 2 }) }
+  Assert-Equal 'dap verifies a breakpoint' 'True' "$($dapBreak.body.breakpoints[0].verified)"
+  Invoke-DapRequest 'configurationDone' | Out-Null
+  $dapStopped = Read-LspMessage $dapProc | ConvertFrom-Json
+  Assert-Equal 'dap stops at the breakpoint' 'breakpoint' $dapStopped.body.reason
+  $dapStack = Invoke-DapRequest 'stackTrace' @{ threadId = 1 }
+  Assert-Equal 'dap stack top frame' 'double' $dapStack.body.stackFrames[0].name
+  Assert-Equal 'dap stack caller frame' 'main' $dapStack.body.stackFrames[1].name
+  Assert-Equal 'dap stack frames report the program path' $dapTarget $dapStack.body.stackFrames[0].source.path
+  $dapScopes = Invoke-DapRequest 'scopes' @{ frameId = $dapStack.body.stackFrames[0].id }
+  $dapVars = Invoke-DapRequest 'variables' @{ variablesReference = $dapScopes.body.scopes[0].variablesReference }
+  Assert-Equal 'dap variables lists the local' '21' $dapVars.body.variables[0].value
+  $dapEval = Invoke-DapRequest 'evaluate' @{ expression = 'n'; frameId = $dapStack.body.stackFrames[0].id }
+  Assert-Equal 'dap evaluate reads a local' '21' $dapEval.body.result
+  Invoke-DapRequest 'continue' @{ threadId = 1 } | Out-Null
+  $dapOutput = Read-LspMessage $dapProc | ConvertFrom-Json
+  Assert-Equal 'dap captures program stdout as an output event' "output:42" "$($dapOutput.event):$($dapOutput.body.output.Trim())"
+  $dapExited = Read-LspMessage $dapProc | ConvertFrom-Json
+  Assert-Equal 'dap reports exit' 'exited' $dapExited.event
+  $dapTerminated = Read-LspMessage $dapProc | ConvertFrom-Json
+  Assert-Equal 'dap reports termination' 'terminated' $dapTerminated.event
+  Invoke-DapRequest 'disconnect' | Out-Null
+} finally {
+  if (-not $dapProc.HasExited) { $dapProc.Kill() }
+}
+
 Write-Host 'All Lume smoke tests passed.'

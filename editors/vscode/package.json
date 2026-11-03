@@ -1,0 +1,66 @@
+{
+  "name": "lume-debug",
+  "displayName": "Lume Debugger",
+  "description": "Debug Lume programs in VS Code using the compiler's built-in Debug Adapter Protocol server (lume debug --dap).",
+  "version": "0.1.0",
+  "publisher": "lume",
+  "license": "MIT",
+  "private": true,
+  "engines": { "vscode": "^1.80.0" },
+  "categories": ["Debuggers"],
+  "main": "./extension.js",
+  "activationEvents": ["onDebug", "onDebugResolve:lume", "onDebugAdapterProtocolTracker:lume", "onLanguage:lume"],
+  "contributes": {
+    "languages": [
+      { "id": "lume", "aliases": ["Lume"], "extensions": [".lume"] }
+    ],
+    "breakpoints": [{ "language": "lume" }],
+    "configuration": {
+      "title": "Lume",
+      "properties": {
+        "lume.path": {
+          "type": "string",
+          "default": "",
+          "description": "Path to lume.exe. When empty, dist/lume.exe in the first workspace folder is used."
+        }
+      }
+    },
+    "debuggers": [
+      {
+        "type": "lume",
+        "label": "Lume",
+        "languages": ["lume"],
+        "configurationAttributes": {
+          "launch": {
+            "required": ["program"],
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "Path to the .lume file to debug.",
+                "default": "${file}"
+              },
+              "stopOnEntry": {
+                "type": "boolean",
+                "description": "Stop before the first line of main.",
+                "default": false
+              },
+              "lumePath": {
+                "type": "string",
+                "description": "Path to lume.exe for this launch configuration (overrides the lume.path setting)."
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "lume",
+            "request": "launch",
+            "name": "Debug Lume file",
+            "program": "${file}",
+            "stopOnEntry": false
+          }
+        ]
+      }
+    ]
+  }
+}

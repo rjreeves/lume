@@ -157,6 +157,14 @@ list, same-file-only regex go-to-definition, and an independent formatter
 that isn't guaranteed to agree with `lume fmt`. See
 [`lsp/README.md`](lsp/README.md) for when you'd reach for it instead.
 
+## Debugging
+
+`lume debug <file> [--break 3,5]` is a stepping debugger driven from stdin
+(`c s n o bt locals p <name> q`), and `lume debug <file> --dap` serves the Debug
+Adapter Protocol over stdio. [`editors/vscode`](editors/vscode/README.md) is a
+small VS Code extension that launches it. See `docs/debugger-scoping.md` for scope
+and limits.
+
 The emitted bytecode is verified in a linear static-type pass. It checks operand
 types, assignment consistency, boolean conditions, homogeneous lists, function
 argument types, builtin argument types, and declared return types before a

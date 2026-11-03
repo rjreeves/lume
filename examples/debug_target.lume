@@ -1,0 +1,11 @@
+fn double(n: int) -> int {
+  let result = n * 2
+  return result
+}
+
+fn main(args: [str]) -> int {
+  let base = 21
+  let answer = double(base)
+  print(answer)
+  return 0
+}

@@ -5723,7 +5723,382 @@ fn callBuiltin(code: List<Instruction>, name: Text, input: List<Text>, deadlineM
   }
 }
 
-fn execute(code: List<Instruction>): RunResult [io] = {
+fn enclosingFunction(code: List<Instruction>, ip: Int): Text = {
+  var index = ip
+  var name = "?"
+  var found = false
+  while index >= 0 and not found {
+    val item = List.getOrPanic(code, index)
+    if Text.eq(item.op, "function") then {
+      name = beforePipe(item.text)
+      found = true
+    } else { index = index - 1 }
+  }
+  name
+}
+
+fn containsLine(lines: List<Int>, line: Int): Bool = {
+  var found = false
+  for candidate in lines { if candidate == line then { found = true } }
+  found
+}
+
+// Debugger output goes to stderr so the debuggee's own stdout stays
+// separable. Frames are derived from returnAddresses: each saved address is
+// the instruction after a call, so the call site is one before it.
+fn debugBacktrace(code: List<Instruction>, ip: Int, returnAddresses: List<Int>): Unit [io] = {
+  val current = List.getOrPanic(code, ip)
+  eprintln("  #" ++ intToText(List.len(returnAddresses)) ++ " " ++ enclosingFunction(code, ip) ++ " line " ++ intToText(current.line))
+  var index = List.len(returnAddresses) - 1
+  while index >= 0 {
+    val site = List.getOrPanic(returnAddresses, index) - 1
+    eprintln("  #" ++ intToText(index) ++ " " ++ enclosingFunction(code, site) ++ " line " ++ intToText(List.getOrPanic(code, site).line))
+    index = index - 1
+  }
+}
+
+// Human-readable rendering of a tagged runtime value for the debugger:
+// strings quoted, lists as [a, b], records as Type(field: v), enum variants
+// as Enum.variant(field: v). Fields come from the declared schema so order
+// is stable; nesting is cut off at a small depth so a large structure cannot
+// flood the terminal. Kinds with no useful short form print as <kind>.
+fn debugValue(code: List<Instruction>, value: Text, budget: Int): Text = {
+  val kind = valueKind(value)
+  if Text.eq(kind, "i:") or Text.eq(kind, "b:") then { valueBody(value) }
+  else if Text.eq(kind, "s:") then { "\"" ++ valueBody(value) ++ "\"" }
+  else if Text.eq(kind, "f:") then { "fn " ++ valueBody(value) }
+  else if Text.eq(kind, "c:") then { "<closure>" }
+  else if Text.eq(kind, "m:") then { "<map of " ++ intToText(mapLength(value)) ++ ">" }
+  else if budget <= 0 then { "..." }
+  else if Text.eq(kind, "l:") then {
+    var parts: List<Text> = []
+    for item in listValues(value) { parts = List.push(parts, debugValue(code, item, budget - 1)) }
+    "[" ++ Text.join(parts, ", ") ++ "]"
+  } else if Text.eq(kind, "o:") then {
+    val root = Json.parse(valueBody(value))
+    val typeName = JsonValue.asText(JsonValue.get(root, "$type"))
+    var parts: List<Text> = []
+    if let Some(schema) = findRecordSchema(code, typeName) {
+      val fields = if Text.eq(schema, "") then [] else Text.split(schema, ";")
+      for field in fields {
+        val fieldName = schemaFieldName(field)
+        parts = List.push(parts, fieldName ++ ": " ++ debugValue(code, JsonValue.asText(JsonValue.get(root, fieldName)), budget - 1))
+      }
+    }
+    typeName ++ "(" ++ Text.join(parts, ", ") ++ ")"
+  } else if Text.eq(kind, "v:") then {
+    val root = Json.parse(valueBody(value))
+    val enumName = runtimeEnumName(value)
+    val variantName = runtimeVariantName(value)
+    var parts: List<Text> = []
+    if let Some(enumSchema) = findEnumSchema(code, enumName) {
+      if let Some(payload) = variantPayloadSchema(enumSchema, variantName) {
+        val fields = if Text.eq(payload, "") then [] else Text.split(payload, ",")
+        for field in fields {
+          val fieldName = schemaFieldName(field)
+          parts = List.push(parts, fieldName ++ ": " ++ debugValue(code, JsonValue.asText(JsonValue.get(root, fieldName)), budget - 1))
+        }
+      }
+    }
+    val head = enumName ++ "." ++ variantName
+    if List.len(parts) == 0 then { head } else { head ++ "(" ++ Text.join(parts, ", ") ++ ")" }
+  } else { "<" ++ Text.slice(kind, 0, 1) ++ ">" }
+}
+
+fn debugLocals(code: List<Instruction>, variables: Bindings, depth: Int): Unit [io] = {
+  val prefix = scopedName(depth, "")
+  var index = 0
+  while index < List.len(variables.names) {
+    val name = List.getOrPanic(variables.names, index)
+    if Text.startsWith(name, prefix) then {
+      eprintln("  " ++ Text.slice(name, Text.len(prefix), Text.len(name)) ++ " = " ++ debugValue(code, List.getOrPanic(variables.values, index), 3))
+    }
+    index = index + 1
+  }
+}
+
+// ---- Debug Adapter Protocol (lume debug --dap) ----
+// Same Content-Length framing as the language server, so lspReadMessage /
+// lspWriteMessage are reused. Every message is sent with seq 0: real clients
+// correlate by request_seq and do not require unique sequence numbers from
+// the adapter in practice. The debuggee's print/eprint output is turned into
+// `output` events (see emitOutput) so it can never corrupt the protocol
+// stream on stdout.
+
+type DapStart = {
+  breakLines: List<Int>
+  stopOnEntry: Bool
+  program: Text
+  quit: Bool
+}
+
+type DapStop = {
+  mode: Text
+  depth: Int
+  breakLines: List<Int>
+  quit: Bool
+}
+
+fn dapEvent(name: Text, body: JsonValue): Unit [io] = {
+  val message = Json.object()
+  JsonValue.set(message, "seq", Json.int(0))
+  JsonValue.set(message, "type", Json.string("event"))
+  JsonValue.set(message, "event", Json.string(name))
+  JsonValue.set(message, "body", body)
+  lspWriteMessage(Json.stringify(message))
+}
+
+fn dapRespond(request: JsonValue, ok: Bool, body: JsonValue, errorMessage: Text): Unit [io] = {
+  val message = Json.object()
+  JsonValue.set(message, "seq", Json.int(0))
+  JsonValue.set(message, "type", Json.string("response"))
+  JsonValue.set(message, "request_seq", JsonValue.get(request, "seq"))
+  JsonValue.set(message, "success", Json.bool(ok))
+  JsonValue.set(message, "command", JsonValue.get(request, "command"))
+  if ok then { JsonValue.set(message, "body", body) }
+  else { JsonValue.set(message, "message", Json.string(errorMessage)) }
+  lspWriteMessage(Json.stringify(message))
+}
+
+fn emitOutput(dapPath: Text, isError: Bool, text: Text): Unit [io] = {
+  if Text.eq(dapPath, "") then {
+    if isError then { eprintln(text) } else { println(text) }
+  } else {
+    val body = Json.object()
+    JsonValue.set(body, "category", Json.string(if isError then "stderr" else "stdout"))
+    JsonValue.set(body, "output", Json.string(text ++ "\n"))
+    dapEvent("output", body)
+  }
+}
+
+fn dapBreakLines(request: JsonValue): List<Int> = {
+  var lines: List<Int> = []
+  val breakpoints = JsonValue.get(JsonValue.get(request, "arguments"), "breakpoints")
+  if JsonValue.isArray(breakpoints) then {
+    var index = 0
+    while index < JsonValue.length(breakpoints) {
+      val entry = Json.parse(JsonValue.atText(breakpoints, index))
+      lines = List.push(lines, JsonValue.asInt(JsonValue.get(entry, "line")))
+      index = index + 1
+    }
+  }
+  lines
+}
+
+fn dapBreakpointsBody(lines: List<Int>): JsonValue = {
+  val breakpoints = Json.array()
+  for line in lines {
+    val entry = Json.object()
+    JsonValue.set(entry, "verified", Json.bool(true))
+    JsonValue.set(entry, "line", Json.int(line))
+    JsonValue.push(breakpoints, entry)
+  }
+  val body = Json.object()
+  JsonValue.set(body, "breakpoints", breakpoints)
+  body
+}
+
+// Frame ids are call depths, so a frame's locals are the bindings under
+// scopedName(frameId, ...) and a scope's variablesReference is frameId + 1.
+fn dapFrames(code: List<Instruction>, ip: Int, returnAddresses: List<Int>, depth: Int, path: Text): JsonValue = {
+  val frames = Json.array()
+  val count = List.len(returnAddresses)
+  var index = 0
+  while index <= count {
+    val site = if index == 0 then ip else List.getOrPanic(returnAddresses, count - index) - 1
+    val source = Json.object()
+    JsonValue.set(source, "path", Json.string(path))
+    val frame = Json.object()
+    JsonValue.set(frame, "id", Json.int(depth - index))
+    JsonValue.set(frame, "name", Json.string(enclosingFunction(code, site)))
+    JsonValue.set(frame, "line", Json.int(List.getOrPanic(code, site).line))
+    JsonValue.set(frame, "column", Json.int(1))
+    JsonValue.set(frame, "source", source)
+    JsonValue.push(frames, frame)
+    index = index + 1
+  }
+  frames
+}
+
+fn dapVariables(code: List<Instruction>, variables: Bindings, frameDepth: Int): JsonValue = {
+  val output = Json.array()
+  val prefix = scopedName(frameDepth, "")
+  var index = 0
+  while index < List.len(variables.names) {
+    val name = List.getOrPanic(variables.names, index)
+    if Text.startsWith(name, prefix) then {
+      val entry = Json.object()
+      JsonValue.set(entry, "name", Json.string(Text.slice(name, Text.len(prefix), Text.len(name))))
+      JsonValue.set(entry, "value", Json.string(debugValue(code, List.getOrPanic(variables.values, index), 3)))
+      JsonValue.set(entry, "variablesReference", Json.int(0))
+      JsonValue.push(output, entry)
+    }
+    index = index + 1
+  }
+  output
+}
+
+// Runs before execution starts: initialize, launch, setBreakpoints, then
+// configurationDone ends the handshake. Breakpoints are only tracked by line
+// (a program is a single combined source), so the `source` argument is ignored.
+fn dapHandshake(): DapStart [io] = {
+  var breakLines: List<Int> = []
+  var stopOnEntry = false
+  var program = ""
+  var quit = false
+  var configured = false
+  while not configured and not quit {
+    if let Some(raw) = lspReadMessage() {
+      val request = Json.parse(raw)
+      val command = JsonValue.asText(JsonValue.get(request, "command"))
+      if Text.eq(command, "initialize") then {
+        val capabilities = Json.object()
+        JsonValue.set(capabilities, "supportsConfigurationDoneRequest", Json.bool(true))
+        dapRespond(request, true, capabilities, "")
+        dapEvent("initialized", Json.object())
+      } else if Text.eq(command, "launch") then {
+        val launchArguments = JsonValue.get(request, "arguments")
+        val entry = JsonValue.get(launchArguments, "stopOnEntry")
+        if not JsonValue.isNull(entry) then { stopOnEntry = JsonValue.asBool(entry) }
+        val programEntry = JsonValue.get(launchArguments, "program")
+        if not JsonValue.isNull(programEntry) then { program = JsonValue.asText(programEntry) }
+        dapRespond(request, true, Json.object(), "")
+      } else if Text.eq(command, "setBreakpoints") then {
+        breakLines = dapBreakLines(request)
+        dapRespond(request, true, dapBreakpointsBody(breakLines), "")
+      } else if Text.eq(command, "configurationDone") then {
+        dapRespond(request, true, Json.object(), "")
+        configured = true
+      } else if Text.eq(command, "disconnect") or Text.eq(command, "terminate") then {
+        dapRespond(request, true, Json.object(), "")
+        quit = true
+      } else { dapRespond(request, true, Json.object(), "") }
+    } else { quit = true }
+  }
+  DapStart { breakLines: breakLines, stopOnEntry: stopOnEntry, program: program, quit: quit }
+}
+
+// Called while stopped: emits `stopped`, then serves requests until one
+// resumes execution (continue/next/stepIn/stepOut) or ends the session.
+fn dapStopLoop(code: List<Instruction>, ip: Int, returnAddresses: List<Int>, variables: Bindings, depth: Int, breakLines: List<Int>, reason: Text, path: Text): DapStop [io] = {
+  val stoppedBody = Json.object()
+  JsonValue.set(stoppedBody, "reason", Json.string(reason))
+  JsonValue.set(stoppedBody, "threadId", Json.int(1))
+  JsonValue.set(stoppedBody, "allThreadsStopped", Json.bool(true))
+  dapEvent("stopped", stoppedBody)
+  var lines = breakLines
+  var mode = "run"
+  var quit = false
+  var resumed = false
+  while not resumed and not quit {
+    if let Some(raw) = lspReadMessage() {
+      val request = Json.parse(raw)
+      val command = JsonValue.asText(JsonValue.get(request, "command"))
+      val arguments = JsonValue.get(request, "arguments")
+      if Text.eq(command, "threads") then {
+        val thread = Json.object()
+        JsonValue.set(thread, "id", Json.int(1))
+        JsonValue.set(thread, "name", Json.string("main"))
+        val threads = Json.array()
+        JsonValue.push(threads, thread)
+        val body = Json.object()
+        JsonValue.set(body, "threads", threads)
+        dapRespond(request, true, body, "")
+      } else if Text.eq(command, "stackTrace") then {
+        val frames = dapFrames(code, ip, returnAddresses, depth, path)
+        val body = Json.object()
+        JsonValue.set(body, "stackFrames", frames)
+        JsonValue.set(body, "totalFrames", Json.int(JsonValue.length(frames)))
+        dapRespond(request, true, body, "")
+      } else if Text.eq(command, "scopes") then {
+        val frameId = JsonValue.asInt(JsonValue.get(arguments, "frameId"))
+        val scope = Json.object()
+        JsonValue.set(scope, "name", Json.string("Locals"))
+        JsonValue.set(scope, "variablesReference", Json.int(frameId + 1))
+        JsonValue.set(scope, "expensive", Json.bool(false))
+        val scopes = Json.array()
+        JsonValue.push(scopes, scope)
+        val body = Json.object()
+        JsonValue.set(body, "scopes", scopes)
+        dapRespond(request, true, body, "")
+      } else if Text.eq(command, "variables") then {
+        val reference = JsonValue.asInt(JsonValue.get(arguments, "variablesReference"))
+        val body = Json.object()
+        JsonValue.set(body, "variables", dapVariables(code, variables, reference - 1))
+        dapRespond(request, true, body, "")
+      } else if Text.eq(command, "evaluate") then {
+        val frameEntry = JsonValue.get(arguments, "frameId")
+        val frameDepth = if JsonValue.isNull(frameEntry) then depth else JsonValue.asInt(frameEntry)
+        val expression = Text.trim(JsonValue.asText(JsonValue.get(arguments, "expression")))
+        if let Some(value) = getBinding(variables, scopedName(frameDepth, expression)) {
+          val body = Json.object()
+          JsonValue.set(body, "result", Json.string(debugValue(code, value, 3)))
+          JsonValue.set(body, "variablesReference", Json.int(0))
+          dapRespond(request, true, body, "")
+        } else { dapRespond(request, false, Json.object(), "no local `" ++ expression ++ "`") }
+      } else if Text.eq(command, "setBreakpoints") then {
+        lines = dapBreakLines(request)
+        dapRespond(request, true, dapBreakpointsBody(lines), "")
+      } else if Text.eq(command, "continue") then {
+        val body = Json.object()
+        JsonValue.set(body, "allThreadsContinued", Json.bool(true))
+        dapRespond(request, true, body, "")
+        mode = "run"
+        resumed = true
+      } else if Text.eq(command, "next") then {
+        dapRespond(request, true, Json.object(), "")
+        mode = "next"
+        resumed = true
+      } else if Text.eq(command, "stepIn") then {
+        dapRespond(request, true, Json.object(), "")
+        mode = "step"
+        resumed = true
+      } else if Text.eq(command, "stepOut") then {
+        dapRespond(request, true, Json.object(), "")
+        mode = "out"
+        resumed = true
+      } else if Text.eq(command, "disconnect") or Text.eq(command, "terminate") then {
+        dapRespond(request, true, Json.object(), "")
+        quit = true
+      } else { dapRespond(request, true, Json.object(), "") }
+    } else { quit = true }
+  }
+  DapStop { mode: mode, depth: depth, breakLines: lines, quit: quit }
+}
+
+// After the program ends: report it, then answer requests until the client
+// disconnects (or closes stdin).
+fn dapFinish(exitCode: Int, problem: Text): Unit [io] = {
+  if not Text.eq(problem, "") then { emitOutput("dap", true, problem) }
+  val exited = Json.object()
+  JsonValue.set(exited, "exitCode", Json.int(if Text.eq(problem, "") then exitCode else 1))
+  dapEvent("exited", exited)
+  dapEvent("terminated", Json.object())
+  var waiting = true
+  while waiting {
+    if let Some(raw) = lspReadMessage() {
+      val request = Json.parse(raw)
+      dapRespond(request, true, Json.object(), "")
+      val command = JsonValue.asText(JsonValue.get(request, "command"))
+      if Text.eq(command, "disconnect") or Text.eq(command, "terminate") then { waiting = false }
+    } else { waiting = false }
+  }
+}
+
+fn execute(code: List<Instruction>): RunResult [io] = executeWith(code, false, [], "", true)
+
+// `debugging` is false for every normal run; the per-instruction cost then is
+// one Bool test. When true, execution pauses before main's first
+// instruction and at breakpoints/steps, reading commands from stdin:
+// c(ontinue) s(tep in) n(ext) o(ut) bt locals p <name> q(uit).
+fn executeWith(code: List<Instruction>, debugging: Bool, initialBreakLines: List<Int>, dapPath: Text, stopOnEntry: Bool): RunResult [io] = {
+  var debugActive = debugging
+  var breakLines = initialBreakLines
+  var firstStop = true
+  var stepMode = if stopOnEntry then "step" else "run"
+  var stepDepth = 0
+  var lastLine = -1
+  var lastDepth = -1
   var stack: List<Text> = []
   var variables = Bindings { names: [], values: [] }
   var returnAddresses: List<Int> = []
@@ -5737,6 +6112,62 @@ fn execute(code: List<Instruction>): RunResult [io] = {
   while ip < List.len(code) and running and Text.eq(problem, "") {
     val current = List.getOrPanic(code, ip)
     var advance = true
+    if debugActive and current.line > 0 and (current.line != lastLine or depth != lastDepth) then {
+      lastLine = current.line
+      lastDepth = depth
+      var stop = containsLine(breakLines, current.line)
+      if Text.eq(stepMode, "step") then { stop = true }
+      else if Text.eq(stepMode, "next") and depth <= stepDepth then { stop = true }
+      else if Text.eq(stepMode, "out") and depth < stepDepth then { stop = true }
+      if stop and not Text.eq(dapPath, "") then {
+        val reason = if firstStop and stopOnEntry then "entry" else if containsLine(breakLines, current.line) then "breakpoint" else "step"
+        firstStop = false
+        val resumed = dapStopLoop(code, ip, returnAddresses, variables, depth, breakLines, reason, dapPath)
+        if resumed.quit then { Process.quit(0) }
+        stepMode = resumed.mode
+        stepDepth = resumed.depth
+        breakLines = resumed.breakLines
+      } else if stop then {
+        eprintln("stopped in " ++ enclosingFunction(code, ip) ++ " at line " ++ intToText(current.line))
+        var waiting = true
+        while waiting {
+          if let Some(raw) = readLine() {
+            val command = Text.trim(raw)
+            if Text.eq(command, "c") then {
+              stepMode = "run"
+              waiting = false
+            }
+            else if Text.eq(command, "s") then {
+              stepMode = "step"
+              waiting = false
+            }
+            else if Text.eq(command, "n") then {
+              stepMode = "next"
+              stepDepth = depth
+              waiting = false
+            }
+            else if Text.eq(command, "o") then {
+              stepMode = "out"
+              stepDepth = depth
+              waiting = false
+            }
+            else if Text.eq(command, "bt") then { debugBacktrace(code, ip, returnAddresses) }
+            else if Text.eq(command, "locals") then { debugLocals(code, variables, depth) }
+            else if Text.startsWith(command, "p ") then {
+              val wanted = Text.trim(Text.slice(command, 2, Text.len(command)))
+              if let Some(value) = getBinding(variables, scopedName(depth, wanted)) { eprintln("  " ++ wanted ++ " = " ++ debugValue(code, value, 3)) }
+              else { eprintln("  no local `" ++ wanted ++ "`") }
+            }
+            else if Text.eq(command, "q") then { Process.quit(0) }
+            else { eprintln("commands: c s n o bt locals p <name> q") }
+          } else {
+            stepMode = "run"
+            debugActive = false
+            waiting = false
+          }
+        }
+      }
+    }
     if Text.eq(current.op, "const_int") then { stack = List.push(stack, intValue(current.number)) }
     else if Text.eq(current.op, "const_str") then { stack = List.push(stack, textValue(current.text)) }
     else if Text.eq(current.op, "const_bool") then { stack = List.push(stack, boolValue(current.number == 1)) }
@@ -5910,7 +6341,7 @@ fn execute(code: List<Instruction>): RunResult [io] = {
     } else if Text.eq(current.op, "print") or Text.eq(current.op, "eprint") then {
       val item = pop(stack)
       stack = item.stack
-      if Text.eq(current.op, "print") then { println(display(item.value)) } else { eprintln(display(item.value)) }
+      emitOutput(dapPath, not Text.eq(current.op, "print"), display(item.value))
     } else if Text.eq(current.op, "test_expect") then {
       val item = pop(stack)
       stack = item.stack
@@ -7459,12 +7890,15 @@ fn lspReadMessage(): Text? = {
 // Certo's print()/println() never auto-flush stdout (only flush() does), and
 // LSP's stdio transport is normally a pipe (fully buffered, not line-buffered)
 // - every write here is followed by flush(), or the client would never see it.
-// The carriage return is built via Char.fromInt rather than a "\r" literal:
-// Certo's codegen escapes "\n" but not "\r" when folding a Text literal into
-// its C source, so an embedded literal \r breaks the generated C string.
+// The header terminators are written as bare newlines on purpose: on Windows
+// stdout is a text-mode stream that expands each newline to CR LF, so the
+// wire bytes are the CR LF CR LF the specs require. An explicit CR here (this
+// function used to build one via Char.fromInt(13)) was doubled to CR CR LF
+// CR CR LF, which strict clients cannot parse; this toolchain is Windows-only
+// today, so the expansion can be relied on. Only the header is affected - the
+// body is JSON with no raw newlines, so Content-Length is unchanged.
 fn lspWriteMessage(body: Text): Unit [io] = {
-  val cr = Char.toText(Char.fromInt(13))
-  print("Content-Length: " ++ intToText(Text.len(body)) ++ cr ++ "\n" ++ cr ++ "\n" ++ body)
+  print("Content-Length: " ++ intToText(Text.len(body)) ++ "\n\n" ++ body)
   flush()
 }
 
@@ -8864,6 +9298,7 @@ fn usage(): Unit [io] = {
   println("       lume check|tokens|bytecode <file.lume>")
   println("       lume bytecode <file.lbc>")
   println("       lume build <file.lume> [output.lbc]")
+  println("       lume debug <file.lume> [--break line,line | --dap]")
   println("       lume exec <file.lbc>")
   println("       lume benchmark <file.lume> [iterations]")
   println("       lume profile <file.lume> [iterations]")
@@ -9049,6 +9484,24 @@ fn main(): Unit [io] = {
           eprintln(artifact.problem)
           Process.quit(1)
         } else { runCode(artifact.code) }
+      } else if Text.eq(command, "debug") then {
+        var breakLines: List<Int> = []
+        for part in Text.split(flagValue("--break") ?? "", ",") {
+          if let Some(line) = parseInt(Text.trim(part)) { breakLines = List.pushMut(breakLines, line) }
+        }
+        if hasFlag("--dap") then {
+          val start = dapHandshake()
+          if start.quit then { Process.quit(0) }
+          val outcome = executeWith(compiled.code, true, start.breakLines, if Text.eq(start.program, "") then path else start.program, start.stopOnEntry)
+          dapFinish(outcome.code, outcome.problem)
+          Process.quit(0)
+        }
+        val outcome = executeWith(compiled.code, true, breakLines, "", true)
+        if Text.eq(outcome.problem, "") then { Process.quit(outcome.code) }
+        else {
+          eprintln(outcome.problem)
+          Process.quit(1)
+        }
       } else if Text.eq(command, "build") then {
         val output = arg(3) ?? cachePath(path)
         val saveProblem = saveArtifact(output, combinedSource, compiled.code)
