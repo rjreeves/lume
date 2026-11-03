@@ -1,13 +1,13 @@
 {
   "name": "lume-debug",
-  "displayName": "Lume Debugger",
-  "description": "Debug Lume programs in VS Code using the compiler's built-in Debug Adapter Protocol server (lume debug --dap).",
-  "version": "0.1.0",
+  "displayName": "Lume",
+  "description": "Language features (lume lsp) and debugging (lume debug --dap) for Lume, using the compiler's own built-in servers.",
+  "version": "0.2.0",
   "publisher": "lume",
   "license": "MIT",
   "private": true,
   "engines": { "vscode": "^1.80.0" },
-  "categories": ["Debuggers"],
+  "categories": ["Programming Languages", "Debuggers"],
   "main": "./extension.js",
   "activationEvents": ["onDebug", "onDebugResolve:lume", "onDebugAdapterProtocolTracker:lume", "onLanguage:lume"],
   "contributes": {
@@ -22,9 +22,17 @@
           "type": "string",
           "default": "",
           "description": "Path to lume.exe. When empty, dist/lume.exe in the first workspace folder is used."
+        },
+        "lume.lsp.enable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Start the language server (lume lsp) for diagnostics, hover, go to definition, references, rename, completion, quick fixes, and symbols."
         }
       }
     },
+    "commands": [
+      { "command": "lume.restartLanguageServer", "title": "Lume: Restart Language Server" }
+    ],
     "debuggers": [
       {
         "type": "lume",

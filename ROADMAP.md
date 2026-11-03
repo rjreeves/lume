@@ -1820,7 +1820,12 @@ things rather than writing the obvious thing.
   locals p q`, `--break line,line`) and, with `--dap`, a Debug Adapter
   Protocol server over stdio that reuses the language server's
   `Content-Length` framing; `editors/vscode` is a dependency-free VS Code
-  extension that launches it. Tried by hand in VS Code: breakpoint stop,
+  extension that launches it (and, with a small hand-written LSP transport
+  rather than `vscode-languageclient`, also starts `lume lsp` for
+  diagnostics, hover, definition, references, rename, completion, quick
+  fixes, and symbols - covered by `editors/vscode/test/extension.test.js`
+  against a real server, though only through a stand-in for the `vscode`
+  module, not a live VS Code window). Tried by hand in VS Code: breakpoint stop,
   locals, and program output in the Debug Console. v1 limits: line
   breakpoints only (matched by line across the combined source), locals
   only, no conditional breakpoints or watch expressions, `pause` cannot

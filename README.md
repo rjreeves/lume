@@ -157,6 +157,10 @@ list, same-file-only regex go-to-definition, and an independent formatter
 that isn't guaranteed to agree with `lume fmt`. See
 [`lsp/README.md`](lsp/README.md) for when you'd reach for it instead.
 
+For VS Code, [`editors/vscode`](editors/vscode/README.md) is a small extension
+that starts `lume lsp` for you (and wires up the debugger below); build and
+install it with `pwsh editors\vscode\package.ps1` — no node required.
+
 ## Debugging
 
 `lume debug <file> [--break 3,5]` is a stepping debugger driven from stdin
