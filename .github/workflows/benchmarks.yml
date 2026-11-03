@@ -1,0 +1,89 @@
+name: Benchmarks (manual)
+
+# Runs the repo's benchmark scripts on a GitHub-hosted windows-latest runner,
+# to get numbers from a machine class other than the maintainer's laptop (the
+# ROADMAP's "publish results across representative hardware" item).
+#
+# workflow_dispatch ONLY - deliberately no push, pull_request or schedule
+# trigger. CI was turned off on this repo because it cost too much across
+# many iterations; this exists so a benchmark run is something a person
+# starts on purpose, never something that happens on its own.
+#
+# Start it with:  gh workflow run benchmarks.yml
+# (add  -f repeat=5  or  -f extended=true  as needed), then read the
+# "Benchmark report" in the run's summary, or download the artifact.
+
+on:
+  workflow_dispatch:
+    inputs:
+      repeat:
+        description: How many times to run each benchmark script
+        required: false
+        default: "3"
+      extended:
+        description: Also run the larger and incremental benchmarks (slower)
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  benchmarks:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout Lume
+        uses: actions/checkout@v7
+
+      - name: Checkout Certo
+        uses: actions/checkout@v7
+        with:
+          repository: rjreeves/Certo
+          path: certo
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry and Certo build
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            certo/target
+          key: ${{ runner.os }}-certo-${{ hashFiles('certo/Cargo.lock') }}
+
+      - name: Build Certo
+        run: cargo build --release -p certo
+        working-directory: certo
+
+      - name: Build Lume
+        run: pwsh -File build.ps1 -Certo certo/target/release/certo.exe
+
+      # Inputs go through the environment, not straight into the script text,
+      # and are cast to the types the script declares - a bad value fails the
+      # parameter binding instead of being interpreted as code.
+      - name: Run benchmarks
+        env:
+          REPEAT: ${{ inputs.repeat }}
+          EXTENDED: ${{ inputs.extended }}
+        run: |
+          $arguments = @{ Repeat = [int]$env:REPEAT }
+          if ($env:EXTENDED -eq 'true') { $arguments.Extended = $true }
+          ./benchmark-report.ps1 @arguments
+
+      - name: Publish report to the run summary
+        if: always()
+        run: |
+          if (Test-Path dist/benchmark-report.md) {
+            Get-Content dist/benchmark-report.md | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+          }
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: benchmark-report
+          path: dist/benchmark-report.md
+          if-no-files-found: warn
