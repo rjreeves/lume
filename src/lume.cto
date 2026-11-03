@@ -5757,13 +5757,61 @@ fn debugBacktrace(code: List<Instruction>, ip: Int, returnAddresses: List<Int>):
   }
 }
 
-fn debugLocals(variables: Bindings, depth: Int): Unit [io] = {
+// Human-readable rendering of a tagged runtime value for the debugger:
+// strings quoted, lists as [a, b], records as Type(field: v), enum variants
+// as Enum.variant(field: v). Fields come from the declared schema so order
+// is stable; nesting is cut off at a small depth so a large structure cannot
+// flood the terminal. Kinds with no useful short form print as <kind>.
+fn debugValue(code: List<Instruction>, value: Text, budget: Int): Text = {
+  val kind = valueKind(value)
+  if Text.eq(kind, "i:") or Text.eq(kind, "b:") then { valueBody(value) }
+  else if Text.eq(kind, "s:") then { "\"" ++ valueBody(value) ++ "\"" }
+  else if Text.eq(kind, "f:") then { "fn " ++ valueBody(value) }
+  else if Text.eq(kind, "c:") then { "<closure>" }
+  else if Text.eq(kind, "m:") then { "<map of " ++ intToText(mapLength(value)) ++ ">" }
+  else if budget <= 0 then { "..." }
+  else if Text.eq(kind, "l:") then {
+    var parts: List<Text> = []
+    for item in listValues(value) { parts = List.push(parts, debugValue(code, item, budget - 1)) }
+    "[" ++ Text.join(parts, ", ") ++ "]"
+  } else if Text.eq(kind, "o:") then {
+    val root = Json.parse(valueBody(value))
+    val typeName = JsonValue.asText(JsonValue.get(root, "$type"))
+    var parts: List<Text> = []
+    if let Some(schema) = findRecordSchema(code, typeName) {
+      val fields = if Text.eq(schema, "") then [] else Text.split(schema, ";")
+      for field in fields {
+        val fieldName = schemaFieldName(field)
+        parts = List.push(parts, fieldName ++ ": " ++ debugValue(code, JsonValue.asText(JsonValue.get(root, fieldName)), budget - 1))
+      }
+    }
+    typeName ++ "(" ++ Text.join(parts, ", ") ++ ")"
+  } else if Text.eq(kind, "v:") then {
+    val root = Json.parse(valueBody(value))
+    val enumName = runtimeEnumName(value)
+    val variantName = runtimeVariantName(value)
+    var parts: List<Text> = []
+    if let Some(enumSchema) = findEnumSchema(code, enumName) {
+      if let Some(payload) = variantPayloadSchema(enumSchema, variantName) {
+        val fields = if Text.eq(payload, "") then [] else Text.split(payload, ",")
+        for field in fields {
+          val fieldName = schemaFieldName(field)
+          parts = List.push(parts, fieldName ++ ": " ++ debugValue(code, JsonValue.asText(JsonValue.get(root, fieldName)), budget - 1))
+        }
+      }
+    }
+    val head = enumName ++ "." ++ variantName
+    if List.len(parts) == 0 then { head } else { head ++ "(" ++ Text.join(parts, ", ") ++ ")" }
+  } else { "<" ++ Text.slice(kind, 0, 1) ++ ">" }
+}
+
+fn debugLocals(code: List<Instruction>, variables: Bindings, depth: Int): Unit [io] = {
   val prefix = scopedName(depth, "")
   var index = 0
   while index < List.len(variables.names) {
     val name = List.getOrPanic(variables.names, index)
     if Text.startsWith(name, prefix) then {
-      eprintln("  " ++ Text.slice(name, Text.len(prefix), Text.len(name)) ++ " = " ++ display(List.getOrPanic(variables.values, index)))
+      eprintln("  " ++ Text.slice(name, Text.len(prefix), Text.len(name)) ++ " = " ++ debugValue(code, List.getOrPanic(variables.values, index), 3))
     }
     index = index + 1
   }
@@ -5826,10 +5874,10 @@ fn executeWith(code: List<Instruction>, debugging: Bool, breakLines: List<Int>):
               waiting = false
             }
             else if Text.eq(command, "bt") then { debugBacktrace(code, ip, returnAddresses) }
-            else if Text.eq(command, "locals") then { debugLocals(variables, depth) }
+            else if Text.eq(command, "locals") then { debugLocals(code, variables, depth) }
             else if Text.startsWith(command, "p ") then {
               val wanted = Text.trim(Text.slice(command, 2, Text.len(command)))
-              if let Some(value) = getBinding(variables, scopedName(depth, wanted)) { eprintln("  " ++ wanted ++ " = " ++ display(value)) }
+              if let Some(value) = getBinding(variables, scopedName(depth, wanted)) { eprintln("  " ++ wanted ++ " = " ++ debugValue(code, value, 3)) }
               else { eprintln("  no local `" ++ wanted ++ "`") }
             }
             else if Text.eq(command, "q") then { Process.quit(0) }

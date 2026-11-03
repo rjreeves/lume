@@ -2738,4 +2738,12 @@ Assert-Contains 'debug lets the program finish with its own output' '42' $debugT
 $debugBreak = "c`nc`n" | & $Lume debug $debugTarget --break 3 2>&1
 Assert-Contains 'debug honors --break' 'stopped in double at line 3' ($debugBreak -join "`n")
 
+$debugValues = "c`nlocals`np p`nc`n" | & $Lume debug (Join-Path $PSScriptRoot 'examples\debug_values.lume') --break 17 2>&1
+$debugValuesText = $debugValues -join "`n"
+Assert-Contains 'debug renders a record' 'p = Point(x: 1, y: 2)' $debugValuesText
+Assert-Contains 'debug renders a list' 'xs = [1, 2, 3]' $debugValuesText
+Assert-Contains 'debug renders an enum variant with payload' 's = State.busy(code: 7)' $debugValuesText
+Assert-Contains 'debug renders a payload-free variant' 't = State.idle' $debugValuesText
+Assert-Contains 'debug quotes strings' 'name = "hi"' $debugValuesText
+
 Write-Host 'All Lume smoke tests passed.'

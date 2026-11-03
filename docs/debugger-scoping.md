@@ -114,3 +114,14 @@ Known limits: the program's `args` still include the `--break` flag text;
 depth counter so `locals` inside a closure shows only that depth.
 Milestones 2-4 (richer variable rendering, DAP wrapper, VS Code config)
 remain.
+
+## Milestone 2 result
+
+`locals` and `p <name>` now go through `debugValue` instead of the raw
+runtime encoding: strings are quoted, lists print as `[1, 2, 3]`, records as
+`Point(x: 1, y: 2)` and enum variants as `State.busy(code: 7)` /
+`State.idle`, with fields in declared order (from the record/enum schema).
+Closures print as `<closure>`, function references as `fn name`, maps as
+`<map of N>`; nesting is cut at depth 3 with `...`. Other kinds (bytes,
+process results, durations-as-other-kinds) print as `<k>` and are not
+specially rendered. Covered by `examples/debug_values.lume` in `test.ps1`.
