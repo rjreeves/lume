@@ -64,6 +64,9 @@ const disposable = { dispose() {} };
 const provider = (name) => (selector, impl) => { providers[name] = impl; return disposable; };
 
 const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lspx-'));
+const outputChannels = [];
+const warnings = [];
+let configuredPath = lumePath;
 
 const vscodeMock = {
   Position, Range, Uri, Location, WorkspaceEdit, Diagnostic, MarkdownString, Hover, CompletionItem,
@@ -72,13 +75,18 @@ const vscodeMock = {
   DiagnosticSeverity: { Error: 0 },
   DebugAdapterExecutable: class {},
   window: {
-    createOutputChannel: () => ({ append() {}, appendLine(l) { if (process.env.VERBOSE) console.log(l); }, dispose() {} }),
-    showWarningMessage: (m) => { throw new Error('unexpected warning: ' + m); },
+    createOutputChannel: () => {
+      const channel = { lines: [], append() {}, show() {}, dispose() {} };
+      channel.appendLine = (l) => { channel.lines.push(l); if (process.env.VERBOSE) console.log(l); };
+      outputChannels.push(channel);
+      return channel;
+    },
+    showWarningMessage: (m) => { warnings.push(m); return Promise.resolve(undefined); },
   },
   workspace: {
-    workspaceFolders: [{ uri: Uri.file(workDir), name: 'work' }],
+    workspaceFolders: undefined,
     textDocuments,
-    getConfiguration: () => ({ get: (key, fallback) => (key === 'path' ? lumePath : fallback) }),
+    getConfiguration: () => ({ get: (key, fallback) => (key === 'path' ? configuredPath : fallback) }),
     onDidOpenTextDocument: (f) => { listeners.open = f; return disposable; },
     onDidChangeTextDocument: (f) => { listeners.change = f; return disposable; },
     onDidCloseTextDocument: (f) => { listeners.close = f; return disposable; },
@@ -161,6 +169,26 @@ async function main() {
   textDocuments.push(a, b, c, d);
 
   const extension = require('../extension.js');
+
+  // A missing lume.exe must be explained in the output channel, not just a popup.
+  configuredPath = '';
+  extension.activate({ subscriptions: [] });
+  let report = outputChannels[0].lines.join('\n');
+  assert.match(report, /Could not find lume\.exe/);
+  assert.match(report, /no folder is open/, 'explains that no folder is open: ' + report);
+  assert.strictEqual(warnings.length, 1, 'one popup');
+
+  configuredPath = path.join(workDir, 'nope', 'lume.exe');
+  vscodeMock.workspace.workspaceFolders = [{ uri: Uri.file(workDir), name: 'work' }];
+  extension.activate({ subscriptions: [] });
+  report = outputChannels[1].lines.join('\n');
+  assert.ok(report.includes('setting "lume.path": ' + configuredPath), 'lists the configured path: ' + report);
+  assert.match(report, /dist\\lume\.exe in workspace folder "work"/, 'lists the workspace candidate: ' + report);
+  assert.match(report, /Restart Language Server/, 'says how to fix it');
+  assert.strictEqual(warnings.length, 2, 'each server instance shows its own popup once');
+  console.log('ok missing lume.exe is explained in the output channel');
+
+  configuredPath = lumePath;
   const context = { subscriptions: [] };
   extension.activate(context);
   await waitFor(() => providers.definition, 'providers to register');

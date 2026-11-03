@@ -2,7 +2,7 @@
   "name": "lume-debug",
   "displayName": "Lume",
   "description": "Language features (lume lsp) and debugging (lume debug --dap) for Lume, using the compiler's own built-in servers.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "lume",
   "license": "MIT",
   "private": true,

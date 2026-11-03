@@ -7,16 +7,39 @@ const fs = require('fs');
 const path = require('path');
 const { LspClient } = require('./lspClient');
 
-function resolveLume(configuration, folder) {
+// Every place lume.exe is looked for, in order, each tagged with where the
+// path came from so a "not found" message can say what was tried.
+function lumeCandidates(configuration, folder) {
   const candidates = [];
-  if (configuration && configuration.lumePath) candidates.push(configuration.lumePath);
+  if (configuration && configuration.lumePath) candidates.push({ source: 'launch configuration "lumePath"', path: configuration.lumePath });
   const setting = vscode.workspace.getConfiguration('lume').get('path');
-  if (setting) candidates.push(setting);
-  if (folder) candidates.push(path.join(folder.uri.fsPath, 'dist', 'lume.exe'));
-  for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) return candidate;
+  if (setting) candidates.push({ source: 'setting "lume.path"', path: setting });
+  if (folder) candidates.push({ source: `dist\\lume.exe in workspace folder "${folder.name}"`, path: path.join(folder.uri.fsPath, 'dist', 'lume.exe') });
+  return candidates;
+}
+
+function resolveLume(configuration, folder) {
+  for (const candidate of lumeCandidates(configuration, folder)) {
+    if (fs.existsSync(candidate.path)) return candidate.path;
   }
   return undefined;
+}
+
+function missingLumeReport(candidates, folder) {
+  const lines = ['Could not find lume.exe, so the language server was not started.'];
+  if (candidates.length === 0) {
+    lines.push(
+      folder
+        ? 'No candidates: "lume.path" is not set and there is no workspace folder to look in.'
+        : 'No candidates: "lume.path" is not set and no folder is open (a single file has no dist\\lume.exe to find).'
+    );
+  } else {
+    lines.push('Looked in, in order (none exist):');
+    for (const c of candidates) lines.push(`  - ${c.source}: ${c.path}`);
+    if (!candidates.some((c) => c.source.startsWith('setting'))) lines.push('"lume.path" is not set.');
+  }
+  lines.push('Fix: build the compiler with build.ps1 and set "lume.path" to the full path of dist\\lume.exe, then run "Lume: Restart Language Server".');
+  return lines.join('\n');
 }
 
 class LumeAdapterFactory {
@@ -94,9 +117,14 @@ class LumeLanguageServer {
     const folder = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0];
     const lume = resolveLume(undefined, folder);
     if (!lume) {
+      // Always logged (the popup is shown once and is easy to miss), so the
+      // output channel explains why nothing started every time.
+      this.output.appendLine(missingLumeReport(lumeCandidates(undefined, folder), folder));
       if (!this.warnedMissing) {
         this.warnedMissing = true;
-        vscode.window.showWarningMessage('Lume language server not started: could not find lume.exe. Build it with build.ps1, or set "lume.path".');
+        vscode.window
+          .showWarningMessage('Lume language server not started: could not find lume.exe.', 'Show Details')
+          .then((choice) => { if (choice) this.output.show(true); });
       }
       return;
     }
@@ -302,4 +330,4 @@ function activate(context) {
 
 function deactivate() {}
 
-module.exports = { activate, deactivate, resolveLume, toServerUri };
+module.exports = { activate, deactivate, resolveLume, lumeCandidates, missingLumeReport, toServerUri };

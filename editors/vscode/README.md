@@ -22,13 +22,15 @@ hand-written LSP transport (`lspClient.js`), not `vscode-languageclient`.
 
    ```powershell
    pwsh editors\vscode\package.ps1
-   code --install-extension dist\lume-debug-0.2.0.vsix
+   code --install-extension dist\lume-debug-<version>.vsix
    ```
 
 3. Open the Lume repository (or any folder with a `dist\lume.exe`) in VS Code,
    or set `lume.path` to your `lume.exe`. Opening a `.lume` file starts the
    language server; output and errors go to the **Lume Language Server**
-   output channel.
+   output channel. If `lume.exe` can't be found, that channel lists every
+   location that was tried and how to fix it (and a one-time popup offers
+   "Show Details").
 
 To hack on the extension instead, open `editors/vscode` in VS Code and press F5
 (Extension Development Host), or run
