@@ -10,7 +10,76 @@ and the exact compiler output, at commit `e7788cd` (`ai/lume-api.json`
 
 ## Pending
 
-None currently.
+### 9. `lume lsp` never percent-decodes `file://` URIs, so editors' default URI form breaks every disk-reading feature
+
+Found while writing the VS Code extension's language client
+(`editors/vscode`). At commit `ae53bdd` (`ai/lume-api.json`
+`version: 0.1.0-bootstrap`).
+
+**Claim contradicted:** none stated outright - nothing documents which URI
+spelling the server accepts. `lspUriToPath` (`src/lume.cto`) strips
+`file://` and a leading slash before a drive letter, and `lspPathToUri` is
+its inverse, so the server is internally consistent with the unencoded
+spelling `file:///c:/dir/x.lume`. But LSP's URI is RFC 3986 text and real
+clients do not send that spelling: VS Code's `Uri.toString()` produces
+`file:///c%3A/dir/x.lume` (encoded drive colon) and encodes a space as
+`%20`, and the LSP specification expects a server to decode them. The
+README's "point any standard LSP client at `lume lsp`" is therefore only
+true for clients that happen to send raw paths.
+
+**Reproduction:** one open document, `d.lume`, that imports a sibling
+`e.lume` which exists only on disk (never opened in the editor), sent
+twice to a fresh `lume lsp` - once with the unencoded URI, once with the
+percent-encoded form of the *same* file - followed by `textDocument/hover`
+on the imported function and a `workspace/symbol` query:
+
+```
+unencoded  hover: "fn only_on_disk(x: int): int"  workspace/symbol count: 1
+encoded    hover: null                             workspace/symbol count: 0
+```
+
+`textDocument/publishDiagnostics` for that same, valid, compiling file
+differs too (no `rootUri` needed):
+
+```
+unencoded  []
+encoded    ["E0216: unknown function `only_on_disk`"]
+```
+
+The same split reproduces with only a space encoded and the colon left
+alone (`.../uri%20sp-K64Au5/d.lume`), so it is any percent-escape, not just
+the drive colon.
+
+Root cause: `lspUriToPath` returns the path still percent-encoded
+(`/c%3A/Users/...`), so `resolveModulePath` joins `e.lume` onto a
+directory that does not exist and `readFile` fails. Features that only
+consult the in-memory document store keyed by the URI string (diagnostics
+for the open file, same-file definition, hover and completion on its own
+declarations) keep working, which is why this is easy to miss: an import
+that happens to be open in the editor resolves too, because
+`lspPathToUri` re-encodes it the same wrong way and the two strings
+match. Only a `use`d file that is not open, and the workspace root used by
+`workspace/symbol` (`rootUri`/`workspaceFolders`), go through the broken
+path conversion.
+
+**Impact:** with an unmodified standard client, cross-file hover,
+definition, references, rename, the "add missing `use`" quick fix, and
+`workspace/symbol` silently return nothing for any file not currently open,
+and every Windows user with a space (or any non-ASCII character) in their
+project path is affected, not just clients that encode the drive colon.
+Diagnostics are also wrong in the same situation: an import that cannot be
+read leaves the "unknown function" error standing, so a correct
+multi-file project shows false errors. The VS Code extension works around
+it by sending `Uri.toString(true)` (unencoded), guarded by a test in
+`editors/vscode/test/extension.test.js`; any other client has to
+rediscover that.
+
+**Suggested fix:** percent-decode in `lspUriToPath` (and encode in
+`lspPathToUri`) so the server round-trips whatever spelling the client
+uses, then compare document URIs after normalising both sides rather than
+as raw strings, since a client's `file:///c%3A/x` and the server's own
+`file:///c:/x` for the same file would otherwise stop matching. Once that
+lands, the extension's `toServerUri` workaround can be dropped.
 
 ## Resolved
 
