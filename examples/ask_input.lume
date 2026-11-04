@@ -1,0 +1,11 @@
+// Lume has no stdin builtin; borrow PowerShell's console reader.
+fn ask(question: str) -> str {
+  print(question)
+  let r = process.run("powershell", ["-NoProfile", "-Command", "[Console]::In.ReadLine()"])
+  return str.trim(process.stdout(r))
+}
+
+fn main(args: [str]) -> int {
+  print("hi, " + ask("name?"))
+  return 0
+}
