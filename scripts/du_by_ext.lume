@@ -1,0 +1,96 @@
+// du_by_ext.lume - summarize a directory tree by file extension.
+// usage: lume run scripts/du_by_ext.lume [dir] [maxDepth]
+// Prints "extension  files  bytes", largest total first, then a grand total.
+
+fn ext_of(file: str) -> str {
+  return match path.extension(file) {
+    Some(ext) => str.lower(ext)
+    None => "(none)"
+  }
+}
+
+fn size_of(file: str) -> int {
+  let data = fs.read_bytes(file)
+  if result.is_ok(data) {
+    return bytes.length(result.value(data))
+  }
+  return 0
+}
+
+fn pad(text: str, width: int) -> str {
+  var out = text
+  while str.len(out) < width {
+    out = out + " "
+  }
+  return out
+}
+
+fn main(args: [str]) -> int {
+  var root = "."
+  var depth = 8
+  if args.count() > 0 {
+    root = args.get(0)
+  }
+  if args.count() > 1 {
+    let parsed = str.to_int(args.get(1))
+    if result.is_ok(parsed) {
+      depth = result.value(parsed)
+    } else {
+      eprint("maxDepth must be an integer")
+      return 2
+    }
+  }
+
+  let found = dir.walk(root, depth)
+  if result.is_ok(found) {} else {
+    eprint(result.error(found))
+    return 1
+  }
+  let files = result.value(found)
+
+  var counts = map.remove(map.set(map.new(), "x", 0), "x")
+  var sizes = map.remove(map.set(map.new(), "x", 0), "x")
+  var total = 0
+  var index = 0
+  while index < list.len(files) {
+    let file = list.get(files, index)
+    let ext = ext_of(file)
+    let size = size_of(file)
+    var seen = 0
+    var bytesSoFar = 0
+    if map.has(counts, ext) {
+      seen = lookup(counts, ext)
+      bytesSoFar = lookup(sizes, ext)
+    }
+    counts = map.set(counts, ext, seen + 1)
+    sizes = map.set(sizes, ext, bytesSoFar + size)
+    total = total + size
+    index = index + 1
+  }
+
+  var remaining = map.keys(sizes)
+  print(pad("extension", 14) + pad("files", 8) + "bytes")
+  while list.len(remaining) > 0 {
+    var best = list.get(remaining, 0)
+    var i = 1
+    while i < list.len(remaining) {
+      let candidate = list.get(remaining, i)
+      if lookup(sizes, candidate) > lookup(sizes, best) {
+        best = candidate
+      }
+      i = i + 1
+    }
+    print(pad(best, 14) + pad(str.from_int(lookup(counts, best)), 8) + str.from_int(lookup(sizes, best)))
+    let chosen = best
+    remaining = list.filter(remaining, fn(key: str) -> bool => key != chosen)
+  }
+  print(pad("total", 14) + pad(str.from_int(list.len(files)), 8) + str.from_int(total))
+  return 0
+}
+
+fn lookup(table: Map<str, int>, key: str) -> int {
+  return match map.get(table, key) {
+    Some(value) => value
+    None => 0
+  }
+}
